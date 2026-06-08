@@ -8,13 +8,15 @@ Built in milestones that each leave the repo in a working, demoable state. The o
 
 ---
 
-### M0 — Bridge + skeleton *(foundation)*
-A hardened, tested file-JSON IPC bridge and a professional FastMCP scaffold the rest stands on. Riskiest infrastructure — make it bulletproof before anything musical.
+### M0 — Bridge + skeleton *(foundation)* ✅ **DONE**
+A hardened, tested file-JSON IPC bridge and a professional FastMCP scaffold the rest stands on. Riskiest infrastructure — bulletproofed before anything musical.
 
-- [ ] src-layout `orpheus_mcp` package, `pyproject.toml` console-script, `fastmcp.json`, MIT license, CI.
-- [ ] Port the file-JSON IPC bridge; harden with: persistent `reaper.defer()` loop, static three-tier dispatch, heartbeat lock-file, **atomic temp-then-rename writes**, `EnumerateFiles` cache invalidation, per-call note caps, `REAPER_MCP_BRIDGE_DIR` override + `install-bridge`.
-- [ ] `BridgeClient` (sequential `request_id`, poll, stable GUID/index identity, batch composites) + `get_connection_status`.
-- [ ] Wire `server.py` + `registry.py` + toolset gating; verify the hammer icon + `fastmcp dev` Inspector.
+- [x] src-layout `orpheus_mcp` package, `pyproject.toml` console-script, `fastmcp.json`, MIT license, CI.
+- [x] The file-JSON IPC bridge (`orpheus_bridge.lua`), hardened with: persistent `reaper.defer()` loop, static dispatch (no `loadstring`), heartbeat lock-file, **atomic temp-then-rename writes**, `EnumerateFiles` cache invalidation, integer-id filenames, `REAPER_MCP_BRIDGE_DIR` override, stable `$HOME`-based default dir.
+- [x] `BridgeClient` (sequential `request_id`, poll, timeout, `batch` composites) + `get_connection_status` + `install-bridge` command.
+- [x] Wire `server.py` + `registry.py` + toolset gating.
+
+**Verified:** 12 Python bridge tests, 8 installer tests, 19 Lua-side assertions, and a cross-language integration test (real `BridgeClient` ↔ a real `lua` subprocess running the actual bridge) all green. Remaining for the user: the in-REAPER smoke test (`get_connection_status` against a live REAPER) + the Claude Desktop hammer-icon check.
 
 ### M1 — Construction core *(the APPLY verbs + the load-bearing primitive)*
 The agent can build and modify a project correctly.

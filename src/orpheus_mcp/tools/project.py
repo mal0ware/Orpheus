@@ -22,7 +22,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=_RO)
     def get_track_midi(track: str) -> dict:
-        """Read a take's MIDI notes (pitch, start/duration in BEATS, velocity) + CC. Feeds analysis."""
+        """Read a take's MIDI notes (pitch, start/duration in BEATS, velocity) + CC."""
         raise NotImplementedError("M1 — see docs/roadmap.md")
 
     @mcp.tool(annotations=_RO)

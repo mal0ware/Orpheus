@@ -11,7 +11,7 @@ human-readable list of reasons.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
@@ -25,7 +25,7 @@ Velocity = Annotated[int, Field(ge=0, le=127, description="MIDI velocity 0–127
 Pitch = Annotated[int, Field(ge=0, le=127, description="MIDI pitch 0–127 (60 = middle C).")]
 
 
-class Mode(str, Enum):
+class Mode(StrEnum):
     MAJOR = "major"
     MINOR = "minor"
     DORIAN = "dorian"
@@ -35,7 +35,7 @@ class Mode(str, Enum):
     LOCRIAN = "locrian"
 
 
-class TrackRole(str, Enum):
+class TrackRole(StrEnum):
     """Canonical role vocabulary shared across analysis, mixing, and composition."""
 
     KICK = "kick"
@@ -72,7 +72,9 @@ class Note(BaseModel):
 class FXSpec(BaseModel):
     name: str
     bypassed: bool = False
-    params: dict[str, float] = Field(default_factory=dict, description="Decoded by name, not opaque 0–1.")
+    params: dict[str, float] = Field(
+        default_factory=dict, description="Decoded by name, not opaque 0-1."
+    )
 
 
 class TrackSpec(BaseModel):
@@ -101,7 +103,9 @@ class Section(BaseModel):
 class HarmonyAnalysis(BaseModel):
     key_root: str | None = None
     mode: Mode | None = None
-    key_confidence: float | None = Field(None, ge=0.0, le=1.0, description="music21 K-S confidence — surface it, never hide it.")
+    key_confidence: float | None = Field(
+        None, ge=0.0, le=1.0, description="music21 K-S confidence - surface it, never hide it."
+    )
     alternative_keys: list[str] = Field(default_factory=list)
     roman_numerals: list[str] = Field(default_factory=list)
     cadences: list[str] = Field(default_factory=list)
@@ -112,7 +116,9 @@ class HarmonyAnalysis(BaseModel):
 
 
 class GrooveAnalysis(BaseModel):
-    swing_pct: float | None = Field(None, description="0 = straight, ~0.5+ = heavy swing. Computed from raw PPQ onset deviation.")
+    swing_pct: float | None = Field(
+        None, description="0 = straight, ~0.5+ = heavy swing. From raw PPQ onset deviation."
+    )
     tightness: float | None = Field(None, description="How close onsets sit to the grid.")
 
 
@@ -145,8 +151,10 @@ class MusicReport(BaseModel):
     """The 'LLM-Readable Music Report' — structured musical *facts*, not raw numbers."""
 
     spec: CompositionSpec
-    summary: str = Field(..., description="Plain-English description of what this track is and how it sounds.")
-    observations: list[str] = Field(default_factory=list, description="Human-readable findings, e.g. 'drum-forward, low end is hot'.")
+    summary: str = Field(..., description="Plain-English summary of the track's sound.")
+    observations: list[str] = Field(
+        default_factory=list, description="Human-readable findings, e.g. 'drum-forward'."
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -154,7 +162,7 @@ class MusicReport(BaseModel):
 # --------------------------------------------------------------------------- #
 
 
-class EditAction(str, Enum):
+class EditAction(StrEnum):
     SET_TEMPO = "set_tempo"
     TRANSPOSE = "transpose"
     REWRITE_PROGRESSION = "rewrite_progression"
@@ -169,8 +177,10 @@ class ProposedEdit(BaseModel):
     """One change in an EditPlan: simultaneously machine-applicable and self-explaining."""
 
     action: EditAction
-    target: str = Field(..., description="What it acts on — a track GUID/name, 'project', or 'master'.")
-    reason: str = Field(..., description="The human-readable 'why' — a delta vs the reference, surfaced for approval.")
+    target: str = Field(..., description="Target: a track GUID/name, 'project', or 'master'.")
+    reason: str = Field(
+        ..., description="The human-readable 'why' - a delta vs the reference, shown for approval."
+    )
     params: dict[str, Any] = Field(default_factory=dict)
     confidence: float | None = Field(None, ge=0.0, le=1.0)
 

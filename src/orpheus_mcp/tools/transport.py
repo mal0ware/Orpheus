@@ -16,7 +16,9 @@ def register(mcp: FastMCP) -> None:
         raise NotImplementedError("M1 — see docs/roadmap.md")
 
     @mcp.tool(annotations={"destructiveHint": True})
-    def set_time_signature(numerator: Annotated[int, Field(ge=1, le=32)], denominator: int = 4) -> dict:
+    def set_time_signature(
+        numerator: Annotated[int, Field(ge=1, le=32)], denominator: int = 4
+    ) -> dict:
         """Set the project time signature."""
         raise NotImplementedError("M1 — see docs/roadmap.md")
 

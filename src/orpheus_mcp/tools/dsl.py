@@ -11,7 +11,7 @@ _RO = {"readOnlyHint": True}
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=_RO)
     def resolve_track(query: str) -> dict:
-        """Fuzzy-match a track by name/role with disambiguation ('I found 2 drum tracks: which?')."""
+        """Fuzzy-match a track by name/role, with disambiguation ('2 drum tracks: which?')."""
         raise NotImplementedError("M4 — see docs/roadmap.md")
 
     @mcp.tool(annotations=_RO)

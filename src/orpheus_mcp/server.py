@@ -38,7 +38,22 @@ register_tools(mcp, profile=_PROFILE)
 
 
 def main() -> None:
-    """Console-script entrypoint (stdio transport)."""
+    """Console-script entrypoint.
+
+    ``orpheus-mcp``                 → run the MCP server (stdio transport)
+    ``orpheus-mcp install-bridge``  → copy the Lua bridge into REAPER's Scripts folder
+    """
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "install-bridge":
+        from orpheus_mcp.install import install_bridge
+
+        dest = install_bridge()
+        print(f"✓ Installed Orpheus bridge → {dest}")
+        print("Next, in REAPER: Actions → Show action list → Run ReaScript → select "
+              "orpheus_bridge.lua (or assign it a toolbar button).")
+        return
+
     mcp.run()
 
 

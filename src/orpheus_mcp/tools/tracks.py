@@ -15,7 +15,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=_DESTRUCTIVE)
     def set_track_volume_pan(track: str, volume: str | None = None, pan: str | None = None) -> dict:
-        """Set fader/pan. Accepts fuzzy values ('-6dB', '+3', '50%', 'L50', 'center') via the resolver."""
+        """Set fader/pan. Accepts fuzzy values ('-6dB', '+3', '50%', 'L50', 'center')."""
         raise NotImplementedError("M1 — see docs/roadmap.md")
 
     @mcp.tool(annotations=_DESTRUCTIVE)
