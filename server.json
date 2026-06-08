@@ -1,0 +1,19 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mal0ware/orpheus",
+  "description": "Analyze, explain, and reshape music inside the REAPER DAW via natural language.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/mal0ware/Orpheus",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "orpheus-mcp",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" }
+    }
+  ],
+  "_comment": "The reverse-DNS name's namespace is proven via GitHub OIDC at publish time (see .github/workflows/publish-mcp.yml). Not yet published to the MCP Registry."
+}

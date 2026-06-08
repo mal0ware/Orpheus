@@ -1,0 +1,13 @@
+{
+  "$schema": "https://gofastmcp.com/schemas/fastmcp.json",
+  "source": {
+    "type": "filesystem",
+    "path": "src/orpheus_mcp/server.py",
+    "object": "mcp"
+  },
+  "environment": {
+    "python": ">=3.11",
+    "dependencies": ["."]
+  },
+  "comment": "Enables `fastmcp run`, `fastmcp dev` (MCP Inspector), and `fastmcp install claude-desktop` out of the box."
+}

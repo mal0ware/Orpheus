@@ -1,0 +1,79 @@
+[project]
+name = "orpheus-mcp"
+version = "0.1.0.dev0"
+description = "An MCP server that lets an AI agent analyze, explain, and reshape music inside the REAPER DAW."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Mal0ss", email = "mal0ss.network@gmail.com" }]
+keywords = ["mcp", "model-context-protocol", "reaper", "daw", "music", "ai", "agent", "reascript"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Editors",
+    "Topic :: Artistic Software",
+]
+
+dependencies = [
+    "fastmcp>=2.3",
+    "pydantic>=2.7",
+    "music21>=9.1",
+    "numpy>=1.26",
+    "soundfile>=0.12",
+    "pyloudnorm>=0.1",
+    "matchering>=2.0",
+]
+
+[project.optional-dependencies]
+# Opt-in fidelity upgrades — the core pipeline runs without these (graceful degradation).
+analysis = [
+    "librosa>=0.10",     # spectral features, MFCC, chroma
+]
+transcribe = [
+    "basic-pitch>=0.3",  # audio -> MIDI for building fingerprints from raw reference audio (v2)
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/mal0ware/Orpheus"
+Repository = "https://github.com/mal0ware/Orpheus"
+Issues = "https://github.com/mal0ware/Orpheus/issues"
+
+[project.scripts]
+orpheus-mcp = "orpheus_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orpheus_mcp"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/orpheus_mcp/bridge/lua" = "orpheus_mcp/bridge/lua"
+"data" = "orpheus_mcp/data"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["orpheus_mcp"]
+ignore_missing_imports = true

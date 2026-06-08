@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# Virtual envs / tooling
+.venv/
+venv/
+.env
+.python-version
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# uv
+# (uv.lock IS committed — reproducible env)
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Orpheus runtime
+# The file-IPC bridge scratch dir (request_N.json / response_N.json / heartbeat)
+.orpheus_bridge/
+*.orpheus.tmp
+
+# Generated audio / renders / large reference assets
+*.wav
+*.mp3
+*.flac
+!tests/fixtures/**/*.wav
+!tests/fixtures/**/*.mp3
+
+# Cached style fingerprints are committed (small JSON); raw reference audio is not.
+data/reference_audio/
