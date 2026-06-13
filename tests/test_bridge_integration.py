@@ -51,3 +51,17 @@ def test_python_client_round_trips_through_real_lua_bridge(tmp_path):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+def test_lua_m1_handler_suite_passes():
+    """Run the self-contained Lua-side M1 handler suite through the real interpreter.
+
+    Verifies the in-REAPER handlers (beats↔PPQ round-trip, transport, track ops) against
+    a stubbed `reaper`, so the Lua half of the M1 contract is enforced wherever a lua
+    interpreter exists (and auto-skipped where it doesn't, like the cross-language test)."""
+    suite = Path(__file__).parent / "lua" / "test_m1_handlers.lua"
+    result = subprocess.run([LUA, str(suite)], capture_output=True, text=True)
+    assert result.returncode == 0, (
+        f"Lua M1 handler suite failed:\n{result.stdout}\n{result.stderr}"
+    )
+    assert "0 failed" in result.stdout

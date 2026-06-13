@@ -18,13 +18,17 @@ A hardened, tested file-JSON IPC bridge and a professional FastMCP scaffold the 
 
 **Verified:** 12 Python bridge tests, 8 installer tests, 19 Lua-side assertions, and a cross-language integration test (real `BridgeClient` ↔ a real `lua` subprocess running the actual bridge) all green. Remaining for the user: the in-REAPER smoke test (`get_connection_status` against a live REAPER) + the Claude Desktop hammer-icon check.
 
-### M1 — Construction core *(the APPLY verbs + the load-bearing primitive)*
-The agent can build and modify a project correctly.
+### M1 — Construction core *(the APPLY verbs + the load-bearing primitive)* ✅ **CORE DONE**
+The agent can build and modify a project correctly. The load-bearing primitive (PPQ-correct
+MIDI write) and the track/transport verbs ship here; the FX/mix verbs are deferred to a later
+pass (they need the installed-plugin inventory + name→index resolution).
 
-- [ ] `project` reads-before-writes: `get_project_info`, `list_tracks`, `get_track_midi`, `get_fx_params`.
-- [ ] `transport` + `tracks`: `set_tempo`/`set_time_signature`, `create_track`, `set_track_volume_pan`, `add_fx_by_name` (inventory-validated), `set_fx_param` (name→index).
-- [ ] `midi`: **`insert_midi_notes`** (beats in, PPQ out, batched) — the load-bearing primitive — plus `create_midi_item`, `quantize_notes`, `transpose_notes`.
-- [ ] `tests/test_midi_roundtrip.py` as the **non-negotiable** correctness gate. `render` tools.
+- [x] `project` reads-before-writes: `get_project_info`, `list_tracks`, `get_track_midi`. (`get_fx_params` deferred with the FX work.)
+- [x] `transport`: `set_tempo`/`set_time_signature`/`play_stop_record`; `tracks`: `create_track`. (`set_track_volume_pan`, `add_fx_by_name` (inventory-validated), `set_fx_param` (name→index) deferred — FX/mix pass.)
+- [x] `midi`: **`insert_midi_notes`** (beats in, PPQ out, batched) — the load-bearing primitive — plus `create_midi_item`, `transpose_notes`. (`quantize_notes` deferred.)
+- [x] `tests/test_midi_roundtrip.py` is now the **non-negotiable** correctness gate (was xfail; flipped to a hard requirement — a note written at beat B reads back at beat B, through the real wire protocol + a behavioural REAPER fake, plus a self-contained Lua-side handler suite). `render` tools deferred to M2.
+
+**Verified:** beats↔PPQ round-trip (incl. fractional/sixteenth-note offsets, bar-relative `at_bar` anchoring, transpose) green through the Python `FakeReaperBridge`/`FakeReaperProject` executable spec; 33 Lua-side assertions green against a stubbed `reaper`; full suite 48 passed with a lua interpreter (46 + 2 lua-gated tests auto-skip without one). The model speaks beats; every tick conversion lives in the bridge.
 
 ### M2 — Theory + the ANALYZE brain → **`v0.1`** *(north-star half 1)*
 Orpheus can deeply *understand* a project and keep the LLM in-key.
