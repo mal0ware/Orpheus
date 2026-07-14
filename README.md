@@ -5,7 +5,7 @@
 > *"Why does this beat sound like Dominic Fike?"* · *"Make this sound Classical."*
 > Orpheus analyzes your project, recommends concrete changes **with reasons**, and — on your approval — applies them as real, editable tracks. One `Ctrl+Z` undoes the whole thing.
 
-> 🚧 **Status: early (pre-alpha), and moving.** What's **built + tested** today: the full architecture, a [documented analysis of the entire Reaper/DAW-MCP frontier](docs/frontier-analysis.md), the music-theory core, and — as of M0 — the **REAPER bridge**: the AI can connect to a live REAPER and round-trip commands (proven by Python + Lua + cross-language integration tests). What's **still stubs**: the analysis and apply tools (M1–M3 on the [roadmap](docs/roadmap.md)). So it connects and is wired end-to-end, but doesn't compose or transform yet. The first feature release (`v0.1`) ships the **understand-and-explain** half; the **transform** half follows in `v0.3`. Star/watch to follow along. ⭐
+> 🚧 **Status: early (pre-alpha), and moving.** What's **built + tested** today: the full architecture, a [documented analysis of the entire Reaper/DAW-MCP frontier](docs/frontier-analysis.md), the music-theory core, the **REAPER bridge** (M0 — connect to a live REAPER and round-trip commands), and now the **construction core** (M1): track listing/creation, transport (tempo/meter/play-stop-record), and the load-bearing **PPQ-correct MIDI writer** (`insert_midi_notes` / `get_track_midi` / `transpose_notes`) — the model speaks beats, all tick math lives in the bridge, and a note written at beat B reads back at beat B (guarded by the round-trip gate). All proven by Python + Lua + cross-language tests; no real REAPER needed to test. What's **still stubs**: FX/mix verbs, and the analysis and apply tools (M2–M3 on the [roadmap](docs/roadmap.md)). So it connects, builds, and modifies a project correctly, but doesn't analyze or transform-toward-a-reference yet. The first feature release (`v0.1`) ships the **understand-and-explain** half; the **transform** half follows in `v0.3`. Star/watch to follow along. ⭐
 
 Orpheus is an [MCP](https://modelcontextprotocol.io) server. It plugs into any MCP-compatible client (Claude Desktop, Cursor, Claude Code) and gives the model a set of tools to read, reason about, and edit a live [REAPER](https://www.reaper.fm/) session.
 
@@ -108,8 +108,8 @@ Orpheus ships in honest milestones (full detail + the "why this order" in [`docs
 
 | Milestone | What works | Scale |
 |---|---|---|
-| **M0** | Hardened bridge + FastMCP scaffold + `get_connection_status` | foundation |
-| **M1** | Build/modify correctly: tracks, transport, FX, PPQ-correct MIDI | construction core |
+| **M0** ✅ | Hardened bridge + FastMCP scaffold + `get_connection_status` | foundation |
+| **M1** ✅ | Build/modify correctly: tracks, transport, PPQ-correct MIDI (FX verbs stubbed) | construction core |
 | **M2** | **Understand** a project: harmony, groove, audio character, theory scaffolding | → `v0.1`: *it explains your track* |
 | **M3** | **Transform**: `recommend_changes` + gated `apply_changes` + style fingerprints | → `v0.3`: *the differentiator* |
 | **M4** | NL ergonomics + generate-from-scratch composers | polish |

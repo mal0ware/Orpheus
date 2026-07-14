@@ -8,85 +8,13 @@ executable spec for `orpheus_bridge.lua`, not a mock.
 
 from __future__ import annotations
 
-import json
 import os
-import threading
 import time
-from pathlib import Path
 
 import pytest
 
+from fake_reaper import FakeReaperBridge
 from orpheus_mcp.bridge.client import BridgeClient, BridgeError, BridgeTimeout
-
-
-class FakeReaperBridge:
-    """Stand-in for the in-REAPER Lua poll loop. Mirrors the wire protocol exactly."""
-
-    def __init__(self, bridge_dir: Path, handlers: dict, *, beat: bool = True, answer: bool = True):
-        self.dir = Path(bridge_dir)
-        self.handlers = handlers
-        self._beat = beat
-        self._answer = answer
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-
-    def __enter__(self) -> FakeReaperBridge:
-        self.dir.mkdir(parents=True, exist_ok=True)
-        self._thread.start()
-        if self._beat:
-            # Single heartbeat writer is the thread; just wait until it's beaten once.
-            deadline = time.monotonic() + 1.0
-            while not (self.dir / "heartbeat.lock").exists() and time.monotonic() < deadline:
-                time.sleep(0.005)
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self._stop.set()
-        self._thread.join(timeout=1.0)
-
-    def _run(self) -> None:
-        while not self._stop.is_set():
-            if self._beat:
-                self._atomic_write(self.dir / "heartbeat.lock", str(time.time()))
-            if self._answer:
-                for req_file in sorted(self.dir.glob("request_*.json")):
-                    self._handle(req_file)
-            time.sleep(0.005)
-
-    def _handle(self, req_file: Path) -> None:
-        try:
-            req = json.loads(req_file.read_text())
-        except (json.JSONDecodeError, FileNotFoundError, OSError):
-            return  # half-written or already gone — atomicity means we just retry next tick
-        result = self._dispatch(req.get("fn"), req.get("params") or {})
-        self._atomic_write(self.dir / f"response_{req['id']}.json", json.dumps(result))
-        req_file.unlink(missing_ok=True)
-
-    def _dispatch(self, fn: str, params: dict) -> dict:
-        if fn == "__batch__":
-            try:
-                results = [self._dispatch(c["fn"], c.get("params") or {})["result"]
-                           for c in params["calls"]]
-                return {"ok": True, "result": results}
-            except Exception as exc:  # noqa: BLE001
-                return {"ok": False, "error": str(exc)}
-        handler = self.handlers.get(fn)
-        if handler is None:
-            return {"ok": False, "error": f"unknown fn: {fn}"}
-        try:
-            return {"ok": True, "result": handler(params)}
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": str(exc)}
-
-    @staticmethod
-    def _atomic_write(path: Path, text: str) -> None:
-        import tempfile
-
-        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-        with os.fdopen(fd, "w") as f:
-            f.write(text)
-        os.replace(tmp, path)
-
 
 # --------------------------------------------------------------------------- #
 # Heartbeat / liveness

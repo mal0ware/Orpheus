@@ -61,6 +61,13 @@ packages = ["src/orpheus_mcp"]
 "src/orpheus_mcp/bridge/lua" = "orpheus_mcp/bridge/lua"
 "data" = "orpheus_mcp/data"
 
+[tool.uv]
+# Without this, the resolver picks numpy 2.5 and then backtracks numba all the way to
+# 0.53.1 (the only version with no numpy upper bound) — a source-only release whose
+# llvmlite 0.36 build requires Python <3.10 and fails on this machine's 3.12.
+# Forcing a modern numba pulls a numpy both it and everything else agrees on.
+constraint-dependencies = ["numba>=0.60", "llvmlite>=0.43"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
