@@ -67,7 +67,9 @@ reaper = {
     table.insert(proj.tracks, idx + 1, tr)
   end,
   CountTrackMediaItems = function(tr) return #tr.items end,
-  GetTrackMediaItem = function(_, tr, i) return tr.items[i + 1] end,  -- 0-based
+  -- Real signature: GetTrackMediaItem(MediaTrack tr, integer itemidx) — NO project arg
+  -- (unlike GetTrack). A stub that tolerated a leading 0 masked exactly that bug.
+  GetTrackMediaItem = function(tr, i) return tr.items[i + 1] end,  -- 0-based
   GetActiveTake = function(item) return item.take end,
   GetMediaItemInfo_Value = function(item, key)
     if key == "IP_ITEMNUMBER" then return item.index end

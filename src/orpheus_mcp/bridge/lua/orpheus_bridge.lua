@@ -304,7 +304,8 @@ end
 
 -- The active take of a track's first MIDI item, or nil. Stable by track ref.
 local function first_take(tr)
-  local item = reaper.GetTrackMediaItem(0, tr, 0)
+  -- NB: GetTrackMediaItem(tr, itemidx) takes NO project arg (unlike GetTrack).
+  local item = reaper.GetTrackMediaItem(tr, 0)
   if not item then return nil end
   return reaper.GetActiveTake(item)
 end
