@@ -49,6 +49,11 @@ def main() -> None:
         from orpheus_mcp.install import install_bridge
 
         dest = install_bridge()
+        # Windows consoles often use a legacy codepage (cp1252) that can't encode
+        # "✓"/"→" — degrade to replacement chars rather than crash after a
+        # successful install.
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(errors="replace")
         print(f"✓ Installed Orpheus bridge → {dest}")
         print("Next, in REAPER: Actions → Show action list → Run ReaScript → select "
               "orpheus_bridge.lua (or assign it a toolbar button).")
