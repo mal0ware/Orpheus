@@ -26,5 +26,13 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      - name: Type-check
+        run: uv run mypy
+
       - name: Test
         run: uv run pytest -q
+
+      # The Lua half of the bridge contract, in-process via lupa (no lua interpreter
+      # on the runner) — same mechanism the dev-log verified it with.
+      - name: Lua handler suites (via lupa)
+        run: uv run python scripts/run_lua_tests.py

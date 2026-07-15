@@ -40,6 +40,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
     "mypy>=1.10",
+    "lupa>=2.0",     # runs the Lua-side handler suites in-process (scripts/run_lua_tests.py)
 ]
 
 [project.urls]
