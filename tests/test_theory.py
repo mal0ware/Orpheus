@@ -21,6 +21,22 @@ def test_note_to_pc():
     assert note_to_pc("Bb") == 10
 
 
+def test_note_to_pc_normalizes_case_and_whitespace():
+    # Locks the behavior the old .capitalize() chain provided, now spelled explicitly:
+    # letter uppercased, accidental lowercased, surrounding whitespace stripped.
+    assert note_to_pc("c") == 0
+    assert note_to_pc("bb") == 10
+    assert note_to_pc("BB") == 10
+    assert note_to_pc("DB") == 1
+    assert note_to_pc(" f# ") == 6
+
+
+def test_note_to_pc_rejects_garbage():
+    for bad in ("H", "", "C##", "b#"):
+        with pytest.raises(ValueError):
+            note_to_pc(bad)
+
+
 def test_c_major_scale_is_middle_c_octave():
     assert scale_notes("C", "major", 4) == [60, 62, 64, 65, 67, 69, 71]
 

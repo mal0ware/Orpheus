@@ -78,11 +78,13 @@ class FXSpec(BaseModel):
 
 
 class TrackSpec(BaseModel):
-    guid: str | None = Field(None, description="Stable identity that survives across bridge calls.")
+    guid: str | None = Field(
+        default=None, description="Stable identity that survives across bridge calls."
+    )
     name: str
     role: TrackRole = TrackRole.OTHER
     volume_db: float = 0.0
-    pan: float = Field(0.0, ge=-1.0, le=1.0)
+    pan: float = Field(default=0.0, ge=-1.0, le=1.0)
     mute: bool = False
     solo: bool = False
     fx_chain: list[FXSpec] = Field(default_factory=list)
@@ -104,34 +106,38 @@ class HarmonyAnalysis(BaseModel):
     key_root: str | None = None
     mode: Mode | None = None
     key_confidence: float | None = Field(
-        None, ge=0.0, le=1.0, description="music21 K-S confidence - surface it, never hide it."
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="music21 K-S confidence - surface it, never hide it.",
     )
     alternative_keys: list[str] = Field(default_factory=list)
     roman_numerals: list[str] = Field(default_factory=list)
     cadences: list[str] = Field(default_factory=list)
     note: str = Field(
-        "",
+        default="",
         description="Hedging note when confidence is low or the project lacks chordal MIDI.",
     )
 
 
 class GrooveAnalysis(BaseModel):
     swing_pct: float | None = Field(
-        None,
+        default=None,
         description="0 = straight 8ths, 1 = full triplet swing (offbeats at 2/3 of the beat).",
     )
     tightness: float | None = Field(
-        None, description="1 = grid-perfect, 0 = onsets a full half-grid off. From beat onsets."
+        default=None,
+        description="1 = grid-perfect, 0 = onsets a full half-grid off. From beat onsets.",
     )
-    velocity_mean: float | None = Field(None, description="Mean note velocity (0-127).")
+    velocity_mean: float | None = Field(default=None, description="Mean note velocity (0-127).")
     velocity_stddev: float | None = Field(
-        None, description="Velocity spread — 0 means machine-flat dynamics."
+        default=None, description="Velocity spread — 0 means machine-flat dynamics."
     )
     density_notes_per_beat: float | None = Field(
-        None, description="Note onsets per beat over the analyzed span."
+        default=None, description="Note onsets per beat over the analyzed span."
     )
     feel: str = Field(
-        "", description="Human-readable quantization feel, e.g. 'hard-quantized, straight'."
+        default="", description="Human-readable quantization feel, e.g. 'hard-quantized, straight'."
     )
 
 
@@ -164,8 +170,12 @@ class FeatureDelta(BaseModel):
     """One measured-vs-fingerprint comparison — the atomic unit of 'not a vibe'."""
 
     feature: str = Field(..., description="Dimension name, e.g. 'tempo', 'swing'.")
-    measured: float | str | None = Field(None, description="What the project actually measures.")
-    target: float | str | None = Field(None, description="What the fingerprint expects.")
+    measured: float | str | None = Field(
+        default=None, description="What the project actually measures."
+    )
+    target: float | str | None = Field(
+        default=None, description="What the fingerprint expects."
+    )
     matches: bool
     explanation: str = Field(..., description="The delta in plain English, numbers included.")
 
@@ -218,7 +228,7 @@ class ProposedEdit(BaseModel):
         ..., description="The human-readable 'why' - a delta vs the reference, shown for approval."
     )
     params: dict[str, Any] = Field(default_factory=dict)
-    confidence: float | None = Field(None, ge=0.0, le=1.0)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class EditPlan(BaseModel):

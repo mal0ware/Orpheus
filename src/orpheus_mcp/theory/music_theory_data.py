@@ -42,9 +42,15 @@ TRIAD_INTERVALS: dict[str, tuple[int, int, int]] = {
 
 
 def note_to_pc(name: str) -> int:
-    """'C', 'F#', 'Bb' → pitch class 0–11."""
+    """'C', 'F#', 'Bb' → pitch class 0–11 (whitespace- and case-forgiving).
+
+    Normalization is spelled out (uppercase the letter, lowercase the accidental) so
+    'bb'/'DB' read as 'Bb'/'Db' — previously an opaque .capitalize() chain.
+    """
+    cleaned = name.strip()
+    normalized = cleaned[:1].upper() + cleaned[1:].lower()
     try:
-        return NOTE_TO_PC[name.strip().capitalize().replace("b", "b").replace("#", "#")]
+        return NOTE_TO_PC[normalized]
     except KeyError as exc:
         raise ValueError(f"Unknown note name: {name!r}") from exc
 

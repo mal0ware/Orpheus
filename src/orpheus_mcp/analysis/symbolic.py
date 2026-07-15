@@ -63,7 +63,7 @@ def _notes_to_stream(notes: list[Note]):  # -> music21.stream.Stream
     from music21 import note as m21note
     from music21 import stream
 
-    s = stream.Stream()
+    s: stream.Stream = stream.Stream()
     for n in notes:
         m = m21note.Note(n.pitch)
         m.quarterLength = n.duration_beats
