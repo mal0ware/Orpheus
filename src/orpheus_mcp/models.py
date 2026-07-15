@@ -160,6 +160,29 @@ class CompositionSpec(BaseModel):
     sections: list[Section] = Field(default_factory=list)
 
 
+class FeatureDelta(BaseModel):
+    """One measured-vs-fingerprint comparison — the atomic unit of 'not a vibe'."""
+
+    feature: str = Field(..., description="Dimension name, e.g. 'tempo', 'swing'.")
+    measured: float | str | None = Field(None, description="What the project actually measures.")
+    target: float | str | None = Field(None, description="What the fingerprint expects.")
+    matches: bool
+    explanation: str = Field(..., description="The delta in plain English, numbers included.")
+
+
+class StyleExplanation(BaseModel):
+    """'Here's why it does/doesn't sound like X' — every claim backed by a FeatureDelta."""
+
+    style: str
+    verdict: str = Field(..., description="e.g. 'sounds like classical (5/6 dimensions match)'.")
+    score: float = Field(..., ge=0.0, le=1.0, description="Matched / evaluated dimensions.")
+    deltas: list[FeatureDelta] = Field(default_factory=list)
+    caveats: list[str] = Field(
+        default_factory=list,
+        description="Unmeasured dimensions and low-confidence detections, declared not hidden.",
+    )
+
+
 class MusicReport(BaseModel):
     """The 'LLM-Readable Music Report' — structured musical *facts*, not raw numbers."""
 
