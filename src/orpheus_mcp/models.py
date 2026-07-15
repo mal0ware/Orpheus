@@ -117,9 +117,22 @@ class HarmonyAnalysis(BaseModel):
 
 class GrooveAnalysis(BaseModel):
     swing_pct: float | None = Field(
-        None, description="0 = straight, ~0.5+ = heavy swing. From raw PPQ onset deviation."
+        None,
+        description="0 = straight 8ths, 1 = full triplet swing (offbeats at 2/3 of the beat).",
     )
-    tightness: float | None = Field(None, description="How close onsets sit to the grid.")
+    tightness: float | None = Field(
+        None, description="1 = grid-perfect, 0 = onsets a full half-grid off. From beat onsets."
+    )
+    velocity_mean: float | None = Field(None, description="Mean note velocity (0-127).")
+    velocity_stddev: float | None = Field(
+        None, description="Velocity spread — 0 means machine-flat dynamics."
+    )
+    density_notes_per_beat: float | None = Field(
+        None, description="Note onsets per beat over the analyzed span."
+    )
+    feel: str = Field(
+        "", description="Human-readable quantization feel, e.g. 'hard-quantized, straight'."
+    )
 
 
 class AudioCharacter(BaseModel):
