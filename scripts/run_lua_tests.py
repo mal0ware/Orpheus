@@ -9,13 +9,16 @@ real Lua runtime inside Python. Two interceptions make that safe:
 - ``arg[0]`` (the script path) is normally set by the lua CLI; the suites use it to
   locate orpheus_bridge.lua relative to themselves, so we provide it.
 
-test_bridge.lua shells out to POSIX rm/ls for its temp bridge dir, so it only runs on
-POSIX (CI's ubuntu). The self-contained M1 handler suite runs everywhere.
+test_bridge.lua is excluded here on EVERY platform: it drives its temp bridge dir
+through ``io.popen`` (rm/ls), which lupa's embedded runtime does not support (proved
+by the first ubuntu CI run: 'popen' not supported). That suite needs a standalone lua
+interpreter; the file-IPC loop it exercises is already covered end-to-end by the
+Python integration tests against the behavioural fake and by the 2026-07-15 live
+REAPER smoke (dev-log). The self-contained M1 handler suite runs everywhere.
 """
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -23,8 +26,6 @@ REPO = Path(__file__).resolve().parents[1]
 LUA_DIR = REPO / "tests" / "lua"
 
 SUITES = ["test_m1_handlers.lua"]
-if os.name == "posix":  # test_bridge.lua uses `rm -rf` / `ls -1` for its temp dir
-    SUITES.append("test_bridge.lua")
 
 
 def run_suite(suite_path: Path) -> int:
