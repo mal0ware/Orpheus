@@ -8,7 +8,10 @@ from orpheus_mcp.theory.genre_profiles import GENRE_PROFILES, get_profile
 from orpheus_mcp.theory.music_theory_data import (
     diatonic_triad_pitches,
     note_to_pc,
+    progression_triads,
+    roman_to_degree,
     scale_notes,
+    snap_to_scale,
 )
 
 
@@ -42,3 +45,58 @@ def test_genre_profile_lookup_is_forgiving():
     assert get_profile("Hip-Hop") is GENRE_PROFILES["hiphop"]
     with pytest.raises(ValueError):
         get_profile("polka-core")
+
+
+# --------------------------------------------------------------------------- #
+# M2 helpers: Roman-numeral parsing, progression voicing, key snapping
+# --------------------------------------------------------------------------- #
+
+
+def test_roman_to_degree_ignores_extensions():
+    assert roman_to_degree("I") == 1
+    assert roman_to_degree("ii") == 2
+    assert roman_to_degree("V7") == 5
+    assert roman_to_degree("VII") == 7
+    with pytest.raises(ValueError):
+        roman_to_degree("VIII")
+    with pytest.raises(ValueError):
+        roman_to_degree("7")
+
+
+def test_progression_triads_diatonic_major():
+    chords = progression_triads("C", "major", "I-IV-V-I")
+    assert [r for r, _ in chords] == ["I", "IV", "V", "I"]
+    assert chords[0][1] == [60, 64, 67]   # C major
+    assert chords[1][1] == [65, 69, 72]   # F major
+    assert chords[2][1] == [67, 71, 74]   # G major
+
+
+def test_progression_triads_uppercase_v_in_minor_is_major():
+    # Classical practice: "V" in a minor key means the harmonic-minor major dominant,
+    # even though the natural-minor diatonic triad on 5 is minor.
+    chords = progression_triads("A", "minor", "i-iv-V-i")
+    v_roman, v_pitches = chords[2]
+    assert v_roman == "V"
+    root = v_pitches[0]
+    assert [p - root for p in v_pitches] == [0, 4, 7]  # major quality
+
+
+def test_progression_triads_lowercase_v_in_minor_stays_minor():
+    chords = progression_triads("A", "minor", "i-v")
+    _, v_pitches = chords[1]
+    root = v_pitches[0]
+    assert [p - root for p in v_pitches] == [0, 3, 7]  # minor quality
+
+
+def test_snap_to_scale_tie_resolves_down():
+    # F# (66) in C major is equidistant from F (65) and G (67) — prefer down.
+    assert snap_to_scale([66], "C", "major") == [65]
+
+
+def test_snap_to_scale_keeps_diatonic_pitches():
+    assert snap_to_scale([60, 62, 64], "C", "major") == [60, 62, 64]
+
+
+def test_snap_to_scale_unknown_mode_raises():
+    with pytest.raises(ValueError):
+        snap_to_scale([60], "C", "klingon")

@@ -67,3 +67,70 @@ def diatonic_triad_pitches(key: str, mode: str, degree: int, octave: int = 4) ->
     root = scale[degree - 1]
     quality = DIATONIC_TRIADS[mode][degree - 1]
     return [root + i for i in TRIAD_INTERVALS[quality]]
+
+
+# Longest-first so 'vii' is not read as 'v' + 'ii'. Quality suffixes ('7', '°') are
+# ignored on purpose — only the degree is load-bearing; quality comes from the diatonic
+# table plus the numeral's case (see progression_triads).
+_ROMAN_CORES: tuple[tuple[str, int], ...] = (
+    ("vii", 7), ("iii", 3), ("vi", 6), ("iv", 4), ("ii", 2), ("v", 5), ("i", 1),
+)
+
+
+def roman_to_degree(numeral: str) -> int:
+    """'V7' → 5, 'ii' → 2. Extensions/quality marks after the core are ignored."""
+    token = numeral.strip()
+    for core, degree in _ROMAN_CORES:
+        if token.lower().startswith(core):
+            rest = token[len(core):]
+            # Reject 'VIII' etc.: whatever follows the core must not be more numeral.
+            if rest[:1].lower() in ("i", "v"):
+                continue
+            return degree
+    raise ValueError(f"Not a Roman-numeral degree: {numeral!r}")
+
+
+def progression_triads(
+    key: str, mode: str, progression: str, octave: int = 4
+) -> list[tuple[str, list[int]]]:
+    """'i-iv-V-i' → [(numeral, MIDI triad), ...].
+
+    Quality starts from the diatonic table, but the numeral's CASE wins when it
+    contradicts the table's third: 'V' in minor means the harmonic-minor major dominant
+    (the table's natural-minor v is minor), which is how the genre-profile progressions
+    are written.
+    """
+    chords: list[tuple[str, list[int]]] = []
+    for numeral in progression.split("-"):
+        numeral = numeral.strip()
+        degree = roman_to_degree(numeral)
+        pitches = diatonic_triad_pitches(key, mode, degree, octave)
+        core_is_upper = numeral.lstrip()[0].isupper()
+        third = pitches[1] - pitches[0]
+        if core_is_upper and third == 3:
+            pitches[1] += 1   # raise the third: minor → major (e.g. V in minor)
+        elif not core_is_upper and third == 4:
+            pitches[1] -= 1   # lower the third: major → minor
+        chords.append((numeral, pitches))
+    return chords
+
+
+def snap_to_scale(pitches: list[int], key: str, mode: str = "major") -> list[int]:
+    """Snap each MIDI pitch to the nearest in-scale pitch; ties resolve DOWN.
+
+    Downward tie-breaking is deliberate: nudging a wrong note down keeps voicings and
+    bass lines from creeping upward when a whole passage gets constrained.
+    """
+    if mode not in SCALES:
+        raise ValueError(f"Unknown mode {mode!r}; known: {sorted(SCALES)}")
+    allowed = {(note_to_pc(key) + step) % 12 for step in SCALES[mode]}
+    out: list[int] = []
+    for pitch in pitches:
+        for delta in (0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6):
+            candidate = pitch + delta
+            if 0 <= candidate <= 127 and candidate % 12 in allowed:
+                out.append(candidate)
+                break
+        else:  # pragma: no cover - every scale has a pitch within 6 semitones
+            out.append(pitch)
+    return out
