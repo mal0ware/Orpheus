@@ -18,7 +18,7 @@ _RO = {"readOnlyHint": True}
 _DEFAULT_PROGRESSIONS = {"major": "I-IV-V-I", "minor": "i-iv-V-i"}
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG001 - uniform signature
     @mcp.tool(annotations=_RO)
     def get_scale_notes(key: str, mode: str = "major", octave: int = 4) -> dict:
         """MIDI notes for a key/mode so generated notes stay diatonic."""

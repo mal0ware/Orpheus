@@ -10,7 +10,7 @@ from orpheus_mcp.models import Note, TrackSpec
 _RO = {"readOnlyHint": True}
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
     @mcp.tool(annotations=_RO)
     def get_project_info() -> dict:
         """Tempo, time signature, length, track count, and transport state."""
@@ -59,7 +59,11 @@ def register(mcp: FastMCP) -> None:
         ]
         return {"track": result.get("track"), "notes": notes}
 
+    if not include_stubs:
+        return
+
     @mcp.tool(annotations=_RO)
     def get_fx_params(track: str) -> dict:
-        """Decode an FX chain's parameters BY NAME (e.g. compressor ratio), not as opaque 0–1."""
+        """[NOT IMPLEMENTED] Decode an FX chain's parameters BY NAME (e.g. compressor
+        ratio), not as opaque 0-1."""
         raise NotImplementedError("M1 (FX) — see docs/roadmap.md")

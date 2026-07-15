@@ -16,7 +16,7 @@ from orpheus_mcp.models import Note
 _DESTRUCTIVE = {"destructiveHint": True}
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
     @mcp.tool(annotations=_DESTRUCTIVE)
     def insert_midi_notes(track: str, notes: list[Note], at_bar: int = 1) -> dict:
         """Batch-write notes into a take, PPQ/tempo-correct, in ONE bridge round-trip.
@@ -64,10 +64,13 @@ def register(mcp: FastMCP) -> None:
             "length_bars": result.get("length_bars", length_bars),
         }
 
-    @mcp.tool(annotations=_DESTRUCTIVE)
-    def quantize_notes(track: str, grid: str = "1/16") -> dict:
-        """Quantize a take's notes to a grid (cleanup before/after analysis)."""
-        raise NotImplementedError("M1 (quantize) — see docs/roadmap.md")
+    if include_stubs:
+
+        @mcp.tool(annotations=_DESTRUCTIVE)
+        def quantize_notes(track: str, grid: str = "1/16") -> dict:
+            """[NOT IMPLEMENTED] Quantize a take's notes to a grid (cleanup
+            before/after analysis)."""
+            raise NotImplementedError("M1 (quantize) — see docs/roadmap.md")
 
     @mcp.tool(annotations=_DESTRUCTIVE)
     def transpose_notes(track: str, semitones: int) -> dict:

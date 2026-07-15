@@ -8,13 +8,18 @@ from fastmcp import FastMCP
 _RO = {"readOnlyHint": True}
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
+    if not include_stubs:
+        return  # every tool below is a stub - see the registry honesty rule
+
     @mcp.tool(annotations=_RO)
     def resolve_track(query: str) -> dict:
-        """Fuzzy-match a track by name/role, with disambiguation ('2 drum tracks: which?')."""
+        """[NOT IMPLEMENTED]
+        Fuzzy-match a track by name/role, with disambiguation ('2 drum tracks: which?')."""
         raise NotImplementedError("M4 — see docs/roadmap.md")
 
     @mcp.tool(annotations=_RO)
     def resolve_time(expr: str) -> dict:
-        """Parse '8 bars' / '1:30' / keywords into concrete tempo-aware positions."""
+        """[NOT IMPLEMENTED]
+        Parse '8 bars' / '1:30' / keywords into concrete tempo-aware positions."""
         raise NotImplementedError("M4 — see docs/roadmap.md")

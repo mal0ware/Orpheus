@@ -43,7 +43,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _import_register(module_path: str) -> Callable[[object], None]:
+def _import_register(module_path: str) -> Callable[..., None]:
     import importlib
 
     module = importlib.import_module(module_path)
@@ -53,19 +53,23 @@ def _import_register(module_path: str) -> Callable[[object], None]:
 def register_tools(mcp: object, profile: str = "default") -> list[str]:
     """Register every tool category in ``profile`` onto the FastMCP instance.
 
+    HONESTY RULE: only the ``full`` profile exposes not-yet-implemented stub tools, and
+    each stub's docstring starts with "[NOT IMPLEMENTED]". The explain/default surfaces
+    advertise working tools only, so a client never plans around a tool that would just
+    raise at call time. (Stubs raise when CALLED, not when registered — an
+    except-NotImplementedError around registration can never catch them.)
+
     Returns the list of categories successfully registered. Categories whose optional
     dependencies are missing are skipped with a warning rather than crashing the server.
     """
     categories: Iterable[str] = PROFILES.get(profile, PROFILES["default"])
+    include_stubs = profile == "full"
     registered: list[str] = []
     for category in categories:
         module_path = _CATEGORY_IMPORTS[category]
         try:
-            _import_register(module_path)(mcp)
+            _import_register(module_path)(mcp, include_stubs=include_stubs)
             registered.append(category)
-        except NotImplementedError:
-            # Stub module — expected during early development.
-            registered.append(f"{category} (stub)")
         except ImportError as exc:  # optional dependency missing
             import warnings
 

@@ -102,7 +102,7 @@ def build_current_spec(wav_path: str | None = None) -> CompositionSpec:
     )
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG001 - uniform signature
     @mcp.tool(annotations=_RO)
     def analyze_harmony() -> HarmonyAnalysis:
         """Detect key/scale/chords/Roman numerals/cadences from the project's MIDI.

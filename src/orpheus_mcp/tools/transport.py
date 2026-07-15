@@ -13,7 +13,7 @@ from orpheus_mcp.bridge import BridgeClient
 _TRANSPORT_COMMANDS = ("play", "stop", "record")
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG001 - uniform signature
     @mcp.tool(annotations={"destructiveHint": True})
     def set_tempo(bpm: Annotated[float, Field(gt=0, le=400)]) -> dict:
         """Set the project tempo in BPM (downstream: seconds_per_beat = 60 / bpm)."""

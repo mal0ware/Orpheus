@@ -17,7 +17,7 @@ from orpheus_mcp.tools.analyze import build_current_spec
 _RO = {"readOnlyHint": True}
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
     @mcp.tool(annotations=_RO)
     def list_style_fingerprints() -> list[str]:
         """List cached target fingerprints (e.g. 'classical', 'hiphop', 'dominic-fike-sunburn').
@@ -37,9 +37,13 @@ def register(mcp: FastMCP) -> None:
         fingerprint = load_fingerprint(style)
         return explain_against_fingerprint(build_current_spec(wav_path), fingerprint)
 
+    if not include_stubs:
+        return
+
     @mcp.tool(annotations=_RO)
     def recommend_changes(target_style: str) -> EditPlan:
-        """Diff the current project against a target fingerprint and return an EditPlan —
+        """[NOT IMPLEMENTED]
+        Diff the current project against a target fingerprint and return an EditPlan —
         a list of ProposedEdit{target, action, reason, params} across the v1 dimensions
         (tempo, key, harmony, instrumentation, mastering-match), each annotated with a
         human-readable reason. Read-only: surface these reasons to the user for approval,

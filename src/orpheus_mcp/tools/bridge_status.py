@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 from orpheus_mcp.bridge import BridgeClient, BridgeError
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG001 - uniform signature
     @mcp.tool(annotations={"readOnlyHint": True})
     def get_connection_status() -> dict:
         """Check whether REAPER is running and the Orpheus bridge loop is alive.
