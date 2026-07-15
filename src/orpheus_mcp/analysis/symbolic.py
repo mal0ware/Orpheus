@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import statistics
 
-from orpheus_mcp.models import GrooveAnalysis, HarmonyAnalysis, Mode, Note
+from orpheus_mcp.models import GrooveAnalysis, HarmonyAnalysis, Mode, Note, TrackRole
 
 # How many alternative key readings to surface — enough to show detection is
 # probabilistic, few enough to stay readable.
@@ -26,6 +26,36 @@ _PERCUSSIVE_RE = re.compile(
 def looks_percussive(track_name: str) -> bool:
     """True if a track name says 'percussion' (drum-track filter for key detection)."""
     return bool(_PERCUSSIVE_RE.search(track_name))
+
+
+# Name → role heuristics for the instrumentation dimension of style matching. Ordered:
+# more specific patterns (sub bass, vox) must win over their generic prefixes.
+_ROLE_PATTERNS: tuple[tuple[str, TrackRole], ...] = (
+    (r"(?i)\bsub[\s_-]?bass|808 bass\b", TrackRole.SUB_BASS),
+    (r"(?i)\bbass\b", TrackRole.BASS),
+    (r"(?i)\b(keys|piano|rhodes|organ|e\.?piano)\b", TrackRole.KEYS),
+    (r"(?i)\bpads?\b", TrackRole.PAD),
+    (r"(?i)\barps?\b", TrackRole.ARP),
+    (r"(?i)\b(guitar|gtr)\b", TrackRole.GUITAR),
+    (r"(?i)\b(strings?|violins?|violas?|cellos?)\b", TrackRole.STRINGS),
+    (r"(?i)\b(vocals?|vox|voice|choir)\b", TrackRole.VOCAL),
+    (r"(?i)\blead\b", TrackRole.LEAD),
+    (r"(?i)\bfx\b", TrackRole.FX),
+)
+
+
+def infer_role(track_name: str) -> TrackRole:
+    """Best-effort track role from its name — feeds the instrumentation style dimension.
+
+    A heuristic, not ground truth: unrecognized names stay OTHER, which the style diff
+    treats as 'not measured' rather than as evidence.
+    """
+    if looks_percussive(track_name):
+        return TrackRole.DRUMS
+    for pattern, role in _ROLE_PATTERNS:
+        if re.search(pattern, track_name):
+            return role
+    return TrackRole.OTHER
 
 
 def _notes_to_stream(notes: list[Note]):  # -> music21.stream.Stream

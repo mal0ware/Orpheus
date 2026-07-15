@@ -11,9 +11,10 @@ from orpheus_mcp.analysis.symbolic import (
     analyze_groove,
     analyze_harmony,
     analyze_key,
+    infer_role,
     looks_percussive,
 )
-from orpheus_mcp.models import Mode, Note
+from orpheus_mcp.models import Mode, Note, TrackRole
 
 
 def _chords(progression: list[list[int]], beats_per_chord: float = 4.0) -> list[Note]:
@@ -165,3 +166,13 @@ def test_looks_percussive():
         assert looks_percussive(name), name
     for name in ("Piano", "Bass", "Lead Vox", ""):
         assert not looks_percussive(name), name
+
+
+def test_infer_role_from_track_name():
+    assert infer_role("Drums") == TrackRole.DRUMS
+    assert infer_role("Sub Bass") == TrackRole.SUB_BASS
+    assert infer_role("Bass") == TrackRole.BASS
+    assert infer_role("Grand Piano") == TrackRole.KEYS
+    assert infer_role("Violins") == TrackRole.STRINGS
+    assert infer_role("Lead Vox") == TrackRole.VOCAL
+    assert infer_role("Mystery Track 7") == TrackRole.OTHER

@@ -6,7 +6,13 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from orpheus_mcp.models import EditPlan
+from orpheus_mcp.analysis.fingerprint import (
+    explain_against_fingerprint,
+    list_fingerprints,
+    load_fingerprint,
+)
+from orpheus_mcp.models import EditPlan, StyleExplanation
+from orpheus_mcp.tools.analyze import build_current_spec
 
 _RO = {"readOnlyHint": True}
 
@@ -16,16 +22,20 @@ def register(mcp: FastMCP) -> None:
     def list_style_fingerprints() -> list[str]:
         """List cached target fingerprints (e.g. 'classical', 'hiphop', 'dominic-fike-sunburn').
         Each is the analysis pipeline run over 3–5 per-era reference tracks."""
-        raise NotImplementedError("M3 — see docs/roadmap.md")
+        return list_fingerprints()
 
     @mcp.tool(annotations=_RO)
-    def explain_style() -> dict:
-        """"Why does this sound like X?" — run feature thresholds over the current project and
-        return human-readable reasons (each matched threshold = one reason).
+    def explain_style(style: str, wav_path: str | None = None) -> StyleExplanation:
+        """"Why does/doesn't this sound like X?" — the v0.1 headline capability.
 
-        This is the v0.1 headline capability: understanding without transformation.
+        Snapshots the current project over the bridge, diffs it against the named
+        fingerprint, and returns one FeatureDelta per comparable dimension — every claim
+        is a measured-vs-fingerprint delta with both numbers in it, never a vibe. Pass a
+        rendered WAV to include the audio dimensions (loudness/tonal balance); without
+        one they are declared as caveats.
         """
-        raise NotImplementedError("M2 — see docs/roadmap.md")
+        fingerprint = load_fingerprint(style)
+        return explain_against_fingerprint(build_current_spec(wav_path), fingerprint)
 
     @mcp.tool(annotations=_RO)
     def recommend_changes(target_style: str) -> EditPlan:
