@@ -4,6 +4,28 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-07-15 — LIVE SMOKE PASS (M0 + M1) + M2 exercised against real REAPER
+
+First-ever contact with live REAPER, and everything held:
+
+- Launched REAPER 7.77/x64 with the bridge script as a command-line
+  argument (`reaper.exe -nosplash <path>\orpheus_bridge.lua`) — no manual
+  action-list step needed; the defer loop and heartbeat came up on their own.
+- `get_connection_status` -> `{ok: true, reaper_version: '7.77/x64'}`.
+- M1 roundtrip: `create_track` returned a stable GUID; `create_midi_item` +
+  `insert_midi_notes` wrote a C4-E4-G4 arpeggio in beats; `get_track_midi`
+  read it back at exactly beats 0.0 / 1.0 / 2.0 with durations and
+  velocities preserved. The beats<->PPQ math agrees with
+  `tests/fake_reaper.py` on real REAPER.
+- M2 live: `analyze_harmony` on the read-back notes detected C major
+  (confidence 0.81) and correctly declined Roman numerals on monophonic
+  material; `analyze_groove` read "hard-quantized, machine-flat dynamics" —
+  the honest description of a programmatic insert.
+
+The queued 5-minute task below is done; kept for the manual-run steps.
+
+---
+
 ## ▶ NEXT SESSION — resume here
 
 **Where things stand:** the Windows Desktop PC is fully set up (deps synced, tests green, bridge script installed into `%APPDATA%\REAPER\Scripts\orpheus\`, REAPER 7.73 detected at `C:\Program Files\REAPER (x64)`). M0 **and the M1 core** (tracks, transport, PPQ-correct MIDI write/read/transpose) are merged and verified against the behavioural REAPER fake. The one thing no machine has done yet: run the handlers against **live REAPER**.
