@@ -38,3 +38,17 @@ async def test_create_chord_progression_writes_notes(mcp_client, project):
     tr = project.resolve_track("keys")
     assert len(tr.takes[0].notes) == 12  # 4 triads * 3 notes
     assert "ReaSynth" in tr.fx  # instrument auto-loaded
+
+
+async def test_create_bassline_root_style(mcp_client, project):
+    async with mcp_client as c:
+        await c.call_tool("create_track", {"name": "bass"})
+        res = await c.call_tool(
+            "create_bassline",
+            {"track": "bass", "chords": "Am, Dm, E, Am", "style": "root", "octave": 2},
+        )
+    tr = project.resolve_track("bass")
+    assert res.data["notes_written"] == 4
+    # Am root at octave 2 -> A2 = 45
+    assert tr.takes[0].notes[0].pitch == 45
+    assert "ReaSynth" in tr.fx

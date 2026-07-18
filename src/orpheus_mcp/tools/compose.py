@@ -45,3 +45,24 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         written = _write_notes(bridge, track, notes)
         bridge.call("add_instrument", track=track, kind="named", name="ReaSynth")
         return {"track": track, "chords_written": len(voiced), "notes_written": written}
+
+    @mcp.tool(annotations=_DESTRUCTIVE)
+    def create_bassline(
+        track: str,
+        chords: str,
+        key: str | None = None,
+        mode: str = "minor",
+        style: str = "root",
+        octave: int = 2,
+        bars_per_chord: int = 1,
+    ) -> dict:
+        """Write a bass line following `chords` (same notation as create_chord_progression).
+        `style`: 'root' | 'root_fifth' | 'octave'. Auto-loads ReaSynth (bass register)."""
+        from orpheus_mcp.theory.patterns import bassline_notes
+
+        chord_pitches = resolve_progression(chords, key=key, mode=mode, octave=octave)
+        notes = bassline_notes(chord_pitches, style=style, bars_per_chord=bars_per_chord)
+        bridge = BridgeClient()
+        written = _write_notes(bridge, track, notes)
+        bridge.call("add_instrument", track=track, kind="named", name="ReaSynth")
+        return {"track": track, "notes_written": written}
