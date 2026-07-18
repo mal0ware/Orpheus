@@ -60,6 +60,7 @@ class FakeReaperProject:
     ts_den: int = 4
     tracks: list[FakeTrack] = field(default_factory=list)
     play_state: int = 0
+    installed_fx: list[str] = field(default_factory=list)
     _guid_seq: int = 0
 
     # -- identity / lookup ------------------------------------------------- #
@@ -232,6 +233,9 @@ def make_handlers(project: FakeReaperProject) -> dict:
                 moved += 1
         return {"track": tr.guid, "transposed": moved, "semitones": semis}
 
+    def list_installed_fx(_):
+        return {"fx": list(project.installed_fx)}
+
     return {
         "get_connection_status": get_connection_status,
         "get_project_info": get_project_info,
@@ -244,6 +248,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "insert_midi_notes": insert_midi_notes,
         "get_track_midi": get_track_midi,
         "transpose_notes": transpose_notes,
+        "list_installed_fx": list_installed_fx,
     }
 
 

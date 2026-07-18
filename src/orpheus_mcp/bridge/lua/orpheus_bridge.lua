@@ -493,6 +493,24 @@ HANDLERS.transpose_notes = function(p)
   return { track = reaper.GetTrackGUID(tr), transposed = moved, semitones = semis }
 end
 
+-- Enumerate installed FX/instruments. EnumInstalledFX(index) -> ret, name, ident.
+-- Read-only; installs nothing. Cached by REAPER internally.
+HANDLERS.list_installed_fx = function(_)
+  local out = {}
+  local i = 0
+  while true do
+    local ok, name = reaper.EnumInstalledFX(i)
+    if not ok then break end
+    out[#out + 1] = name
+    i = i + 1
+    if i > 20000 then break end  -- hard safety cap
+  end
+  return { fx = out }
+end
+-- NOTE (verify live): reaper.EnumInstalledFX returns (retval, name, ident) in REAPER 7.x.
+-- If unavailable on the target build, fall back to reading reaper-vstplugins*.ini.
+-- The fake + Lua-stub tests do not depend on the real API; the live smoke (Task 15) confirms it.
+
 local function dispatch(fn, params)
   if fn == "__batch__" then
     local results = {}

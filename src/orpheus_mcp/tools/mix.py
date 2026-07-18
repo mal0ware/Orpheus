@@ -16,8 +16,4 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         fader_db = mix_target(genre, role) − chain_offset(track FX), clamped to fader range."""
         raise NotImplementedError("M4 — see docs/roadmap.md")
 
-    @mcp.tool(annotations={"readOnlyHint": True})
-    def list_installed_fx(kind: str | None = None) -> dict:
-        """[NOT IMPLEMENTED]
-        Parse REAPER's plugin cache .ini files so recommendations only suggest owned plugins."""
-        raise NotImplementedError("M4 — see docs/roadmap.md")
+    # list_installed_fx pulled forward from Slice 2 — see orpheus_mcp.tools.instruments.

@@ -122,6 +122,12 @@ reaper = {
       return a.sppq < b.sppq
     end)
   end,
+
+  EnumInstalledFX = function(i)
+    local fx = { "VSTi: ReaSynth (Cockos)", "VSTi: Surge XT" }
+    if fx[i + 1] then return true, fx[i + 1], "ident" end
+    return false
+  end,
 }
 
 -- --------------------------------------------------------------------------- --
@@ -212,6 +218,13 @@ local b = call("__batch__", { calls = {
 eq(b.ok, true, "batch ok")
 eq(#b.result, 2, "batch returns 2 results")
 eq(b.result[2].tempo, 90, "batch second call applied tempo")
+
+-- 9. list_installed_fx enumerates via EnumInstalledFX until it returns false
+do
+  local r = M.dispatch("list_installed_fx", {})
+  eq(r.ok, true, "list_installed_fx ok")
+  eq(#r.result.fx, 2, "list_installed_fx returns both installed")
+end
 
 print(string.format("lua m1 handlers: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

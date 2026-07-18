@@ -27,6 +27,8 @@ IMPLEMENTED = {
     "insert_midi_notes",
     "create_midi_item",
     "transpose_notes",
+    # instruments (pulled forward from Slice 2)
+    "list_installed_fx",
     # theory (M2)
     "get_scale_notes",
     "suggest_chord_progression",

@@ -25,6 +25,7 @@ _CATEGORY_IMPORTS: dict[str, str] = {
     "style": "orpheus_mcp.tools.style",
     "apply": "orpheus_mcp.tools.apply",
     "render": "orpheus_mcp.tools.render",
+    "instruments": "orpheus_mcp.tools.instruments",
     "dsl": "orpheus_mcp.tools.dsl",
     "compose": "orpheus_mcp.tools.compose",
     "mix": "orpheus_mcp.tools.mix",
@@ -37,7 +38,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
     # v0.3 the full differentiator.
     "default": (
         "bridge", "project", "transport", "tracks", "midi",
-        "theory", "analyze", "style", "apply", "render",
+        "theory", "analyze", "style", "apply", "render", "instruments",
     ),
     "full": tuple(_CATEGORY_IMPORTS.keys()),
 }
