@@ -53,6 +53,9 @@ def parse_chord_symbol(symbol: str, octave: int = 4) -> list[int]:
         raise ValueError(f"bad chord quality in {symbol!r}: {rest!r}")
     quality = _QUALITIES[rest]
 
+    if seventh is not None and quality in ("dim", "aug"):
+        raise ValueError(f"dim/aug chords take no seventh in v1: {symbol!r}")
+
     base = root_pc + 12 * (octave + 1)  # MIDI: C-1 = 0, so C4 = 60
     pitches = [base + i for i in TRIAD_INTERVALS[quality]]
     if seventh is not None:

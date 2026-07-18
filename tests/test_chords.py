@@ -52,3 +52,9 @@ def test_resolve_roman_progression_needs_key():
 def test_resolve_roman_without_key_raises():
     with pytest.raises(ValueError):
         resolve_progression("i-iv-V-i")
+
+
+def test_dim_and_aug_reject_sevenths():
+    for bad in ("Cdim7", "Caug7"):
+        with pytest.raises(ValueError):
+            parse_chord_symbol(bad)
