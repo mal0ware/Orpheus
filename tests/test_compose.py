@@ -6,7 +6,7 @@ import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 
-from fake_reaper import FakeReaperBridge, FakeReaperProject, make_handlers
+from fake_reaper import PPQ_PER_QN, FakeReaperBridge, FakeReaperProject, make_handlers
 from orpheus_mcp.registry import register_tools
 
 
@@ -110,6 +110,16 @@ async def test_compose_section_builds_audible_lofi(mcp_client, project):
     # every pitched track has an instrument; drums has the 3-voice kit
     assert "ReaSynth" in project.resolve_track("chords").fx
     assert len(project.resolve_track("drums").fx) == 3
+
+
+async def test_compose_section_tiles_drums_across_all_bars(mcp_client, project):
+    async with mcp_client as c:
+        await c.call_tool("compose_section", {"genre": "lofi", "bars": 2})
+    drum_notes = project.resolve_track("drums").takes[0].notes
+    # bar 1 = start_beat in [0, 4); bar 2 hits must exist at start_beat >= 4.0, proving
+    # the one-bar backbone was tiled rather than written once.
+    bar2_hits = [n for n in drum_notes if n.start_ppq >= 4.0 * PPQ_PER_QN]
+    assert bar2_hits, "expected drum hits in bar 2 (start_beat >= 4.0)"
 
 
 async def test_compose_section_unknown_genre_raises(mcp_client):

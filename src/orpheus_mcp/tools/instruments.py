@@ -23,15 +23,9 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         """Load an instrument so a track is audible. kind='named' adds `name` (idempotent);
         kind='drumkit' loads a stock 3-voice kit (kick/snare/hat) from bundled samples."""
         if kind == "drumkit":
-            import tempfile
-            from pathlib import Path
+            from orpheus_mcp.drumkit import load_drumkit
 
-            from orpheus_mcp.drumkit import ensure_drum_samples
-
-            samples = ensure_drum_samples(Path(tempfile.gettempdir()) / "orpheus_drumkit")
-            result = BridgeClient().call(
-                "add_instrument", track=track, kind="drumkit", samples=samples
-            )
+            result = load_drumkit(BridgeClient(), track)
         else:
             if not name:
                 raise ValueError("kind='named' requires an instrument name")

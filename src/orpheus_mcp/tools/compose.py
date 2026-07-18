@@ -33,19 +33,6 @@ def _chord_notes(voiced: list[list[int]], beats_per_chord: float, velocity: int 
     return notes
 
 
-def _load_drumkit(bridge: BridgeClient, track: str) -> None:
-    """Load the stock 3-voice drum kit (kick/snare/hat) onto `track`. Shared by
-    create_drum_pattern and compose_section (also mirrored in tools/instruments.py's
-    add_instrument for the standalone kind='drumkit' path)."""
-    import tempfile
-    from pathlib import Path
-
-    from orpheus_mcp.drumkit import ensure_drum_samples
-
-    samples = ensure_drum_samples(Path(tempfile.gettempdir()) / "orpheus_drumkit")
-    bridge.call("add_instrument", track=track, kind="drumkit", samples=samples)
-
-
 def _repeat_progression(progression: str, bars: int) -> str:
     """Repeat a '-'-joined progression (one chord per bar) until it covers `bars` bars,
     then trim to exactly `bars` chords."""
@@ -100,12 +87,13 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
     def create_drum_pattern(track: str, pattern: str, steps_per_bar: int = 16) -> dict:
         """Write a drum pattern from a step grid (rows 'kick:'/'snare:'/'hat:', 'x'=hit).
         Loads a stock 3-voice kit so it's audible immediately."""
+        from orpheus_mcp.drumkit import load_drumkit
         from orpheus_mcp.theory.patterns import parse_drum_grid
 
         notes = parse_drum_grid(pattern, steps_per_bar=steps_per_bar)
         bridge = BridgeClient()
         written = _write_notes(bridge, track, notes)
-        _load_drumkit(bridge, track)
+        load_drumkit(bridge, track)
         return {"track": track, "hits_written": written}
 
     @mcp.tool(annotations=_DESTRUCTIVE)
@@ -151,12 +139,13 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         tracks, lays a genre-appropriate groove, and loads the best available instrument per
         role (preferring the user's own installed plugins). Returns the tempo, tracks, and
         the instrument chosen per role."""
+        from orpheus_mcp.drumkit import load_drumkit
         from orpheus_mcp.instruments import select_instrument
         from orpheus_mcp.theory.genre_profiles import get_profile
         from orpheus_mcp.theory.patterns import bassline_notes, parse_drum_grid
 
         profile = get_profile(genre)  # raises ValueError on unknown genre
-        tonic = key or "A"
+        tonic = key or {"lofi": "A", "hiphop": "A", "classical": "C"}.get(genre, "A")
         mode = profile["typical_modes"][0]
         bpm = sum(profile["bpm_range"]) // 2
         full_prog = _repeat_progression(profile["progressions"][0], bars)
@@ -168,14 +157,20 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         for track_name in ("drums", "chords", "bass"):
             bridge.call("create_track", name=track_name)
 
-        # drums: one-bar backbeat (repeating the grid is a Slice-2 arrangement concern).
+        # drums: one-bar backbeat, tiled across the full section length.
         one_bar = ("kick:  x...x...x...x...\n"
                    "snare: ....x.......x...\n"
                    "hat:   x.x.x.x.x.x.x.x.")
-        _write_notes(bridge, "drums", parse_drum_grid(one_bar))
+        backbone = parse_drum_grid(one_bar)
+        drum_notes = [
+            {**hit, "start_beat": hit["start_beat"] + b * 4.0}
+            for b in range(bars)
+            for hit in backbone
+        ]
+        _write_notes(bridge, "drums", drum_notes)
         drums_instrument = select_instrument("drums", inventory)
         if drums_instrument["kind"] == "drumkit":
-            _load_drumkit(bridge, "drums")
+            load_drumkit(bridge, "drums")
         else:
             bridge.call("add_instrument", track="drums", kind="named",
                         name=drums_instrument["name"])

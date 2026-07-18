@@ -55,3 +55,13 @@ def ensure_drum_samples(dest_dir: Path) -> dict[str, str]:
                 w.writeframes(b"".join(struct.pack("<h", s) for s in samples))
         paths[voice] = str(target)
     return paths
+
+
+def load_drumkit(bridge, track: str) -> dict:
+    """Ensure the stock 3-voice kit samples exist and load them on `track` via `bridge`.
+    Returns the bridge's add_instrument result ({track, loaded, already_present})."""
+    import tempfile
+    from pathlib import Path
+
+    samples = ensure_drum_samples(Path(tempfile.gettempdir()) / "orpheus_drumkit")
+    return bridge.call("add_instrument", track=track, kind="drumkit", samples=samples)
