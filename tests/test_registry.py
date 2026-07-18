@@ -30,6 +30,7 @@ IMPLEMENTED = {
     # instruments (pulled forward from Slice 2)
     "list_installed_fx",
     "add_instrument",
+    "install_sound_pack",
     # theory (M2)
     "get_scale_notes",
     "suggest_chord_progression",

@@ -43,3 +43,28 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
             "loaded": result.get("loaded"),
             "already_present": result.get("already_present", False),
         }
+
+    @mcp.tool(annotations=_DESTRUCTIVE)
+    def install_sound_pack(confirm: bool = False) -> dict:
+        """OPTIONAL, opt-in: download ONE BSD-licensed sfizz .vst3 + a CC0 patch into a
+        user-writable VST folder for a nicer default sound. Requires confirm=True. No admin,
+        no installer, no licensed software. Falls back to stock if declined."""
+        if not confirm:
+            return {
+                "installed": False,
+                "note": "Set confirm=True to install the open-source sfizz + CC0 pack. "
+                        "Stock instruments are used until then.",
+            }
+        import os
+        from pathlib import Path
+
+        from orpheus_mcp.soundpack import install_sound_pack as _install
+
+        vst_dir = Path(os.path.expanduser("~")) / ".orpheus" / "vst"
+        result = _install(vst_dir)
+        # Point REAPER at the folder + rescan (best-effort; stock still works if this fails).
+        try:
+            BridgeClient().call("add_vst_path_and_rescan", path=str(vst_dir))
+        except Exception:  # noqa: BLE001
+            result["rescan"] = "manual — add the folder to REAPER's VST paths + rescan"
+        return result

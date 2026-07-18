@@ -71,6 +71,30 @@ def test_add_drumkit_loads_three_samplers(client, project):
     assert len(tr.fx) == 3
 
 
+async def test_install_sound_pack_requires_confirm(mcp_client):
+    async with mcp_client as c:
+        res = await c.call_tool("install_sound_pack", {})
+    assert res.data["installed"] is False
+    assert "confirm=True" in res.data["note"]
+
+
+async def test_install_sound_pack_installs_with_confirm(mcp_client, monkeypatch, tmp_path):
+    installed_to = {}
+
+    def fake_install(dest_dir, fetch=None):
+        installed_to["dir"] = dest_dir
+        return {"installed": True, "placed": ["sfizz.vst3", "orpheus_gm.sfz"], "dir": str(dest_dir)}
+
+    monkeypatch.setattr("orpheus_mcp.soundpack.install_sound_pack", fake_install)
+    async with mcp_client as c:
+        res = await c.call_tool("install_sound_pack", {"confirm": True})
+    assert res.data["installed"] is True
+    assert installed_to["dir"]  # placed into ~/.orpheus/vst, not asserting exact path
+    # The fake bridge has no "add_vst_path_and_rescan" verb, so the tool must fall back
+    # to the manual-instruction note rather than raising.
+    assert "rescan" in res.data
+
+
 def test_clear_track_midi_empties_take(client, project):
     from fake_reaper import FakeNote, FakeTake, FakeTrack
 
