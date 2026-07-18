@@ -22,7 +22,7 @@ def parse_drum_grid(pattern: str, steps_per_bar: int = 16) -> list[dict]:
         if voice not in GM_DRUMS:
             raise ValueError(f"unknown drum voice {voice!r}; known: {sorted(GM_DRUMS)}")
         vel = 100 if voice != "hat" else 80
-        for i, ch in enumerate(cells.replace(" ", "")):
+        for i, ch in enumerate(cells):
             if ch == "x":
                 notes.append(
                     {
@@ -32,7 +32,7 @@ def parse_drum_grid(pattern: str, steps_per_bar: int = 16) -> list[dict]:
                         "velocity": vel,
                     }
                 )
-            elif ch != ".":
+            elif ch not in (".", " "):
                 raise ValueError(f"drum cell must be 'x' or '.', got {ch!r}")
     return notes
 

@@ -41,3 +41,10 @@ def test_bassline_root_fifth():
     notes = bassline_notes(chords, style="root_fifth", bars_per_chord=1)
     assert [n["pitch"] for n in notes] == [60, 67]
     assert [n["start_beat"] for n in notes] == [0.0, 2.0]
+
+
+def test_space_is_a_rest_not_removed():
+    # Space is a valid rest char that occupies a step, exactly like '.'.
+    notes = parse_drum_grid("kick: x   x   x   x   ", steps_per_bar=16)
+    assert [n["start_beat"] for n in notes] == [0.0, 1.0, 2.0, 3.0]
+    assert len(notes) == 4
