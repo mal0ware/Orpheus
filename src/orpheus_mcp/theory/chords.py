@@ -91,3 +91,24 @@ def resolve_progression(
         return [pitches for _numeral, pitches in progression_triads(key, mode, spec, octave)]
     # dash-separated symbols, e.g. "Cm7-Fm7-Bb7"
     return [parse_chord_symbol(tok, octave) for tok in spec.split("-") if tok.strip()]
+
+
+def voice_lead(chords: list[list[int]], low: int = 48, high: int = 84) -> list[list[int]]:
+    """Octave-shift each chord (as a block) to minimize centroid movement vs the previous
+    voicing, staying inside [low, high]. Deterministic; the first chord is unchanged."""
+    if not chords:
+        return []
+    out: list[list[int]] = [list(chords[0])]
+    for chord in chords[1:]:
+        prev_centroid = sum(out[-1]) / len(out[-1])
+        best: list[int] | None = None
+        best_cost: float | None = None
+        for shift in (-24, -12, 0, 12, 24):
+            cand = [p + shift for p in chord]
+            if any(p < low or p > high for p in cand):
+                continue
+            cost = abs(sum(cand) / len(cand) - prev_centroid)
+            if best_cost is None or cost < best_cost:
+                best_cost, best = cost, cand
+        out.append(best if best is not None else list(chord))
+    return out

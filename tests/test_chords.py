@@ -58,3 +58,26 @@ def test_dim_and_aug_reject_sevenths():
     for bad in ("Cdim7", "Caug7"):
         with pytest.raises(ValueError):
             parse_chord_symbol(bad)
+
+
+def test_voice_lead_keeps_first_chord():
+    from orpheus_mcp.theory.chords import voice_lead
+    chords = [[60, 64, 67], [65, 69, 72]]
+    assert voice_lead(chords)[0] == [60, 64, 67]
+
+
+def test_voice_lead_minimizes_movement():
+    from orpheus_mcp.theory.chords import voice_lead
+    # A big upward jump should be pulled down an octave to sit near the previous chord.
+    chords = [[60, 64, 67], [77, 81, 84]]  # C major, then F major an octave high
+    out = voice_lead(chords)
+    prev_centroid = sum(out[0]) / 3
+    next_centroid = sum(out[1]) / 3
+    assert abs(next_centroid - prev_centroid) <= 6  # stayed close
+
+
+def test_voice_lead_respects_register_band():
+    from orpheus_mcp.theory.chords import voice_lead
+    chords = [[60, 64, 67], [65, 69, 72]]
+    for chord in voice_lead(chords, low=48, high=84):
+        assert all(48 <= p <= 84 for p in chord)
