@@ -91,3 +91,24 @@ def test_register_tools_reports_plain_categories():
     registered = register_tools(mcp, profile="default")
     assert registered == list(PROFILES["default"])
     assert not any("(stub)" in c for c in registered)  # the dead branch is gone
+
+
+def test_compose_and_instruments_in_default_profile():
+    from fastmcp import FastMCP
+
+    from orpheus_mcp.registry import register_tools
+
+    mcp = FastMCP(name="t")
+    cats = register_tools(mcp, profile="default")
+    assert "compose" in cats
+    assert "instruments" in cats
+
+
+def test_compose_not_in_explain_profile():
+    from fastmcp import FastMCP
+
+    from orpheus_mcp.registry import register_tools
+
+    mcp = FastMCP(name="t")
+    cats = register_tools(mcp, profile="explain")
+    assert "compose" not in cats

@@ -38,7 +38,8 @@ PROFILES: dict[str, tuple[str, ...]] = {
     # v0.3 the full differentiator.
     "default": (
         "bridge", "project", "transport", "tracks", "midi",
-        "theory", "analyze", "style", "apply", "render", "instruments",
+        "theory", "analyze", "style", "apply", "render",
+        "instruments", "compose",
     ),
     "full": tuple(_CATEGORY_IMPORTS.keys()),
 }
