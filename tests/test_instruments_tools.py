@@ -4,9 +4,13 @@ from __future__ import annotations
 import pytest
 from fastmcp import Client, FastMCP
 
-from fake_reaper import FakeReaperBridge, FakeReaperProject, make_handlers
+from fake_reaper import FakeReaperBridge, FakeReaperProject, FakeTrack, make_handlers
 from orpheus_mcp.bridge.client import BridgeClient
 from orpheus_mcp.registry import register_tools
+
+
+def _make_track(project, name):
+    return FakeTrack(guid=project._next_guid(), name=name)
 
 
 @pytest.fixture
@@ -40,3 +44,28 @@ async def test_list_installed_fx_tool(mcp_client):
     async with mcp_client as c:
         res = await c.call_tool("list_installed_fx", {})
     assert any("ReaSynth" in name for name in res.data["fx"])
+
+
+def test_add_synth_contract(client, project):
+    project.tracks.append(_make_track(project, "keys"))
+    res = client.call("add_instrument", track="keys", kind="named", name="ReaSynth")
+    assert res["loaded"] == "ReaSynth"
+    assert res["already_present"] is False
+
+
+def test_add_synth_is_idempotent(client, project):
+    project.tracks.append(_make_track(project, "keys"))
+    client.call("add_instrument", track="keys", kind="named", name="ReaSynth")
+    res = client.call("add_instrument", track="keys", kind="named", name="ReaSynth")
+    assert res["already_present"] is True
+
+
+def test_add_drumkit_loads_three_samplers(client, project):
+    project.tracks.append(_make_track(project, "drums"))
+    res = client.call(
+        "add_instrument", track="drums", kind="drumkit",
+        samples={"kick": "/x/kick.wav", "snare": "/x/snare.wav", "hat": "/x/hat.wav"},
+    )
+    assert res["loaded"] == "drumkit"
+    tr = project.resolve_track("drums")
+    assert len(tr.fx) == 3

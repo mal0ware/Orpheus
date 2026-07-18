@@ -511,6 +511,39 @@ end
 -- If unavailable on the target build, fall back to reading reaper-vstplugins*.ini.
 -- The fake + Lua-stub tests do not depend on the real API; the live smoke (Task 15) confirms it.
 
+-- Load an instrument on a track. kind="named" adds one FX by name (idempotent);
+-- kind="drumkit" adds one ReaSamplOmatic5000 per sample, note-filtered to its GM note.
+HANDLERS.add_instrument = function(p)
+  local tr, err = resolve_track(p.track)
+  if not tr then error(err) end
+
+  if p.kind == "drumkit" then
+    local GM = { kick = 36, snare = 38, hat = 42 }
+    for voice, file in pairs(p.samples or {}) do
+      local fx = reaper.TrackFX_AddByName(tr, "ReaSamplOmatic5000", false, -1)
+      if fx >= 0 then
+        -- Load the sample and pin it to one MIDI note. NOTE (verify live): the config
+        -- parm for the sample file is "FILE0"; note-range params are indices 3 (min) and
+        -- 4 (max) as 0..1 normalized pitch (n/127). Confirm on REAPER 7.x in Task 15.
+        reaper.TrackFX_SetNamedConfigParm(tr, fx, "FILE0", file)
+        local n = GM[voice] or 36
+        reaper.TrackFX_SetParamNormalized(tr, fx, 3, n / 127.0)
+        reaper.TrackFX_SetParamNormalized(tr, fx, 4, n / 127.0)
+      end
+    end
+    return { track = reaper.GetTrackGUID(tr), loaded = "drumkit", already_present = false }
+  end
+
+  -- named synth: idempotent (don't stack duplicates).
+  local existing = reaper.TrackFX_AddByName(tr, p.name, false, 0)  -- 0 = find only
+  if existing >= 0 then
+    return { track = reaper.GetTrackGUID(tr), loaded = p.name, already_present = true }
+  end
+  local added = reaper.TrackFX_AddByName(tr, p.name, false, -1)  -- -1 = add
+  if added < 0 then error("could not add instrument: " .. tostring(p.name)) end
+  return { track = reaper.GetTrackGUID(tr), loaded = p.name, already_present = false }
+end
+
 local function dispatch(fn, params)
   if fn == "__batch__" then
     local results = {}

@@ -128,6 +128,19 @@ reaper = {
     if fx[i + 1] then return true, fx[i + 1], "ident" end
     return false
   end,
+
+  -- FX chain: tr.fx = {} array of FX names, in add order.
+  TrackFX_AddByName = function(tr, name, rec, mode)
+    tr.fx = tr.fx or {}
+    if mode == 0 then  -- find-only
+      for i, n in ipairs(tr.fx) do if n == name then return i - 1 end end
+      return -1
+    end
+    tr.fx[#tr.fx + 1] = name
+    return #tr.fx - 1
+  end,
+  TrackFX_SetNamedConfigParm = function() return true end,
+  TrackFX_SetParamNormalized = function() return true end,
 }
 
 -- --------------------------------------------------------------------------- --
@@ -224,6 +237,30 @@ do
   local r = M.dispatch("list_installed_fx", {})
   eq(r.ok, true, "list_installed_fx ok")
   eq(#r.result.fx, 2, "list_installed_fx returns both installed")
+end
+
+-- 10. add_instrument: kind="drumkit" adds three ReaSamplOmatic5000 instances
+do
+  local dguid = call("create_track", { name = "Drums2" }).result.guid
+  local r = call("add_instrument", { track = dguid, kind = "drumkit",
+    samples = { kick = "a", snare = "b", hat = "c" } })
+  eq(r.ok, true, "add_instrument drumkit ok")
+  eq(r.result.loaded, "drumkit", "drumkit loaded")
+  local raw
+  for _, tr in ipairs(proj.tracks) do
+    if tr.guid == dguid then raw = tr end
+  end
+  eq(#raw.fx, 3, "three samplers added")
+end
+
+-- 11. add_instrument: kind="named" is idempotent
+do
+  local kguid = call("create_track", { name = "Keys" }).result.guid
+  local first = call("add_instrument", { track = kguid, kind = "named", name = "ReaSynth" })
+  eq(first.ok, true, "add_instrument named ok")
+  eq(first.result.already_present, false, "first add_instrument not already present")
+  local second = call("add_instrument", { track = kguid, kind = "named", name = "ReaSynth" })
+  eq(second.result.already_present, true, "second add_instrument already present")
 end
 
 print(string.format("lua m1 handlers: %d passed, %d failed", passed, failed))

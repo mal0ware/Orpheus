@@ -49,6 +49,7 @@ class FakeTrack:
     mute: bool = False
     solo: bool = False
     takes: list[FakeTake] = field(default_factory=list)
+    fx: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -236,6 +237,19 @@ def make_handlers(project: FakeReaperProject) -> dict:
     def list_installed_fx(_):
         return {"fx": list(project.installed_fx)}
 
+    def add_instrument(p):
+        tr = project.resolve_track(p["track"])
+        kind = p["kind"]
+        if kind == "drumkit":
+            for _voice, _path in (p.get("samples") or {}).items():
+                tr.fx.append("ReaSamplOmatic5000")
+            return {"track": tr.guid, "loaded": "drumkit", "already_present": False}
+        name = p["name"]
+        if name in tr.fx:
+            return {"track": tr.guid, "loaded": name, "already_present": True}
+        tr.fx.append(name)
+        return {"track": tr.guid, "loaded": name, "already_present": False}
+
     return {
         "get_connection_status": get_connection_status,
         "get_project_info": get_project_info,
@@ -249,6 +263,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "get_track_midi": get_track_midi,
         "transpose_notes": transpose_notes,
         "list_installed_fx": list_installed_fx,
+        "add_instrument": add_instrument,
     }
 
 
