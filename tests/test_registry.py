@@ -46,6 +46,7 @@ IMPLEMENTED = {
     "create_chord_progression",
     "create_bassline",
     "create_drum_pattern",
+    "humanize_pass",
 }
 
 

@@ -64,3 +64,17 @@ async def test_create_drum_pattern_writes_and_loads_kit(mcp_client, project):
     tr = project.resolve_track("drums")
     assert res.data["hits_written"] == 4 + 2 + 8
     assert len(tr.fx) == 3  # three RS5k voices
+
+
+async def test_humanize_is_deterministic_and_preserves_count(mcp_client, project):
+    async with mcp_client as c:
+        await c.call_tool("create_track", {"name": "keys"})
+        await c.call_tool(
+            "create_chord_progression",
+            {"track": "keys", "chords": "i-iv-V-i", "key": "A"},
+        )
+        before = len(project.resolve_track("keys").takes[0].notes)
+        r1 = await c.call_tool("humanize_pass", {"track": "keys", "seed": 42})
+    after = len(project.resolve_track("keys").takes[0].notes)
+    assert after == before  # replaced, not appended
+    assert r1.data["humanized"] == before

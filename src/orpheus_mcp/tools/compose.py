@@ -83,3 +83,39 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         samples = ensure_drum_samples(Path(tempfile.gettempdir()) / "orpheus_drumkit")
         bridge.call("add_instrument", track=track, kind="drumkit", samples=samples)
         return {"track": track, "hits_written": written}
+
+    @mcp.tool(annotations=_DESTRUCTIVE)
+    def humanize_pass(
+        track: str,
+        timing_ms: float = 12.0,
+        velocity_jitter: int = 6,
+        swing: float = 0.0,
+        seed: int = 0,
+    ) -> dict:
+        """Add seeded human feel: timing/velocity jitter + optional swing on offbeat 16ths.
+        Reads the track's notes, transforms, and REPLACES them (deterministic given `seed`)."""
+        import random
+
+        bridge = BridgeClient()
+        current = bridge.call("get_track_midi", track=track).get("notes", [])
+        if not current:
+            return {"track": track, "humanized": 0}
+
+        rng = random.Random(seed)
+        tempo = bridge.call("get_project_info").get("tempo", 120.0)
+        beats_per_ms = tempo / 60.0 / 1000.0  # ms -> beats
+        out: list[dict] = []
+        for n in current:
+            start = n["start_beat"]
+            # swing: delay the 2nd/4th 16th of each beat toward a triplet feel.
+            if swing and round((start * 4) % 4) in (1, 3):
+                start += swing * (1.0 / 6.0)
+            start += rng.uniform(-timing_ms, timing_ms) * beats_per_ms
+            start = max(0.0, start)
+            vel = max(1, min(127, int(n["velocity"]) + rng.randint(-velocity_jitter, velocity_jitter)))
+            out.append({"pitch": n["pitch"], "start_beat": round(start, 6),
+                        "duration_beats": n["duration_beats"], "velocity": vel})
+
+        bridge.call("clear_track_midi", track=track)
+        _write_notes(bridge, track, out)
+        return {"track": track, "humanized": len(out)}
