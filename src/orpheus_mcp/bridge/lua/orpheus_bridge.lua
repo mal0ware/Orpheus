@@ -493,6 +493,20 @@ HANDLERS.transpose_notes = function(p)
   return { track = reaper.GetTrackGUID(tr), transposed = moved, semitones = semis }
 end
 
+-- Delete every note in a track's first take (so humanize can rewrite in place).
+HANDLERS.clear_track_midi = function(p)
+  local tr, err = resolve_track(p.track)
+  if not tr then error(err) end
+  local take = first_take(tr)
+  if not take then return { track = reaper.GetTrackGUID(tr), cleared = 0 } end
+  local _, note_count = reaper.MIDI_CountEvts(take)
+  for i = note_count - 1, 0, -1 do
+    reaper.MIDI_DeleteNote(take, i)
+  end
+  reaper.MIDI_Sort(take)
+  return { track = reaper.GetTrackGUID(tr), cleared = note_count }
+end
+
 -- Enumerate installed FX/instruments. EnumInstalledFX(index) -> ret, name, ident.
 -- Read-only; installs nothing. Cached by REAPER internally.
 HANDLERS.list_installed_fx = function(_)

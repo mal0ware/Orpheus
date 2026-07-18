@@ -69,3 +69,14 @@ def test_add_drumkit_loads_three_samplers(client, project):
     assert res["loaded"] == "drumkit"
     tr = project.resolve_track("drums")
     assert len(tr.fx) == 3
+
+
+def test_clear_track_midi_empties_take(client, project):
+    from fake_reaper import FakeNote, FakeTake, FakeTrack
+
+    tr = FakeTrack(guid=project._next_guid(), name="keys")
+    tr.takes.append(FakeTake(notes=[FakeNote(pitch=60, start_ppq=0, end_ppq=480)]))
+    project.tracks.append(tr)
+    res = client.call("clear_track_midi", track="keys")
+    assert res["cleared"] == 1
+    assert project.resolve_track("keys").takes[0].notes == []

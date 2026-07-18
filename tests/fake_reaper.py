@@ -234,6 +234,14 @@ def make_handlers(project: FakeReaperProject) -> dict:
                 moved += 1
         return {"track": tr.guid, "transposed": moved, "semitones": semis}
 
+    def clear_track_midi(p):
+        tr = project.resolve_track(p["track"])
+        cleared = 0
+        if tr.takes:
+            cleared = len(tr.takes[0].notes)
+            tr.takes[0].notes.clear()
+        return {"track": tr.guid, "cleared": cleared}
+
     def list_installed_fx(_):
         return {"fx": list(project.installed_fx)}
 
@@ -262,6 +270,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "insert_midi_notes": insert_midi_notes,
         "get_track_midi": get_track_midi,
         "transpose_notes": transpose_notes,
+        "clear_track_midi": clear_track_midi,
         "list_installed_fx": list_installed_fx,
         "add_instrument": add_instrument,
     }

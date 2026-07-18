@@ -116,6 +116,10 @@ reaper = {
     n.sel, n.muted, n.sppq, n.eppq, n.chan, n.pitch, n.vel = sel, muted, sppq, eppq, chan, pitch, vel
     return true
   end,
+  MIDI_DeleteNote = function(take, i)
+    table.remove(take.notes, i + 1)
+    return true
+  end,
   MIDI_Sort = function(take)
     table.sort(take.notes, function(a, b)
       if a.sppq == b.sppq then return a.pitch < b.pitch end
@@ -219,6 +223,15 @@ local tr = call("get_track_midi", { track = guid })
 eq(tr.result.notes[1].pitch, 58, "transpose -2: 60 -> 58")
 eq(tr.result.notes[2].pitch, 62, "transpose -2: 64 -> 62")
 approx(tr.result.notes[1].start_beat, 0.0, "transpose preserves note1 timing")
+
+-- 6b. clear_track_midi deletes every note in the first take.
+do
+  local cleared = call("clear_track_midi", { track = guid })
+  eq(cleared.ok, true, "clear_track_midi ok")
+  eq(cleared.result.cleared, 2, "clear_track_midi reports 2 notes cleared")
+  local after = call("get_track_midi", { track = guid })
+  eq(#after.result.notes, 0, "clear_track_midi empties the take")
+end
 
 -- 7. unknown track -> ok=false
 eq(call("insert_midi_notes", { track = "{NOPE}", notes = {} }).ok, false, "unknown track -> ok=false")
