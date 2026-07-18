@@ -47,9 +47,10 @@ Close the loop with the approval gate — the thing nobody else ships.
 - [ ] `apply_changes` (undo-block-wrapped, `destructiveHint`) + `apply_master_match` (Matchering → ReaEQ on master). `tests/test_recommend.py`.
 
 ### M4 — NL ergonomics + GENERATE stretch *(polish)*
+- [x] `compose` generators as thin orchestrators (`create_chord_progression`, `create_bassline`, `create_drum_pattern`, `humanize_pass`) + `compose_section` (genre-aware one-call section: tempo, drums/chords/bass tracks, groove, per-role instrument selection). **Implemented and tested against the `FakeReaperBridge` + the lupa-driven Lua handler suite (167 passed / 2 skipped; 44 Lua assertions; ruff + mypy clean) — live-REAPER smoke test is still pending** (see [`docs/dev-log.md`](docs/dev-log.md) 2026-07-18 entry for the exact pending-verification list: `EnumInstalledFX` shape, RS5k `FILE0`/note-range params, the `MIDI_DeleteNote` descending-delete idiom, and audible playback).
+- [x] `list_installed_fx` — **pulled forward from the M4 mix pass below** to back `compose_section`'s instrument-selection ladder (prefer the user's installed instruments before stock/pack fallback). Read-only, tested against the fake + Lua stub; live `EnumInstalledFX` behavior unconfirmed.
 - [ ] `dsl` resolvers (fuzzy track + role + `SessionContext` pronoun memory) + tool profiles defaulting to a small set.
-- [ ] `compose` generators as thin orchestrators (`create_chord_progression`, `create_drum_pattern`, `humanize_pass`) + section-aware arrangement.
-- [ ] `mix`: `apply_mix_balance` (genre×role dB table + chain-offset) + `list_installed_fx`.
+- [ ] `mix`: `apply_mix_balance` (genre×role dB table + chain-offset). (`list_installed_fx` shipped early, above.)
 - [ ] `data/instructions/00_core.md` system-prompt teaching notation + in-key rules.
 
 ### M5 — Ship

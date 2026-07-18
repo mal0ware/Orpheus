@@ -4,6 +4,79 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-07-18 — Compose-core slice: NL → audible section (tested against fake/lua; live smoke pending)
+
+**Built the M4 compose slice** — the first "ask in words, get an editable, audible section" path. Four
+atomic compose tools plus one orchestrator:
+
+- `create_chord_progression` — writes a voice-led chord progression as MIDI (Roman numerals with a
+  `key`, or absolute chord symbols), auto-loads ReaSynth so it's audible on drop.
+- `create_bassline` — follows the same chord notation, `style` root/root_fifth/octave, bass-register
+  ReaSynth.
+- `create_drum_pattern` — parses a `kick:`/`snare:`/`hat:` step grid into hits and loads the stock
+  3-voice kit.
+- `humanize_pass` — seeded timing/velocity jitter + optional swing; reads a track's notes, transforms
+  them, and replaces them in place (deterministic given the same `seed` — asserted by a dedicated
+  same-seed-same-output test).
+- `compose_section(genre, bars, key)` — the orchestrator: sets tempo from the genre profile, creates
+  `drums`/`chords`/`bass` tracks, writes a one-bar backbeat + a voice-led progression (repeated to
+  cover `bars`) + a root-note bassline, and loads the best available instrument per role. One call,
+  one audible section.
+
+**Three new bridge verbs** (`src/orpheus_mcp/bridge/lua/orpheus_bridge.lua`) back the above:
+`list_installed_fx` (wraps `EnumInstalledFX`, read-only, capped at 20000), `add_instrument`
+(`kind="named"` idempotently adds an FX by name; `kind="drumkit"` adds three `ReaSamplOmatic5000`
+instances, one per sample, each pinned to its GM note via `FILE0` + normalized param indices 3/4),
+and `clear_track_midi` (descending `MIDI_DeleteNote` loop + `MIDI_Sort`, added specifically so
+`humanize_pass` can replace notes rather than duplicate them).
+
+**Instrument selection** (`src/orpheus_mcp/instruments.py`) is a deterministic ladder:
+explicit override → the user's own installed instruments (curated per-role allowlist —
+Vital/Surge XT/Pianoteq/Kontakt for keys, similar for bass, MT-PowerDrumKit/Battery/EZdrummer/
+Superior Drummer/Kontakt for drums — substring-matched against `list_installed_fx`) → the optional
+consent-gated sound pack → stock fallback (ReaSynth for melodic roles, 3× `ReaSamplOmatic5000` for
+drums). `compose_section` calls `list_installed_fx` once up front and threads the inventory through
+all three role picks, so composing prefers what the user already has installed before ever touching
+stock or the pack.
+
+**Drum one-shots** (`src/orpheus_mcp/drumkit.py`) are stdlib-synthesized (kick/snare/hat, plain
+`math`/`wave`/`struct`, no external deps) unless bundled CC0 WAVs are present in `data/drumkit/` —
+license-clean either way, no download required to compose.
+
+**`install_sound_pack`** (`src/orpheus_mcp/soundpack.py`) is consent-gated and never runs
+automatically: it downloads pinned artifacts (one BSD-2-Clause sfizz build, one CC0 SFZ patch),
+verifies each against a pinned sha256, and raises on any mismatch before writing anything.
+
+**Tested:** pure unit tests (theory/chords, patterns, instruments ladder, drumkit synthesis,
+soundpack checksum logic) + `FakeReaperBridge` contract tests for all three new verbs and all five
+compose tools + the lupa-driven Lua handler suite exercising the same verbs against a stubbed
+`reaper`. Full suite: **167 passed, 2 skipped**; Lua suite: **44 passed**; `ruff check .` and `mypy`
+both clean. No real REAPER was launched for this slice.
+
+### Pending live verification (explicitly not done — do not read the above as a live pass)
+
+The following are proven only against the fake bridge / stubbed Lua and are flagged in the bridge
+source as "verify live" — none of this has been run against real REAPER yet:
+
+- `EnumInstalledFX` return shape — the Lua assumes `(retval, name, ident)` per the REAPER 7.x
+  ReaScript docs; unconfirmed against an actual installed-plugin list. Fallback path (reading
+  `reaper-vstplugins*.ini`) is unimplemented if this doesn't hold.
+- `ReaSamplOmatic5000`'s `FILE0` config-parm name and the note-range param indices (3 = min, 4 = max,
+  normalized `n/127`) — copied from the Task 6 research note, not yet confirmed against a live RS5k
+  instance.
+- The `MIDI_DeleteNote` descending-delete idiom in `clear_track_midi` — correct against the fake and
+  the Lua stub, unverified against real `MIDI_CountEvts`/`MIDI_DeleteNote` semantics.
+- Actual audible playback of `compose_section("lofi")` — tempo range, track creation, and note
+  content are all asserted programmatically; nobody has pressed play and listened yet.
+
+Also still a placeholder: the sound pack's `PACK` entries in `soundpack.py` carry
+`sha256: "<PIN_BEFORE_SHIP>"` — the real pinned checksums are not filled in, so `install_sound_pack`
+cannot succeed against the real URLs yet. Pinning the checksums, running the live-REAPER smoke test,
+and correcting any of the constants above if live behavior differs are the user's next steps (Task
+15, steps 1–3 in `.superpowers/sdd/task-15-brief.md`).
+
+---
+
 ## 2026-07-15 — LIVE SMOKE PASS (M0 + M1) + M2 exercised against real REAPER
 
 First-ever contact with live REAPER, and everything held:
