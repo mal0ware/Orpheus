@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from fastmcp import Client, FastMCP
+from fastmcp.exceptions import ToolError
 
 from fake_reaper import FakeReaperBridge, FakeReaperProject, make_handlers
 from orpheus_mcp.registry import register_tools
@@ -113,5 +114,5 @@ async def test_compose_section_builds_audible_lofi(mcp_client, project):
 
 async def test_compose_section_unknown_genre_raises(mcp_client):
     async with mcp_client as c:
-        with pytest.raises(Exception):
+        with pytest.raises(ToolError):
             await c.call_tool("compose_section", {"genre": "polka"})

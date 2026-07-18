@@ -136,7 +136,8 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
                 start += swing * (1.0 / 6.0)
             start += rng.uniform(-timing_ms, timing_ms) * beats_per_ms
             start = max(0.0, start)
-            vel = max(1, min(127, int(n["velocity"]) + rng.randint(-velocity_jitter, velocity_jitter)))
+            vel = max(1, min(127, int(n["velocity"])
+                                   + rng.randint(-velocity_jitter, velocity_jitter)))
             out.append({"pitch": n["pitch"], "start_beat": round(start, 6),
                         "duration_beats": n["duration_beats"], "velocity": vel})
 
