@@ -47,6 +47,7 @@ IMPLEMENTED = {
     "create_bassline",
     "create_drum_pattern",
     "humanize_pass",
+    "compose_section",
 }
 
 

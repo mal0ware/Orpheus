@@ -95,3 +95,23 @@ async def test_humanize_same_seed_same_output(mcp_client, project):
     assert n1 and n2  # non-empty
     assert [(n.pitch, n.start_ppq, n.velocity) for n in n1] == \
            [(n.pitch, n.start_ppq, n.velocity) for n in n2]
+
+
+async def test_compose_section_builds_audible_lofi(mcp_client, project):
+    async with mcp_client as c:
+        res = await c.call_tool("compose_section", {"genre": "lofi", "bars": 4})
+    names = [t.name for t in project.tracks]
+    assert {"drums", "chords", "bass"}.issubset(set(names))
+    # tempo set into the lofi range (60-90)
+    assert 60 <= project.tempo <= 90
+    # instrument choice reported per role
+    assert set(res.data["instruments"]) == {"drums", "chords", "bass"}
+    # every pitched track has an instrument; drums has the 3-voice kit
+    assert "ReaSynth" in project.resolve_track("chords").fx
+    assert len(project.resolve_track("drums").fx) == 3
+
+
+async def test_compose_section_unknown_genre_raises(mcp_client):
+    async with mcp_client as c:
+        with pytest.raises(Exception):
+            await c.call_tool("compose_section", {"genre": "polka"})

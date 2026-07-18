@@ -21,6 +21,40 @@ def _write_notes(bridge: BridgeClient, track: str, notes: list[dict], at_bar: in
     return written
 
 
+def _chord_notes(voiced: list[list[int]], beats_per_chord: float, velocity: int = 90) -> list[dict]:
+    """Flatten voice-led chords into note dicts, one block per chord. Shared by
+    create_chord_progression and compose_section."""
+    notes: list[dict] = []
+    for i, chord in enumerate(voiced):
+        start = i * beats_per_chord
+        for pitch in chord:
+            notes.append({"pitch": pitch, "start_beat": start,
+                          "duration_beats": beats_per_chord, "velocity": velocity})
+    return notes
+
+
+def _load_drumkit(bridge: BridgeClient, track: str) -> None:
+    """Load the stock 3-voice drum kit (kick/snare/hat) onto `track`. Shared by
+    create_drum_pattern and compose_section (also mirrored in tools/instruments.py's
+    add_instrument for the standalone kind='drumkit' path)."""
+    import tempfile
+    from pathlib import Path
+
+    from orpheus_mcp.drumkit import ensure_drum_samples
+
+    samples = ensure_drum_samples(Path(tempfile.gettempdir()) / "orpheus_drumkit")
+    bridge.call("add_instrument", track=track, kind="drumkit", samples=samples)
+
+
+def _repeat_progression(progression: str, bars: int) -> str:
+    """Repeat a '-'-joined progression (one chord per bar) until it covers `bars` bars,
+    then trim to exactly `bars` chords."""
+    chords = progression.split("-")
+    bars = max(1, bars)
+    reps = -(-bars // len(chords))  # ceil division
+    return "-".join((chords * reps)[:bars])
+
+
 def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
     @mcp.tool(annotations=_DESTRUCTIVE)
     def create_chord_progression(
@@ -35,12 +69,7 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         `key`) or absolute symbols ('Cm7, Fm7, Bb7'). Auto-loads ReaSynth so it's audible."""
         voiced = voice_lead(resolve_progression(chords, key=key, mode=mode, octave=octave))
         beats_per_chord = 4.0 * bars_per_chord
-        notes: list[dict] = []
-        for i, chord in enumerate(voiced):
-            start = i * beats_per_chord
-            for pitch in chord:
-                notes.append({"pitch": pitch, "start_beat": start,
-                              "duration_beats": beats_per_chord, "velocity": 90})
+        notes = _chord_notes(voiced, beats_per_chord)
         bridge = BridgeClient()
         written = _write_notes(bridge, track, notes)
         bridge.call("add_instrument", track=track, kind="named", name="ReaSynth")
@@ -71,17 +100,12 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
     def create_drum_pattern(track: str, pattern: str, steps_per_bar: int = 16) -> dict:
         """Write a drum pattern from a step grid (rows 'kick:'/'snare:'/'hat:', 'x'=hit).
         Loads a stock 3-voice kit so it's audible immediately."""
-        import tempfile
-        from pathlib import Path
-
-        from orpheus_mcp.drumkit import ensure_drum_samples
         from orpheus_mcp.theory.patterns import parse_drum_grid
 
         notes = parse_drum_grid(pattern, steps_per_bar=steps_per_bar)
         bridge = BridgeClient()
         written = _write_notes(bridge, track, notes)
-        samples = ensure_drum_samples(Path(tempfile.gettempdir()) / "orpheus_drumkit")
-        bridge.call("add_instrument", track=track, kind="drumkit", samples=samples)
+        _load_drumkit(bridge, track)
         return {"track": track, "hits_written": written}
 
     @mcp.tool(annotations=_DESTRUCTIVE)
@@ -119,3 +143,64 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         bridge.call("clear_track_midi", track=track)
         _write_notes(bridge, track, out)
         return {"track": track, "humanized": len(out)}
+
+    @mcp.tool(annotations=_DESTRUCTIVE)
+    def compose_section(genre: str, bars: int = 8, key: str | None = None) -> dict:
+        """Build a full, audible section in one call: sets tempo, creates drums/chords/bass
+        tracks, lays a genre-appropriate groove, and loads the best available instrument per
+        role (preferring the user's own installed plugins). Returns the tempo, tracks, and
+        the instrument chosen per role."""
+        from orpheus_mcp.instruments import select_instrument
+        from orpheus_mcp.theory.genre_profiles import get_profile
+        from orpheus_mcp.theory.patterns import bassline_notes, parse_drum_grid
+
+        profile = get_profile(genre)  # raises ValueError on unknown genre
+        tonic = key or "A"
+        mode = profile["typical_modes"][0]
+        bpm = sum(profile["bpm_range"]) // 2
+        full_prog = _repeat_progression(profile["progressions"][0], bars)
+
+        bridge = BridgeClient()
+        bridge.call("set_tempo", bpm=float(bpm))
+        inventory = bridge.call("list_installed_fx").get("fx", [])
+
+        for track_name in ("drums", "chords", "bass"):
+            bridge.call("create_track", name=track_name)
+
+        # drums: one-bar backbeat (repeating the grid is a Slice-2 arrangement concern).
+        one_bar = ("kick:  x...x...x...x...\n"
+                   "snare: ....x.......x...\n"
+                   "hat:   x.x.x.x.x.x.x.x.")
+        _write_notes(bridge, "drums", parse_drum_grid(one_bar))
+        drums_instrument = select_instrument("drums", inventory)
+        if drums_instrument["kind"] == "drumkit":
+            _load_drumkit(bridge, "drums")
+        else:
+            bridge.call("add_instrument", track="drums", kind="named",
+                        name=drums_instrument["name"])
+
+        # chords: voice-led block chords, one bar per chord.
+        voiced = voice_lead(resolve_progression(full_prog, key=tonic, mode=mode, octave=4))
+        _write_notes(bridge, "chords", _chord_notes(voiced, beats_per_chord=4.0))
+        chords_instrument = select_instrument("keys", inventory)
+        bridge.call("add_instrument", track="chords", kind="named",
+                    name=chords_instrument["name"])
+
+        # bass: root notes following the same progression, one octave register down.
+        bass_chords = resolve_progression(full_prog, key=tonic, mode=mode, octave=2)
+        _write_notes(bridge, "bass", bassline_notes(bass_chords, style="root"))
+        bass_instrument = select_instrument("bass", inventory)
+        bridge.call("add_instrument", track="bass", kind="named",
+                    name=bass_instrument["name"])
+
+        return {
+            "genre": genre,
+            "tempo": float(bpm),
+            "key": tonic,
+            "tracks": ["drums", "chords", "bass"],
+            "instruments": {
+                "drums": drums_instrument,
+                "chords": chords_instrument,
+                "bass": bass_instrument,
+            },
+        }
