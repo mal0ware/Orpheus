@@ -78,3 +78,20 @@ async def test_humanize_is_deterministic_and_preserves_count(mcp_client, project
     after = len(project.resolve_track("keys").takes[0].notes)
     assert after == before  # replaced, not appended
     assert r1.data["humanized"] == before
+
+
+async def test_humanize_same_seed_same_output(mcp_client, project):
+    # Same input + same seed must yield byte-identical notes (determinism requirement).
+    async with mcp_client as c:
+        for name in ("keys1", "keys2"):
+            await c.call_tool("create_track", {"name": name})
+            await c.call_tool(
+                "create_chord_progression",
+                {"track": name, "chords": "i-iv-V-i", "key": "A"},
+            )
+            await c.call_tool("humanize_pass", {"track": name, "seed": 42})
+    n1 = project.resolve_track("keys1").takes[0].notes
+    n2 = project.resolve_track("keys2").takes[0].notes
+    assert n1 and n2  # non-empty
+    assert [(n.pitch, n.start_ppq, n.velocity) for n in n1] == \
+           [(n.pitch, n.start_ppq, n.velocity) for n in n2]
