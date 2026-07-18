@@ -42,6 +42,8 @@ IMPLEMENTED = {
     "build_project_spec",
     "list_style_fingerprints",
     "explain_style",
+    # compose (M4) — graduated tool, category not yet in `default`
+    "create_chord_progression",
 }
 
 
