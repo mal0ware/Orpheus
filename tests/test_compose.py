@@ -52,3 +52,15 @@ async def test_create_bassline_root_style(mcp_client, project):
     # Am root at octave 2 -> A2 = 45
     assert tr.takes[0].notes[0].pitch == 45
     assert "ReaSynth" in tr.fx
+
+
+async def test_create_drum_pattern_writes_and_loads_kit(mcp_client, project):
+    pattern = "kick:  x...x...x...x...\nsnare: ....x.......x...\nhat:   x.x.x.x.x.x.x.x."
+    async with mcp_client as c:
+        await c.call_tool("create_track", {"name": "drums"})
+        res = await c.call_tool(
+            "create_drum_pattern", {"track": "drums", "pattern": pattern}
+        )
+    tr = project.resolve_track("drums")
+    assert res.data["hits_written"] == 4 + 2 + 8
+    assert len(tr.fx) == 3  # three RS5k voices

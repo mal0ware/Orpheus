@@ -45,6 +45,7 @@ IMPLEMENTED = {
     # compose (M4) — graduated tools, category not yet in `default`
     "create_chord_progression",
     "create_bassline",
+    "create_drum_pattern",
 }
 
 

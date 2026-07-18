@@ -66,3 +66,20 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         written = _write_notes(bridge, track, notes)
         bridge.call("add_instrument", track=track, kind="named", name="ReaSynth")
         return {"track": track, "notes_written": written}
+
+    @mcp.tool(annotations=_DESTRUCTIVE)
+    def create_drum_pattern(track: str, pattern: str, steps_per_bar: int = 16) -> dict:
+        """Write a drum pattern from a step grid (rows 'kick:'/'snare:'/'hat:', 'x'=hit).
+        Loads a stock 3-voice kit so it's audible immediately."""
+        import tempfile
+        from pathlib import Path
+
+        from orpheus_mcp.drumkit import ensure_drum_samples
+        from orpheus_mcp.theory.patterns import parse_drum_grid
+
+        notes = parse_drum_grid(pattern, steps_per_bar=steps_per_bar)
+        bridge = BridgeClient()
+        written = _write_notes(bridge, track, notes)
+        samples = ensure_drum_samples(Path(tempfile.gettempdir()) / "orpheus_drumkit")
+        bridge.call("add_instrument", track=track, kind="drumkit", samples=samples)
+        return {"track": track, "hits_written": written}
