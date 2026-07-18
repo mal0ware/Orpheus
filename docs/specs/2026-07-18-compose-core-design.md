@@ -15,7 +15,7 @@ Orpheus is the MCP server that is *how Claude touches REAPER*. This slice gives 
 ## 2. Where this sits in the larger program
 
 This is **Slice 1 of 6** (see the sequenced program in the brainstorm thread / `roadmap.md`):
-1. **Compose core** ← this spec
+1. **Compose core** ← this spec (incl. read-only `list_installed_fx`, pulled forward so composing prefers the user's own instruments)
 2. Full editing parity (FX/mix/arrange/automation)
 3. Analyze/understand brain (M2)
 4. Song ingestion — MP3 → stems/BPM/key/structure (M6)
@@ -28,7 +28,8 @@ Each later slice is its own spec. This slice is self-contained and shippable on 
 
 ### In
 - Four atomic compose tools + one orchestrator (§4).
-- A new `add_instrument` bridge verb so generated tracks are audible using **only stock REAPER plugins** (§5).
+- An instrument-selection ladder that **prefers the user's own installed instruments**, with stock plugins as the always-works floor (§5), via new bridge verbs `add_instrument` + `list_installed_fx` (the latter pulled forward from Slice 2).
+- An **optional, consent-gated** `install_sound_pack()` for a nicer open-source default sound — never automatic (§5.4).
 - Theory-layer additions: chord-symbol parser, voice-leading, bassline patterns, step-grid parser (§6).
 - Bundled CC0 drum one-shots with a synthesized fallback (§7).
 - Tests mirroring the existing discipline (§8).
@@ -36,7 +37,8 @@ Each later slice is its own spec. This slice is self-contained and shippable on 
 ### Out (explicitly deferred to later slices — YAGNI)
 - Any analyze / recommend / transform tooling (Slices 3, 6).
 - MP3 / audio ingestion and lyrics (Slices 4, 5).
-- FX and mixing beyond loading a default instrument (Slice 2).
+- FX **editing/mixing** verbs — `set_fx_param`, volume/pan, delete/move, automation (Slice 2). Note: only the read-only `list_installed_fx` and instrument *loading* are in scope here.
+- Auto-downloading arbitrary/licensed VSTs (rejected outright — legal/security/permission walls; see §5.4 for the one safe, curated, consent-gated exception).
 - Extended harmony (9th/11th/slash chords), mid-section tempo/meter changes, non-4/4 grids.
 
 ## 4. Tools
@@ -77,19 +79,34 @@ All compose tools are **thin orchestrators** over the existing theory layer + th
 - **Result: one call → press play → hear a full section.** This is the usability payoff and the demo.
 - `key` optional; defaults to a sensible tonic per genre.
 
-## 5. Audibility — stock plugins only
+## 5. Audibility — prefer the user's own instruments, guarantee sound with stock
 
-To guarantee zero-setup sound on *any* REAPER install, use only stock plugins (no third-party VSTi that might be absent):
+The goal is "hear something good with zero setup." The best sound is usually an instrument the user **already owns**, so instrument choice is a **preference ladder**, not a hardcode. Stock plugins are the floor that guarantees it always works.
 
-- **Chords / bass / melodic:** `ReaSynth` via `TrackFX_AddByName`.
-- **Drums:** **3× `ReaSamplOmatic5000`** on the drum track, each loaded with one bundled one-shot (kick/snare/hat) and note-range-filtered to its GM note (36/38/42). This beats the GM-soundfont route, which depends on a player (sforzando/sfizz) that may not be installed.
+### 5.1 Instrument-selection ladder (per role: `keys`/chords, `bass`, `drums`)
+Resolved deterministically against the current plugin inventory:
+1. **User-configured override** — an explicit per-role instrument the user set (e.g. "always use Vital for keys"). Honored first.
+2. **Best installed match** — scan `list_installed_fx` (§5.3) for a name on a small curated **allowlist** of quality instruments per role (e.g. keys: Vital, Surge XT, Kontakt, Decent Sampler; drums: a known drum VSTi). Discovery only — installs nothing.
+3. **Curated open-source pack** — if the optional pack (§5.4) was installed, use sfizz + its CC0 patch.
+4. **Stock fallback (always available):**
+   - **Pitched (keys/bass):** `ReaSynth` via `TrackFX_AddByName` (bass vs keys patch tweak).
+   - **Drums:** **3× `ReaSamplOmatic5000`** on the drum track, each loaded with one bundled one-shot (kick/snare/hat) and note-range-filtered to its GM note (36/38/42) — no third-party player dependency.
 
-### New bridge verb: `add_instrument(track, kind, opts)`
-- `kind="synth"` → add `ReaSynth` (optional patch preset for bass vs keys).
-- `kind="drumkit"` → add the 3 `ReaSamplOmatic5000` instances; set each one's sample via `TrackFX_SetNamedConfigParm` (`FILE0`) and its note range via params.
-- **Idempotent:** detects an already-present instrument and does not stack duplicates.
-- Returns a description of what was loaded (or already present).
-- This is the one genuinely new bit of bridge surface; it is the leading edge of the deferred FX work and is written to be reused by Slice 2.
+The chosen instrument (and *why* — "used your Vital"; "fell back to stock kit") is **reported back** so the user is never guessing what made the sound.
+
+### 5.2 New bridge verb: `add_instrument(track, kind, opts)`
+- `kind="named"` → add a specific plugin by name (`TrackFX_AddByName`) — used when the ladder picks an installed/curated instrument.
+- `kind="drumkit"` → add the 3 `ReaSamplOmatic5000` instances; set each sample via `TrackFX_SetNamedConfigParm` (`FILE0`) and its note range via params.
+- **Idempotent:** detects an already-present instrument and does not stack duplicates. Returns what was loaded (or already present).
+
+### 5.3 New bridge verb: `list_installed_fx()` — pulled forward from Slice 2
+- Returns REAPER's installed-plugin inventory (name + type), cached. Read-only; installs nothing.
+- Pulled forward because it is what turns "sounds synthy" into "sounds like the good instruments you already have." Written to be reused by Slice 2's full FX surface.
+
+### 5.4 Optional, consent-gated: `install_sound_pack()` — nicer default sound, safely
+- Downloads **one** curated, permissively-licensed, **loose-file** instrument — **sfizz** (BSD-2 SFZ player, ships as a plain `.vst3`, *no installer*) — plus a **CC0** SFZ/soundfont, into a **user-writable** VST folder that REAPER is pointed at, then triggers a rescan.
+- **Never runs automatically.** Requires an explicit user call/approval each time. No admin rights (user-writable path, not `Program Files`), no third-party `.exe` executed, no redistribution of licensed software — this is why it clears the legal/security/permission walls that "auto-install arbitrary VSTs" does not.
+- If the user declines or it fails, the ladder simply falls back to stock — sound is never blocked on it.
 
 ## 6. Theory-layer additions (pure, REAPER-free, unit-tested)
 
@@ -110,10 +127,11 @@ Parses the drum mini-language (§4.2) into `Note` lists at the correct beat offs
 - **Synthesized fallback:** if a sample file is missing, generate a simple one-shot at load time (sine-thump kick, filtered-noise snare/hat). Guarantees sound and keeps the repo license-clean regardless.
 
 ## 8. Testing (mirrors existing discipline)
-- **Pure unit tests (no REAPER):** chord-symbol parser, voice-leading, bassline, step-grid parser, `humanize_pass` determinism (fixed `seed` → exact output).
-- **Lua handler suite** for `add_instrument` via `lupa` against a stubbed `reaper` (as with existing handlers).
+- **Pure unit tests (no REAPER):** chord-symbol parser, voice-leading, bassline, step-grid parser, `humanize_pass` determinism (fixed `seed` → exact output), and the **instrument-selection ladder** (given a fake inventory → deterministic role→instrument choice, incl. fallbacks).
+- **Lua handler suite** for `add_instrument` and `list_installed_fx` via `lupa` against a stubbed `reaper` (as with existing handlers).
 - The note-write path is **already** covered by `tests/test_midi_roundtrip.py` (the non-negotiable gate).
-- **One live-REAPER smoke:** `compose_section("lofi")` → tracks created, instruments loaded, notes present and audible.
+- **One live-REAPER smoke:** `compose_section("lofi")` → tracks created, best-available instruments loaded (with the choice reported), notes present and audible.
+- `install_sound_pack()` download/placement is validated in isolation (mocked fetch → correct user-writable path + rescan trigger); not part of the default smoke.
 
 ## 9. Honest limits (surface these to the user, don't hide them)
 - **Timbre is basic.** ReaSynth is a plain synth; the user hears a correct musical *idea* immediately, not a produced sound. Swapping in their own VSTi is one click. We optimize for "hear it now."
@@ -124,12 +142,16 @@ Parses the drum mini-language (§4.2) into `Note` lists at the correct beat offs
 Replace the current `compose` stubs. These tools graduate into the `default`/`full` profiles once implemented; until then the registry's "advertise only implemented tools" rule holds (no half-wired tool is exposed).
 
 ## 11. Definition of done
-- All five tools implemented and registered; stubs removed.
-- `add_instrument` bridge verb implemented + Lua suite green.
+- All five compose tools implemented and registered; stubs removed.
+- `add_instrument` + `list_installed_fx` bridge verbs implemented + Lua suite green.
+- Instrument-selection ladder implemented and unit-tested; `compose_section` uses the best available instrument and reports its choice.
+- `install_sound_pack()` implemented, consent-gated, and validated in isolation.
 - All new theory helpers unit-tested; full suite green (incl. the round-trip gate).
 - `compose_section("lofi")` produces an audible section in a live REAPER smoke, wrapped so a single Ctrl+Z is sane.
-- `dev-log.md` updated; README/roadmap M4 status advanced to reflect the shipped compose slice.
+- `dev-log.md` updated; README/roadmap M4 status advanced to reflect the shipped compose slice + the pulled-forward `list_installed_fx`.
 
 ## 12. Open risks
 - **RS5k config-parm names** (`FILE0`, note-range params) must be verified against live REAPER 7.x during implementation; the Lua suite stubs them, so the live smoke is the real proof.
 - **ReaSynth patch control** for a convincing bass vs keys distinction may be limited; acceptable for v1 (timbre caveat already stated).
+- **Plugin-name matching** for the installed-instrument allowlist is fuzzy (names vary by version/vendor/format); start with a small exact/substring allowlist and expand — a miss only means falling back to stock, never a failure.
+- **`install_sound_pack()` download source** must be a pinned, checksum-verified URL for sfizz + the CC0 patch; no arbitrary fetch. Treat a checksum mismatch as a hard failure.
