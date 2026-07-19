@@ -250,6 +250,8 @@ def make_handlers(project: FakeReaperProject) -> dict:
         tr = project.resolve_track(p["track"])
         kind = p["kind"]
         if kind == "drumkit":
+            if "ReaSamplOmatic5000" in tr.fx:
+                return {"track": tr.guid, "loaded": "drumkit", "already_present": True}
             for _voice, _path in (p.get("samples") or {}).items():
                 tr.fx.append("ReaSamplOmatic5000")
             return {"track": tr.guid, "loaded": "drumkit", "already_present": False}

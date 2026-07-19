@@ -71,6 +71,17 @@ def test_add_drumkit_loads_three_samplers(client, project):
     assert len(tr.fx) == 3
 
 
+def test_add_drumkit_is_idempotent(client, project):
+    project.tracks.append(_make_track(project, "drums"))
+    samples = {"kick": "/x/kick.wav", "snare": "/x/snare.wav", "hat": "/x/hat.wav"}
+    first = client.call("add_instrument", track="drums", kind="drumkit", samples=samples)
+    assert first["already_present"] is False
+    second = client.call("add_instrument", track="drums", kind="drumkit", samples=samples)
+    assert second["already_present"] is True
+    tr = project.resolve_track("drums")
+    assert len(tr.fx) == 3
+
+
 async def test_install_sound_pack_requires_confirm(mcp_client):
     async with mcp_client as c:
         res = await c.call_tool("install_sound_pack", {})

@@ -532,6 +532,11 @@ HANDLERS.add_instrument = function(p)
   if not tr then error(err) end
 
   if p.kind == "drumkit" then
+    -- idempotent: don't stack duplicate voices if a kit is already on this track.
+    local existing = reaper.TrackFX_AddByName(tr, "ReaSamplOmatic5000", false, 0)  -- 0 = find only
+    if existing >= 0 then
+      return { track = reaper.GetTrackGUID(tr), loaded = "drumkit", already_present = true }
+    end
     local GM = { kick = 36, snare = 38, hat = 42 }
     for voice, file in pairs(p.samples or {}) do
       local fx = reaper.TrackFX_AddByName(tr, "ReaSamplOmatic5000", false, -1)

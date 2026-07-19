@@ -267,6 +267,12 @@ do
     if tr.guid == dguid then raw = tr end
   end
   eq(#raw.fx, 3, "three samplers added")
+
+  local r2 = call("add_instrument", { track = dguid, kind = "drumkit",
+    samples = { kick = "a", snare = "b", hat = "c" } })
+  eq(r2.ok, true, "second add_instrument drumkit ok")
+  eq(r2.result.already_present, true, "second drumkit dispatch already present")
+  eq(#raw.fx, 3, "second drumkit dispatch does not grow fx beyond 3")
 end
 
 -- 11. add_instrument: kind="named" is idempotent
