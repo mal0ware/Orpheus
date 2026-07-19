@@ -558,6 +558,17 @@ HANDLERS.add_instrument = function(p)
   return { track = reaper.GetTrackGUID(tr), loaded = p.name, already_present = false }
 end
 
+-- Place a named project marker at the start of a bar.
+HANDLERS.add_marker = function(p)
+  -- NOTE (verify live): AddProjectMarker2(proj, isrgn, pos, rgnend, name, wantidx, color)
+  -- returns the created marker index on REAPER 7.x. The fake + lua-stub tests do not
+  -- depend on the real API; confirmed by the live smoke.
+  local qn = bar_start_qn(p.bar or 1)
+  local pos = reaper.TimeMap2_QNToTime(0, qn)
+  local idx = reaper.AddProjectMarker2(0, false, pos, 0, p.name or "", -1, 0)
+  return { name = p.name or "", bar = p.bar or 1, index = idx }
+end
+
 local function dispatch(fn, params)
   if fn == "__batch__" then
     local results = {}

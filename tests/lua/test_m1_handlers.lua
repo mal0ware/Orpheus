@@ -145,6 +145,9 @@ reaper = {
   end,
   TrackFX_SetNamedConfigParm = function() return true end,
   TrackFX_SetParamNormalized = function() return true end,
+
+  -- (proj, isrgn, pos, rgnend, name, wantidx, color) -> marker index.
+  AddProjectMarker2 = function(_, _, _, _, _, wantidx) return wantidx == -1 and 1 or wantidx end,
 }
 
 -- --------------------------------------------------------------------------- --
@@ -274,6 +277,14 @@ do
   eq(first.result.already_present, false, "first add_instrument not already present")
   local second = call("add_instrument", { track = kguid, kind = "named", name = "ReaSynth" })
   eq(second.result.already_present, true, "second add_instrument already present")
+end
+
+-- 12. add_marker places a named marker and returns {name, bar, index}
+do
+  local r = M.dispatch("add_marker", { name = "Verse", bar = 3 })
+  eq(r.ok, true, "add_marker ok")
+  eq(r.result.name, "Verse", "marker name")
+  eq(r.result.bar, 3, "marker bar")
 end
 
 print(string.format("lua m1 handlers: %d passed, %d failed", passed, failed))

@@ -29,6 +29,7 @@ _CATEGORY_IMPORTS: dict[str, str] = {
     "dsl": "orpheus_mcp.tools.dsl",
     "compose": "orpheus_mcp.tools.compose",
     "mix": "orpheus_mcp.tools.mix",
+    "arrange": "orpheus_mcp.tools.arrange",
 }
 
 # Toolset profiles → the categories they expose.
@@ -39,7 +40,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
     "default": (
         "bridge", "project", "transport", "tracks", "midi",
         "theory", "analyze", "style", "apply", "render",
-        "instruments", "compose",
+        "instruments", "compose", "arrange",
     ),
     "full": tuple(_CATEGORY_IMPORTS.keys()),
 }

@@ -62,6 +62,7 @@ class FakeReaperProject:
     tracks: list[FakeTrack] = field(default_factory=list)
     play_state: int = 0
     installed_fx: list[str] = field(default_factory=list)
+    markers: list[dict] = field(default_factory=list)
     _guid_seq: int = 0
 
     # -- identity / lookup ------------------------------------------------- #
@@ -258,6 +259,11 @@ def make_handlers(project: FakeReaperProject) -> dict:
         tr.fx.append(name)
         return {"track": tr.guid, "loaded": name, "already_present": False}
 
+    def add_marker(p):
+        entry = {"name": p["name"], "bar": int(p["bar"])}
+        project.markers.append(entry)
+        return {"name": entry["name"], "bar": entry["bar"], "index": len(project.markers)}
+
     return {
         "get_connection_status": get_connection_status,
         "get_project_info": get_project_info,
@@ -273,6 +279,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "clear_track_midi": clear_track_midi,
         "list_installed_fx": list_installed_fx,
         "add_instrument": add_instrument,
+        "add_marker": add_marker,
     }
 
 

@@ -49,6 +49,8 @@ IMPLEMENTED = {
     "create_drum_pattern",
     "humanize_pass",
     "compose_section",
+    # arrange (Slice 2)
+    "add_marker",
 }
 
 
