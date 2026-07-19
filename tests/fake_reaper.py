@@ -38,6 +38,10 @@ class FakeTake:
     notes: list[FakeNote] = field(default_factory=list)
     # The take's item start, in project quarter-notes — PPQ is relative to this.
     item_start_qn: float = 0.0
+    # The take's item END, in project quarter-notes. Models D_POSITION + D_LENGTH so a
+    # regression test can assert the item grows to cover notes written by a later call
+    # (e.g. arrange_song writing section 2 at a higher at_bar into the same shared track).
+    item_end_qn: float = 0.0
 
 
 @dataclass
@@ -183,9 +187,14 @@ def make_handlers(project: FakeReaperProject) -> dict:
         if len(notes) > 512:
             raise ValueError(f"too many notes in one call: {len(notes)} > 512")
         base_qn = project.bar_start_qn(p.get("at_bar", 1))
+        max_end = max((n["start_beat"] + n["duration_beats"] for n in notes), default=0.0)
         if not tr.takes:
-            tr.takes.append(FakeTake(item_start_qn=base_qn))
+            tr.takes.append(FakeTake(item_start_qn=base_qn, item_end_qn=base_qn + max_end))
         take = tr.takes[0]
+        # Grow the item to cover this call's notes too — mirrors the Lua fix: a later
+        # call at a higher at_bar on the SAME shared track must not write notes past the
+        # item's right edge.
+        take.item_end_qn = max(take.item_end_qn, base_qn + max_end)
         for n in notes:
             start_ppq = project.qn_to_ppq(base_qn + n["start_beat"])
             end_ppq = project.qn_to_ppq(base_qn + n["start_beat"] + n["duration_beats"])

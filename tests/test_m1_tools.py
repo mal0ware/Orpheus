@@ -131,6 +131,34 @@ def test_create_midi_item_returns_take_handle(client):
     assert res["item_index"] == 0
 
 
+def test_insert_midi_notes_grows_item_for_later_section(client, project):
+    """arrange_song writes section 2 at a higher at_bar into the SAME shared track.
+
+    Regression for the live bug: insert_midi_notes sized the media item to the FIRST
+    call's notes only; a later call at a higher at_bar wrote notes past the item's right
+    edge, where in live REAPER they exist but don't play. FakeTake.item_end_qn models
+    the item's right edge (D_POSITION + D_LENGTH) so this is enforceable without REAPER.
+    """
+    guid = client.call("create_track", name="Keys")["guid"]
+    section1 = [{"pitch": 60, "start_beat": 0.0, "duration_beats": 1.0, "velocity": 100}]
+    client.call("insert_midi_notes", track=guid, notes=section1, at_bar=1)
+
+    section2 = [{"pitch": 67, "start_beat": 0.0, "duration_beats": 2.0, "velocity": 90}]
+    client.call("insert_midi_notes", track=guid, notes=section2, at_bar=5)
+
+    # (a) round-trip still holds: the bar-5 note reads back at beat 0 of bar 5.
+    read_bar5 = client.call("get_track_midi", track=guid, at_bar=5)
+    assert read_bar5["notes"][-1]["start_beat"] == pytest.approx(0.0)
+    assert read_bar5["notes"][-1]["duration_beats"] == pytest.approx(2.0)
+
+    # (b) the take's item now covers the bar-5 notes: item_end_qn >= project-QN end of
+    # the last note written (bar 5 start + 2 beats).
+    tr = project.resolve_track(guid)
+    take = tr.takes[0]
+    bar5_note_end_qn = project.bar_start_qn(5) + 2.0
+    assert take.item_end_qn >= bar5_note_end_qn - 1e-9
+
+
 def test_insert_into_unknown_track_errors(client):
     from orpheus_mcp.bridge.client import BridgeError
 

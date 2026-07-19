@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from orpheus_mcp.theory.music_theory_data import NOTE_TO_PC, snap_to_scale
+from orpheus_mcp.theory.music_theory_data import note_to_pc, snap_to_scale
 
 DURATIONS: dict[str, float] = {"w": 4.0, "h": 2.0, "q": 1.0, "e": 0.5, "s": 0.25}
 
@@ -32,8 +32,8 @@ def parse_melody(
             raise ValueError(f"bad melody token: {tok!r}")
         name, octave, dur = m.group(1), m.group(2), m.group(3)
         try:
-            pc = NOTE_TO_PC[name[:1].upper() + name[1:].lower()]
-        except KeyError as exc:
+            pc = note_to_pc(name)
+        except ValueError as exc:
             raise ValueError(f"bad note name in {tok!r}") from exc
         octn = int(octave) if octave is not None else 4
         pitch = pc + 12 * (octn + 1)  # MIDI: C4 = 60

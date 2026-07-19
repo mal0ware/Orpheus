@@ -71,9 +71,18 @@ reaper = {
   -- (unlike GetTrack). A stub that tolerated a leading 0 masked exactly that bug.
   GetTrackMediaItem = function(tr, i) return tr.items[i + 1] end,  -- 0-based
   GetActiveTake = function(item) return item.take end,
+  -- Real signature: GetMediaItemTake_Item(MediaItem_Take*) -> MediaItem*.
+  GetMediaItemTake_Item = function(take) return take.item end,
   GetMediaItemInfo_Value = function(item, key)
     if key == "IP_ITEMNUMBER" then return item.index end
+    if key == "D_POSITION" then return item.pos or 0 end
+    if key == "D_LENGTH" then return item.len or 0 end
     return 0
+  end,
+  SetMediaItemInfo_Value = function(item, key, val)
+    if key == "D_LENGTH" then item.len = val end
+    if key == "D_POSITION" then item.pos = val end
+    return true
   end,
 
   Master_GetTempo = function() return proj.tempo end,
@@ -93,9 +102,9 @@ reaper = {
   -- Time/QN map: linear (constant tempo). 1 QN == 1 second-equivalent here; only the
   -- QN<->PPQ relationship matters for the round-trip, and that is exact.
   TimeMap2_QNToTime = function(_, qn) return qn end,
-  CreateNewMIDIItemInProj = function(tr, start_t, _end_t)
+  CreateNewMIDIItemInProj = function(tr, start_t, end_t)
     local take = { notes = {}, item_start_qn = start_t }
-    local item = { take = take, index = #tr.items }
+    local item = { take = take, index = #tr.items, pos = start_t, len = end_t - start_t }
     take.item = item
     table.insert(tr.items, item)
     return item
@@ -210,6 +219,31 @@ approx(back.result.notes[1].duration_beats, 1.0, "note1 duration round-trips")
 eq(back.result.notes[2].pitch, 64, "note2 pitch round-trips")
 approx(back.result.notes[2].start_beat, 1.5, "note2 fractional start_beat round-trips")
 approx(back.result.notes[2].duration_beats, 0.5, "note2 fractional duration round-trips")
+
+-- 4b. Same-track multi-section write regression: a later insert_midi_notes call at a
+-- higher at_bar on the SAME shared track (e.g. arrange_song writing section 2 into a
+-- track that already has a section-1 item) must GROW the item, not write notes past its
+-- right edge — in live REAPER those notes exist but don't play. Guards the fix in
+-- orpheus_bridge.lua's insert_midi_notes (hoisted max_end_beat + take-exists resize).
+do
+  local gguid = call("create_track", { name = "GrowTest" }).result.guid
+  call("insert_midi_notes", { track = gguid, at_bar = 1,
+    notes = { { pitch = 60, start_beat = 0.0, duration_beats = 1.0, velocity = 100 } } })
+  local track_obj
+  for _, tr in ipairs(proj.tracks) do
+    if tr.guid == gguid then track_obj = tr end
+  end
+  local item = track_obj.items[1]
+  local len_before = item.len
+  local grow = call("insert_midi_notes", { track = gguid, at_bar = 5,
+    notes = { { pitch = 72, start_beat = 0.0, duration_beats = 2.0, velocity = 90 } } })
+  eq(grow.ok, true, "insert_midi_notes at later bar ok")
+  ok(item.len > len_before, "item length grew to cover the later section's notes")
+  local back5 = call("get_track_midi", { track = gguid, at_bar = 5 })
+  local last = back5.result.notes[#back5.result.notes]
+  approx(last.start_beat, 0.0, "later-section note reads back at bar 5 beat 0")
+  approx(last.duration_beats, 2.0, "later-section note duration round-trips")
+end
 
 -- 5. at_bar is a relative anchor: written at bar 3, read with the same anchor == beat 0.
 local t2 = call("create_track", { name = "Lead" }).result.guid

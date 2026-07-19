@@ -420,20 +420,36 @@ HANDLERS.insert_midi_notes = function(p)
   local at_bar = p.at_bar or 1
   local base_qn = bar_start_qn(at_bar)   -- beat 0 of the notes == start of at_bar
 
+  -- Hoisted so BOTH branches below (no-take / take-exists) can see it: a shared track
+  -- gets one item across multiple calls (e.g. arrange_song writing section 2 at a
+  -- higher at_bar), and that item must cover every call's notes, not just the first.
+  local max_end_beat = 0.0
+  for _, n in ipairs(notes) do
+    local e = n.start_beat + n.duration_beats
+    if e > max_end_beat then max_end_beat = e end
+  end
+
   local take = first_take(tr)
   if not take then
     -- Span an item large enough for the notes (rounded up to whole bars).
-    local max_end_beat = 0.0
-    for _, n in ipairs(notes) do
-      local e = n.start_beat + n.duration_beats
-      if e > max_end_beat then max_end_beat = e end
-    end
     local qnpb = qn_per_bar()
     local bars = math.max(1, math.ceil(max_end_beat / qnpb))
     local start_t = reaper.TimeMap2_QNToTime(0, base_qn)
     local end_t = reaper.TimeMap2_QNToTime(0, base_qn + bars * qnpb)
     local item = reaper.CreateNewMIDIItemInProj(tr, start_t, end_t, false)
     take = reaper.GetActiveTake(item)
+  else
+    -- The item already exists (a prior call on this same track created it) — grow it
+    -- if this call's notes reach past its current right edge. Without this, notes
+    -- inserted beyond the item's end exist in the MIDI take but REAPER won't play them.
+    -- NOTE (verify live): confirm this D_LENGTH resize behavior in the live smoke.
+    local item = reaper.GetMediaItemTake_Item(take)
+    local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+    local item_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+    local needed_end_t = reaper.TimeMap2_QNToTime(0, base_qn + max_end_beat)
+    if needed_end_t > item_pos + item_len then
+      reaper.SetMediaItemInfo_Value(item, "D_LENGTH", needed_end_t - item_pos)
+    end
   end
 
   for _, n in ipairs(notes) do
