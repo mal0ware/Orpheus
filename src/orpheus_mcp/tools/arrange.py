@@ -143,6 +143,6 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         if len(lines) != len(at_bars):
             raise ValueError("lines and at_bars must be the same length")
         bridge = BridgeClient()
-        for line, bar in zip(lines, at_bars):
+        for line, bar in zip(lines, at_bars, strict=True):
             bridge.call("add_marker", name=line, bar=int(bar))
         return {"placed": len(lines)}

@@ -4,6 +4,75 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-07-18 — Slice 2: the songwriting system — full-song composer (tested against fake/lua; live smoke pending)
+
+**Built the full-song composer** — the second "ask in words, get an editable, audible result" slice, this
+time a whole sectioned song rather than one loop:
+
+- `parse_melody` (`theory/melody.py`) — a compact melody notation (`"A4:q C5:q E5:h"`, `r:dur` for
+  rests) into sequential note dicts; snaps into `key`/`mode` if given so a model-authored line stays
+  in key without hand-computing scale degrees.
+- `DRUM_PATTERNS` (`theory/patterns.py`) — named step-grid patterns (`backbeat`, `halftime`,
+  `fourfloor`) resolved through the existing `parse_drum_grid`, so callers say "halftime" instead of
+  spelling out a grid.
+- `add_marker` — a new bridge verb + tool wrapping `AddProjectMarker2`, placing a named marker at a
+  1-based bar.
+- `create_melody` — thin tool wrapper writing a `parse_melody` line to a track.
+- `_build_section` / `build_section` — lays one section (chords + bass + drums + optional melody) at
+  a bar offset onto shared named tracks, reusing every Slice-1 helper (`resolve_progression`,
+  `voice_lead`, `bassline_notes`, `parse_drum_grid`, `select_instrument`, `_write_notes`,
+  `load_drumkit`). Takes an optional caller-owned `instruments_loaded` set so a multi-section caller
+  loads each track's instrument at most once instead of once per section.
+- `arrange_song` — the orchestrator: sets tempo, then walks a `sections` list (`{name, bars,
+  progression, drums?, melody?}`), placing a marker + a full section per entry end-to-end, sharing
+  one instrument inventory and one `instruments_loaded` set across all sections. One call, one
+  audible multi-section song.
+- `place_lyric_markers` — places model-authored lyric lines as markers (`lines[i]` at `at_bars[i]`);
+  the tool docstring is explicit that lyrics must be original text, never a copyrighted song's.
+
+**Mid-slice fix**: `add_instrument(kind="drumkit")` was not idempotent — every call stacked three more
+`ReaSamplOmatic5000` instances onto the track instead of detecting an existing kit, unlike the
+`kind="named"` path. `arrange_song` calling `_build_section` once per section would have piled up
+duplicate drum voices on every section after the first. Fixed by probing with
+`TrackFX_AddByName(..., false, 0)` (find-only) before adding, mirroring the named-instrument path;
+regression-tested at the Lua-handler, fake-bridge, and tool level (`e3a7422`).
+
+**Tested:** unit tests (`parse_melody` tokens/rests/key-snapping, `DRUM_PATTERNS` resolution) +
+`FakeReaperBridge` contract tests for `add_marker`/`create_melody`/`build_section`/`arrange_song`/
+`place_lyric_markers` + the lupa-driven Lua handler suite exercising `add_marker` and the idempotent
+drumkit probe against a stubbed `reaper`. Also added `tests/test_registry.py::test_arrange_in_default_not_explain`
+and `test_arrange_in_full_profile`, confirming the `arrange` category (wired into `default` in Task 3)
+is present in `default`/`full` and absent from `explain`. Full gate run this session: **`pytest -q` →
+186 passed, 2 skipped**; **`scripts/run_lua_tests.py` → 50 passed, 0 failed**; **`ruff check .` → clean**
+(one `B905 zip() without strict=` finding in `tools/arrange.py`, fixed by adding `strict=True`, itself
+already guarded by an explicit length check); **`mypy src` → clean, 37 source files**.
+
+### Pending live verification (explicitly not done — do not read the above as a live pass)
+
+The live-REAPER smoke test for this slice is the user's next step, not run here. Live-only unknowns
+introduced by this slice:
+
+- `AddProjectMarker2(proj, isrgn, pos, rgnend, name, wantidx, color)` — the Lua assumes this exact
+  signature and return shape (created marker index) per the REAPER 7.x ReaScript docs; the fake and
+  the lua-stub tests do not depend on the real API, so this is genuinely unconfirmed until a live
+  `add_marker` call is made and the marker is eyeballed in the timeline.
+- Whether an `arrange_song` call actually produces an audible, correctly-sectioned song end-to-end in
+  a real project — placement, tempo, and note content are all asserted programmatically; nobody has
+  pressed play and listened yet.
+
+Carried forward from the compose-core slice (still open, unrelated to this slice's changes):
+`EnumInstalledFX` return shape, `ReaSamplOmatic5000`'s `FILE0`/note-range param indices, the
+`MIDI_DeleteNote` descending-delete idiom in `clear_track_midi`, and the sound pack's placeholder
+`sha256: "<PIN_BEFORE_SHIP>"` checksums.
+
+**Rejected during this slice:** finding or downloading a reference song the user does not own, to use
+as a melodic/lyrical reference or fixture — this was considered and explicitly rejected on copyright
+grounds; Orpheus does not fetch or embed audio it has no rights to. **Audio stem ingestion remains
+deferred to Slice 4** (`reference-ingest`, tracked in `docs/roadmap.md`), and is scoped, when built, to
+audio files the user legally owns — no scraping, no un-owned reference tracks.
+
+---
+
 ## 2026-07-18 — Compose-core slice: NL → audible section (tested against fake/lua; live smoke pending)
 
 **Built the M4 compose slice** — the first "ask in words, get an editable, audible section" path. Four

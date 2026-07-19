@@ -118,3 +118,23 @@ def test_compose_not_in_explain_profile():
     mcp = FastMCP(name="t")
     cats = register_tools(mcp, profile="explain")
     assert "compose" not in cats
+
+
+def test_arrange_in_default_not_explain():
+    from fastmcp import FastMCP
+
+    from orpheus_mcp.registry import register_tools
+
+    m1 = FastMCP(name="t")
+    assert "arrange" in register_tools(m1, profile="default")
+    m2 = FastMCP(name="t")
+    assert "arrange" not in register_tools(m2, profile="explain")
+
+
+def test_arrange_in_full_profile():
+    from fastmcp import FastMCP
+
+    from orpheus_mcp.registry import register_tools
+
+    mcp = FastMCP(name="t")
+    assert "arrange" in register_tools(mcp, profile="full")
