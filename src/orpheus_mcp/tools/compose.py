@@ -200,3 +200,18 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
                 "bass": bass_instrument,
             },
         }
+
+    @mcp.tool(annotations=_DESTRUCTIVE)
+    def create_melody(
+        track: str, notation: str, key: str | None = None,
+        mode: str | None = None, at_bar: int = 1,
+    ) -> dict:
+        """Write a lead melody from note+rhythm notation (e.g. 'A4:q C5:q E5:h'), kept in
+        key if key+mode are given. Auto-loads a lead synth so it's audible."""
+        from orpheus_mcp.theory.melody import parse_melody
+
+        notes = parse_melody(notation, key=key, mode=mode)
+        bridge = BridgeClient()
+        written = _write_notes(bridge, track, notes, at_bar=at_bar)
+        bridge.call("add_instrument", track=track, kind="named", name="ReaSynth")
+        return {"track": track, "notes_written": written}

@@ -126,3 +126,16 @@ async def test_compose_section_unknown_genre_raises(mcp_client):
     async with mcp_client as c:
         with pytest.raises(ToolError):
             await c.call_tool("compose_section", {"genre": "polka"})
+
+
+async def test_create_melody_writes_in_key_line(mcp_client, project):
+    async with mcp_client as c:
+        await c.call_tool("create_track", {"name": "lead"})
+        res = await c.call_tool(
+            "create_melody",
+            {"track": "lead", "notation": "A4:q C5:q E5:h", "key": "A", "mode": "minor"},
+        )
+    tr = project.resolve_track("lead")
+    assert res.data["notes_written"] == 3
+    assert [n.pitch for n in tr.takes[0].notes] == [69, 72, 76]
+    assert "ReaSynth" in tr.fx
