@@ -69,3 +69,23 @@ async def test_build_section_second_section_offsets(mcp_client, project):
     # chords track holds notes from both sections (bar 1 and bar 3 => beat >= 8)
     starts = [n.start_ppq for n in project.resolve_track("chords").takes[0].notes]
     assert max(starts) >= 8 * 960  # a note at/after bar 3 (8 beats in)
+
+
+async def test_arrange_song_places_sections_and_markers(mcp_client, project):
+    sections = [
+        {"name": "Verse", "bars": 2, "progression": "i-iv"},
+        {"name": "Chorus", "bars": 2, "progression": "VI-VII", "melody": "A4:q C5:q E5:h"},
+    ]
+    async with mcp_client as c:
+        res = await c.call_tool(
+            "arrange_song",
+            {"tempo": 72, "key": "A", "mode": "minor", "sections": sections},
+        )
+    assert 71 <= project.tempo <= 73
+    assert [m["name"] for m in project.markers] == ["Verse", "Chorus"]
+    assert [m["bar"] for m in project.markers] == [1, 3]  # Verse@1, Chorus after 2 bars
+    assert res.data["sections"] == [
+        {"name": "Verse", "at_bar": 1, "bars": 2},
+        {"name": "Chorus", "at_bar": 3, "bars": 2},
+    ]
+    assert len(project.resolve_track("drums").fx) == 3

@@ -53,6 +53,7 @@ IMPLEMENTED = {
     # arrange (Slice 2)
     "add_marker",
     "build_section",
+    "arrange_song",
 }
 
 
