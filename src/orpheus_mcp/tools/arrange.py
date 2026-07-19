@@ -10,7 +10,7 @@ from orpheus_mcp.instruments import select_instrument
 from orpheus_mcp.theory.chords import resolve_progression, voice_lead
 from orpheus_mcp.theory.melody import parse_melody
 from orpheus_mcp.theory.patterns import DRUM_PATTERNS, bassline_notes, parse_drum_grid
-from orpheus_mcp.tools.compose import _write_notes
+from orpheus_mcp.tools.compose import _chord_notes, _write_notes
 
 _DESTRUCTIVE = {"destructiveHint": True}
 
@@ -36,10 +36,7 @@ def _build_section(
     # chords: 1 bar/chord, progression repeated to fill `bars`
     voiced = voice_lead(resolve_progression(progression, key=key, mode=mode, octave=4))
     filled = [voiced[i % len(voiced)] for i in range(bars)]
-    chord_notes = [
-        {"pitch": p, "start_beat": i * 4.0, "duration_beats": 4.0, "velocity": 88}
-        for i, chord in enumerate(filled) for p in chord
-    ]
+    chord_notes = _chord_notes(filled, 4.0)
     _write_notes(bridge, chord_track, chord_notes, at_bar=at_bar)
     ci = select_instrument("keys", inv)
     bridge.call("add_instrument", track=chord_track, kind="named",
