@@ -52,6 +52,7 @@ IMPLEMENTED = {
     "create_melody",
     # arrange (Slice 2)
     "add_marker",
+    "build_section",
 }
 
 

@@ -43,3 +43,29 @@ async def test_add_marker_tool(mcp_client, project):
         res = await c.call_tool("add_marker", {"name": "Chorus", "bar": 9})
     assert res.data["bar"] == 9
     assert project.markers[-1]["name"] == "Chorus"
+
+
+async def test_build_section_lays_all_parts_at_offset(mcp_client, project):
+    async with mcp_client as c:
+        res = await c.call_tool(
+            "build_section",
+            {"key": "A", "mode": "minor", "progression": "i-iv-V-i",
+             "bars": 4, "at_bar": 1, "drums": "backbeat", "melody": "A4:q C5:q E5:h"},
+        )
+    names = {t.name for t in project.tracks}
+    assert {"drums", "chords", "bass", "lead"}.issubset(names)
+    assert len(project.resolve_track("drums").fx) == 3  # stock kit
+    assert project.resolve_track("chords").takes[0].notes  # chords written
+    assert project.resolve_track("lead").takes[0].notes    # melody written
+    assert res.data["at_bar"] == 1 and res.data["bars"] == 4
+
+
+async def test_build_section_second_section_offsets(mcp_client, project):
+    async with mcp_client as c:
+        await c.call_tool("build_section",
+            {"key": "A", "mode": "minor", "progression": "i-iv", "bars": 2, "at_bar": 1})
+        await c.call_tool("build_section",
+            {"key": "A", "mode": "minor", "progression": "VI-VII", "bars": 2, "at_bar": 3})
+    # chords track holds notes from both sections (bar 1 and bar 3 => beat >= 8)
+    starts = [n.start_ppq for n in project.resolve_track("chords").takes[0].notes]
+    assert max(starts) >= 8 * 960  # a note at/after bar 3 (8 beats in)
