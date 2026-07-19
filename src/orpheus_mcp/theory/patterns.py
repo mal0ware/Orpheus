@@ -37,6 +37,26 @@ def parse_drum_grid(pattern: str, steps_per_bar: int = 16) -> list[dict]:
     return notes
 
 
+# Named one-bar drum grids (16 steps = 4/4 bar). Values parse via parse_drum_grid.
+DRUM_PATTERNS: dict[str, str] = {
+    "backbeat": (
+        "kick:  x...x...x...x...\n"
+        "snare: ....x.......x...\n"
+        "hat:   x.x.x.x.x.x.x.x."
+    ),
+    "halftime": (
+        "kick:  x.......x.......\n"
+        "snare: ........x.......\n"
+        "hat:   x.x.x.x.x.x.x.x."
+    ),
+    "fourfloor": (
+        "kick:  x...x...x...x...\n"
+        "snare: ....x...x...x...\n"
+        "hat:   ..x...x...x...x."
+    ),
+}
+
+
 def bassline_notes(
     chords: list[list[int]], style: str = "root", bars_per_chord: int = 1
 ) -> list[dict]:
