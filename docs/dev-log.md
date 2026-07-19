@@ -4,6 +4,14 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-07-18 — LIVE SMOKE PASS (REAPER 7.77, Slices 1+2)
+
+First end-to-end run against a live REAPER. Bridge installed via `install-bridge` + run as a ReaScript action; `~/.orpheus_bridge` heartbeat confirmed (Lua falls back `HOME`→`USERPROFILE`, so it matches the Python default on Windows). Built a 5-section, 18-bar A-minor ballad (Intro/Verse/Chorus/Verse/Chorus) via `set_tempo` + `add_marker` + `_build_section` per section.
+
+**Confirmed live:** connection (7.77/x64); `list_installed_fx` returned 252 plugins (`EnumInstalledFX` works live); tempo/4-4; 4 tracks (drums/chords/bass/lead); 5 section markers visible; **plays straight through all 18 bars with no drop-out** — each track has exactly ONE MIDI item spanning the whole song, so the multi-section item-length fix (`insert_midi_notes` D_LENGTH growth) is verified on real hardware. Drums audible. User verdict: "full pass."
+
+**Open (quality, not correctness):** stock ReaSynth timbre + zero mixing/FX + algorithmic parts = "scaffold, not a produced record" (sounds basic/robotic). Next lever = instrument selection actually using the user's installed VSTs, then an effects/mixing layer (the deferred editing-parity slice). NOT a bug — the documented limit.
+
 ## 2026-07-18 — Slice 2: the songwriting system — full-song composer (tested against fake/lua; live smoke pending)
 
 **Built the full-song composer** — the second "ask in words, get an editable, audible result" slice, this
