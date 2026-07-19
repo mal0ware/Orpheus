@@ -89,3 +89,15 @@ async def test_arrange_song_places_sections_and_markers(mcp_client, project):
         {"name": "Chorus", "at_bar": 3, "bars": 2},
     ]
     assert len(project.resolve_track("drums").fx) == 3
+
+
+async def test_place_lyric_markers(mcp_client, project):
+    async with mcp_client as c:
+        res = await c.call_tool(
+            "place_lyric_markers",
+            {"lines": ["Verse: first line here", "Chorus: hook line here"],
+             "at_bars": [1, 9]},
+        )
+    assert res.data["placed"] == 2
+    assert [m["bar"] for m in project.markers] == [1, 9]
+    assert "first line" in project.markers[0]["name"]

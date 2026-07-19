@@ -54,6 +54,7 @@ IMPLEMENTED = {
     "add_marker",
     "build_section",
     "arrange_song",
+    "place_lyric_markers",
 }
 
 

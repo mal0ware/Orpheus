@@ -135,3 +135,14 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
             bar += int(s["bars"])
         return {"tempo": float(tempo), "key": key, "sections": placed,
                 "markers": [{"name": p["name"], "bar": p["at_bar"]} for p in placed]}
+
+    @mcp.tool(annotations=_DESTRUCTIVE)
+    def place_lyric_markers(lines: list[str], at_bars: list[int]) -> dict:
+        """Place model-authored lyric lines as timeline markers. `lines[i]` goes at
+        `at_bars[i]`. Lyrics must be original text, never a copyrighted song's lyrics."""
+        if len(lines) != len(at_bars):
+            raise ValueError("lines and at_bars must be the same length")
+        bridge = BridgeClient()
+        for line, bar in zip(lines, at_bars):
+            bridge.call("add_marker", name=line, bar=int(bar))
+        return {"placed": len(lines)}
