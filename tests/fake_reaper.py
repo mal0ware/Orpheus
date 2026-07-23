@@ -12,6 +12,7 @@ A note written at beat B must read back at beat B (tests/test_midi_roundtrip.py)
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import threading
@@ -329,7 +330,13 @@ class FakeReaperBridge:
     def _run(self) -> None:
         while not self._stop.is_set():
             if self._beat:
-                self._atomic_write(self.dir / "heartbeat.lock", str(time.time()))
+                # Heartbeat content is never parsed (only its mtime is checked by
+                # BridgeClient.is_alive()); skipping one tick is harmless and the next
+                # tick retries. Must not let a transient OSError propagate — an
+                # uncaught exception here kills the poller thread for the rest of the
+                # test (see _atomic_write for why this can happen on Windows).
+                with contextlib.suppress(OSError):
+                    self._atomic_write(self.dir / "heartbeat.lock", str(time.time()))
             if self._answer:
                 for req_file in sorted(self.dir.glob("request_*.json")):
                     self._handle(req_file)
@@ -362,11 +369,37 @@ class FakeReaperBridge:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
 
-    @staticmethod
-    def _atomic_write(path: Path, text: str) -> None:
+    # os.replace() below needs delete-share access to `path`. On Windows, a concurrent
+    # reader that briefly opens the same path — e.g. BridgeClient.is_alive()'s
+    # stat() of heartbeat.lock, called from a *different* thread on every dispatch —
+    # can make the OS refuse that rename for a few milliseconds with
+    # "PermissionError: [WinError 5] Access is denied". This is a real, if narrow,
+    # threading race between this poller thread and any concurrent reader thread:
+    # both live in the same process (unlike the real Lua bridge, which is a separate
+    # OS process), so their file handles can transiently collide. The read side of
+    # this protocol already treats such races as retryable (see _handle and
+    # BridgeClient._await_response); the write side needs the same tolerance.
+    _REPLACE_RETRIES = 25
+    _REPLACE_RETRY_DELAY_S = 0.002
+
+    @classmethod
+    def _atomic_write(cls, path: Path, text: str) -> None:
         import tempfile
 
         fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         with os.fdopen(fd, "w") as f:
             f.write(text)
-        os.replace(tmp, path)
+        last_exc: OSError | None = None
+        for _ in range(cls._REPLACE_RETRIES):
+            try:
+                os.replace(tmp, path)
+                return
+            except OSError as exc:
+                last_exc = exc
+                time.sleep(cls._REPLACE_RETRY_DELAY_S)
+        # Retries exhausted (genuinely stuck, not just a transient collision) — clean
+        # up our temp file and surface the real error rather than leaving it orphaned.
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        assert last_exc is not None
+        raise last_exc
