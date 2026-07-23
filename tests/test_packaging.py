@@ -15,7 +15,8 @@ def test_extras_declared():
     assert {"analysis", "separation", "transcribe", "dev"} <= set(extras)
     assert any(d.startswith("librosa") for d in extras["analysis"])
     assert any(d.startswith("torch") for d in extras["analysis"])
-    assert any(d.startswith("audio-separator") for d in extras["separation"])
+    # audio-separator lives in an ISOLATED env (D9) - its deps cap fastmcp<3.4
+    assert not any(d.startswith("audio-separator") for d in extras["separation"])
     assert any(d.startswith("faster-whisper") for d in extras["separation"])
 
 def test_markers_registered():

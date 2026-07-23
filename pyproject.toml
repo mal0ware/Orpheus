@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastmcp>=2.3",
+    "fastmcp>=3.4",
     "pydantic>=2.7",
     "music21>=9.1",
     "numpy>=1.26",
@@ -34,10 +34,11 @@ analysis = [
     "panns-inference>=0.1.1",
 ]
 separation = [
+    # audio-separator is NOT here: every version of it caps fastmcp<3.4 transitively.
+    # It runs in an isolated uv env (D9, same pattern as basic-pitch) via its CLI.
     "librosa>=0.10",
     "panns-inference>=0.1.1",
     "torch>=2.4", "torchaudio>=2.4",
-    "audio-separator>=0.30",
     "faster-whisper>=1.0",
     "whisperx>=3.1",           # NOTE (§14.1): the lib may pull pyannote as a dep — acceptable;
                                # what must NEVER happen is calling diarization or fetching its
