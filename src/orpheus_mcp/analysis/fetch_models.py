@@ -1,0 +1,135 @@
+"""``orpheus-mcp fetch-models`` — the checkpoint pre-fetch install step (§1.1/§9).
+
+This is the ONLY new code in Task 0.2 allowed to touch the network (the pre-existing,
+consent-gated ``install_sound_pack`` is the other standing exception). Every analysis tool
+call must be able to assume its checkpoints already exist locally and are hash-verified —
+``audio-separator``'s default lazy download-on-first-use is exactly what this disables.
+
+Two modes:
+- Normal (default): download each registry checkpoint, sha256-VERIFY it against the
+  registry's pinned hash, and refuse (raise) on a mismatch or a missing pin.
+- Pin mode (``--pin``, Task 0.3's workflow): download each checkpoint and sha256-RECORD it
+  instead of verifying — used exactly once, by ``scripts/pin_models.py``, to populate the
+  registry's hashes in the first place. Never used by a normal install.
+
+Stdlib-only (``urllib.request`` + ``hashlib``) — no new dependency for something this small,
+and it keeps this module importable without any analysis extra installed.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import shutil
+import sys
+from pathlib import Path
+from typing import TextIO
+from urllib.parse import urlparse
+from urllib.request import urlopen
+
+from orpheus_mcp.analysis.model_registry import ModelEntry, checkpoint_dir, load_registry
+
+_CHUNK_SIZE = 1024 * 1024
+
+
+class FfmpegMissing(Exception):
+    """ffmpeg is not on PATH — required for every audio decode step downstream."""
+
+
+class FetchModelsError(Exception):
+    """A checkpoint could not be fetched or failed hash verification."""
+
+
+def ffmpeg_on_path() -> bool:
+    """Whether the ``ffmpeg`` executable is discoverable on PATH."""
+    return shutil.which("ffmpeg") is not None
+
+
+def require_ffmpeg() -> None:
+    """Raise an actionable :class:`FfmpegMissing` if ffmpeg is not on PATH."""
+    if not ffmpeg_on_path():
+        raise FfmpegMissing(
+            "ffmpeg was not found on PATH. Every Orpheus analysis tool decodes audio through "
+            "it. Install it first (Windows: `winget install ffmpeg`; macOS: `brew install "
+            "ffmpeg`; Linux: your package manager), then re-run `orpheus-mcp fetch-models`."
+        )
+
+
+def _checkpoint_filename(entry: ModelEntry) -> str:
+    """The local filename for an entry's checkpoint - the URL PATH's basename, query
+    strings stripped (a raw ``rsplit("/")`` on a Google Drive ``?id=...&export=download``
+    URL, or on an HF repo-root URL with no path segment, produces a Windows-illegal or
+    empty filename)."""
+    assert entry.checkpoint_url is not None
+    path = urlparse(entry.checkpoint_url).path
+    name = path.rstrip("/").rsplit("/", 1)[-1]
+    return name or f"{entry.id.replace('/', '_')}.bin"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(_CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def download_checkpoint(url: str, dest: Path) -> None:
+    """Stream ``url`` to ``dest`` atomically (download to a .part file, then rename)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".part")
+    with urlopen(url) as response, tmp.open("wb") as fh:  # noqa: S310 (fixed install-time step)
+        shutil.copyfileobj(response, fh)
+    tmp.replace(dest)
+
+
+def fetch_models(
+    *,
+    pin: bool = False,
+    out: TextIO = sys.stdout,
+    downloader=download_checkpoint,
+) -> dict[str, str]:
+    """Download + verify (or, in pin mode, record) every registry checkpoint.
+
+    Returns ``{entry.id: status}`` where status is ``"skipped (no checkpoint_url)"``,
+    ``"verified"``, or — in pin mode — the freshly computed sha256 hex digest.
+    ``downloader`` is injectable so tests never hit the network (default streams for real).
+
+    Scope: every registry checkpoint, not just separator engines — PANNs SED weights, the
+    BTC + musicxlab chord checkpoints, and the faster-whisper large-v3 snapshot are fetched
+    here too, all landing under ``checkpoint_dir()``, never inside the repo.
+    """
+    require_ffmpeg()
+
+    entries = load_registry(allow_unpinned=True)
+    results: dict[str, str] = {}
+
+    for entry in entries:
+        if entry.checkpoint_url is None:
+            results[entry.id] = "skipped (no checkpoint_url)"
+            continue
+
+        if not pin and entry.sha256 is None:
+            raise FetchModelsError(
+                f"{entry.id}: checkpoint_url is set but sha256 is not pinned, and this is "
+                "not a --pin run. Run `orpheus-mcp fetch-models --pin` (Task 0.3's pin "
+                "workflow) to populate hashes first."
+            )
+
+        dest = checkpoint_dir(entry.id) / _checkpoint_filename(entry)
+        print(f"Fetching {entry.id} -> {dest}", file=out)
+        downloader(entry.checkpoint_url, dest)
+        digest = _sha256_file(dest)
+
+        if pin:
+            results[entry.id] = digest
+            continue
+
+        if digest != entry.sha256:
+            raise FetchModelsError(
+                f"{entry.id}: sha256 mismatch for {dest}. Expected {entry.sha256}, got "
+                f"{digest}. The checkpoint may be corrupted or the upstream file changed — "
+                "delete it and re-run, or re-pin if the upstream release genuinely moved."
+            )
+        results[entry.id] = "verified"
+
+    return results

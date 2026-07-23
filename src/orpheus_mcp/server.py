@@ -40,8 +40,10 @@ register_tools(mcp, profile=_PROFILE)
 def main() -> None:
     """Console-script entrypoint.
 
-    ``orpheus-mcp``                 → run the MCP server (stdio transport)
-    ``orpheus-mcp install-bridge``  → copy the Lua bridge into REAPER's Scripts folder
+    ``orpheus-mcp``                    → run the MCP server (stdio transport)
+    ``orpheus-mcp install-bridge``     → copy the Lua bridge into REAPER's Scripts folder
+    ``orpheus-mcp fetch-models``       → download + hash-verify every model registry checkpoint
+    ``orpheus-mcp fetch-models --pin`` → download + RECORD hashes (Task 0.3 pin workflow only)
     """
     import sys
 
@@ -57,6 +59,29 @@ def main() -> None:
         print(f"✓ Installed Orpheus bridge → {dest}")
         print("Next, in REAPER: Actions → Show action list → Run ReaScript → select "
               "orpheus_bridge.lua (or assign it a toolbar button).")
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "fetch-models":
+        from orpheus_mcp.analysis.fetch_models import (
+            FetchModelsError,
+            FfmpegMissing,
+            fetch_models,
+        )
+
+        # Same cp1252-safe console degradation as install-bridge.
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(errors="replace")
+
+        pin_mode = "--pin" in sys.argv[2:]
+        try:
+            results = fetch_models(pin=pin_mode)
+        except (FfmpegMissing, FetchModelsError) as exc:
+            print(f"✗ fetch-models failed: {exc}")
+            sys.exit(1)
+
+        for model_id, status in results.items():
+            print(f"{model_id}: {status}")
+        print(f"✓ fetch-models complete ({len(results)} registry entries).")
         return
 
     mcp.run()
