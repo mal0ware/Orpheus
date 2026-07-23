@@ -1,0 +1,41 @@
+"""Packaging invariants — extras exist, markers registered, no heavy import at core import time."""
+from __future__ import annotations
+
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+
+def _pyproject():
+    return tomllib.loads(Path("pyproject.toml").read_text("utf-8"))
+
+def test_extras_declared():
+    extras = _pyproject()["project"]["optional-dependencies"]
+    assert {"analysis", "separation", "transcribe", "dev"} <= set(extras)
+    assert any(d.startswith("librosa") for d in extras["analysis"])
+    assert any(d.startswith("torch") for d in extras["analysis"])
+    assert any(d.startswith("audio-separator") for d in extras["separation"])
+    assert any(d.startswith("faster-whisper") for d in extras["separation"])
+
+def test_markers_registered():
+    ini = _pyproject()["tool"]["pytest"]["ini_options"]
+    assert any(m.startswith("desktop") for m in ini["markers"])
+    assert any(m.startswith("gpu") for m in ini["markers"])
+
+def test_core_import_stays_lean():
+    # subprocess, not importlib.reload — reload of a package with submodules is unreliable
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import orpheus_mcp, sys;"
+                "bad=[m for m in ('torch','librosa','audio_separator',"
+                "'faster_whisper') if m in sys.modules];"
+                "sys.exit(1 if bad else 0)"
+            ),
+        ],
+        capture_output=True,
+    )
+    assert out.returncode == 0  # analysis extras load lazily, inside functions

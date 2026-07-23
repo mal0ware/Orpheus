@@ -36,3 +36,23 @@ jobs:
       # on the runner) — same mechanism the dev-log verified it with.
       - name: Lua handler suites (via lupa)
         run: uv run python scripts/run_lua_tests.py
+
+  analysis-cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install ffmpeg
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Install (with analysis + dev extras)
+        run: uv sync --extra analysis --extra dev
+
+      - name: Test (excluding desktop and gpu)
+        run: uv run pytest -q -m "not desktop and not gpu"
