@@ -34,7 +34,8 @@ analysis = [
     "panns-inference>=0.1.1",
 ]
 separation = [
-    "orpheus-mcp[analysis]",
+    "librosa>=0.10",
+    "panns-inference>=0.1.1",
     "torch>=2.4", "torchaudio>=2.4",
     "audio-separator>=0.30",
     "faster-whisper>=1.0",
@@ -79,13 +80,22 @@ packages = ["src/orpheus_mcp"]
 # Forcing a modern numba pulls a numpy both it and everything else agrees on.
 constraint-dependencies = ["numba>=0.60", "llvmlite>=0.43"]
 
+# extras are conflict-partitioned so uv forks the torch resolution per extra;
+# `separation` therefore supersets `analysis` instead of referencing it.
+conflicts = [[{ extra = "analysis" }, { extra = "separation" }]]
+
 [[tool.uv.index]]
 name = "pytorch-cu124"
 url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv.sources]
-torch      = [{ index = "pytorch-cu124", extra = "separation" }]
+torch      = [{ index = "pytorch-cpu", extra = "analysis" }, { index = "pytorch-cu124", extra = "separation" }]
 torchaudio = [{ index = "pytorch-cu124", extra = "separation" }]
 
 [tool.ruff]
