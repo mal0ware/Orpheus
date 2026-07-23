@@ -1,0 +1,67 @@
+{
+  "name": "ci_vocal",
+  "genre": "pop",
+  "density": "sparse",
+  "bpm": 116,
+  "bars": 8,
+  "sample_rate": 22050,
+  "key": {
+    "root": "G",
+    "mode": "major"
+  },
+  "progression": "Gmaj7,C/E,D,Em7",
+  "chords": [
+    "Gmaj7",
+    "C",
+    "D",
+    "Em7"
+  ],
+  "roles": {
+    "drums": "stems/drums.flac",
+    "bass": "stems/bass.flac",
+    "chords": "stems/chords.flac",
+    "vocals": "stems/vocals.flac"
+  },
+  "lyrics": {
+    "lines": [
+      "Morning light comes over the hill",
+      "I count the hours slow and still",
+      "Every step a steady sound",
+      "Walking on the open ground",
+      "Hold the line and carry through",
+      "Simple words will see us new"
+    ],
+    "placements": [
+      {
+        "text": "Morning light comes over the hill",
+        "start_s": 0.0,
+        "end_s": 2.524
+      },
+      {
+        "text": "I count the hours slow and still",
+        "start_s": 2.825,
+        "end_s": 5.54
+      },
+      {
+        "text": "Every step a steady sound",
+        "start_s": 5.651,
+        "end_s": 8.06
+      },
+      {
+        "text": "Walking on the open ground",
+        "start_s": 8.476,
+        "end_s": 10.875
+      },
+      {
+        "text": "Hold the line and carry through",
+        "start_s": 11.301,
+        "end_s": 13.715
+      },
+      {
+        "text": "Simple words will see us new",
+        "start_s": 14.126,
+        "end_s": 16.586
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "files": {
+    "ci_sparse/mix.flac": "75d5001dcd865f61cdf6bbeab34cb099ebd1021e28eebb79475169cff5f9ac40",
+    "ci_sparse/stems/bass.flac": "413fdf7a0b8db600305f4fdbe7d79b479b2c83202eea342fdf6ea852bc1ff8ae",
+    "ci_sparse/stems/chords.flac": "13fbb11e83bd324ae4be763037551e8f6113b8496bf1c532c7ecbfd86eeeff86",
+    "ci_sparse/stems/drums.flac": "a75eae780752201626d6bbb778c3d6f8d9ee241f326f831610542eb281bb05d2",
+    "ci_sparse/truth.json": "8f675f9014e2aec923e34b03b0dcdfdafe1d4ba9c19198809b7b99d608bb8331",
+    "ci_vocal/mix.flac": "278b98c00870700e2a571acd48ba7395c81d0033d76328f149e4149c8c3da1e7",
+    "ci_vocal/stems/bass.flac": "413fdf7a0b8db600305f4fdbe7d79b479b2c83202eea342fdf6ea852bc1ff8ae",
+    "ci_vocal/stems/chords.flac": "13fbb11e83bd324ae4be763037551e8f6113b8496bf1c532c7ecbfd86eeeff86",
+    "ci_vocal/stems/drums.flac": "a75eae780752201626d6bbb778c3d6f8d9ee241f326f831610542eb281bb05d2",
+    "ci_vocal/stems/vocals.flac": "942222770511a6a55a7dedeff7b0424dcd0201bd6c4e8082d9da2df79594f732",
+    "ci_vocal/truth.json": "045c670bbe78b455defc171f35e9a975d2078dc7addf3dc612ab3546333c3c3c"
+  },
+  "fixture_set_hash": "dfefdae08ebe956748224d3a21189c8d36e7c9ccc57b9e2477790d514eaf338b"
+}
