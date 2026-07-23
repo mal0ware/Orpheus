@@ -45,3 +45,6 @@ Thumbs.db
 
 # Cached style fingerprints are committed (small JSON); raw reference audio is not.
 data/reference_audio/
+
+# Pin-run separation output (stems + synthetic mix) — large audio, regenerated on demand.
+docs/pins/audio_out/

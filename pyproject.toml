@@ -73,6 +73,9 @@ packages = ["src/orpheus_mcp"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/orpheus_mcp/bridge/lua" = "orpheus_mcp/bridge/lua"
 "data" = "orpheus_mcp/data"
+# Vendored MSST SCNet ships its runtime config + upstream LICENSE (non-.py, not auto-included).
+"src/orpheus_mcp/_vendor/msst/config_scnet_large.yaml" = "orpheus_mcp/_vendor/msst/config_scnet_large.yaml"
+"src/orpheus_mcp/_vendor/msst/LICENSE" = "orpheus_mcp/_vendor/msst/LICENSE"
 
 [tool.uv]
 # Without this, the resolver picks numpy 2.5 and then backtracks numba all the way to
@@ -103,6 +106,9 @@ torchaudio = [{ index = "pytorch-cu124", extra = "separation" }]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
+# Vendored upstream MSST model code (scnet.py / separation.py) is verbatim third-party and
+# not held to our lint rules; our own inference.py in the same dir IS linted (see per-file below).
+extend-exclude = ["src/orpheus_mcp/_vendor/msst/scnet.py", "src/orpheus_mcp/_vendor/msst/separation.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -119,3 +125,8 @@ markers = [
 python_version = "3.11"
 packages = ["orpheus_mcp"]
 ignore_missing_imports = true
+
+# Vendored upstream MSST code is untyped third-party; do not hold it to our type gate.
+[[tool.mypy.overrides]]
+module = "orpheus_mcp._vendor.*"
+ignore_errors = true
