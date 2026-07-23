@@ -83,8 +83,8 @@ implementation plan.
 | T1 | **recon**: decode, LUFS (pyloudnorm), tempo + beat grid, key estimate (chroma + Krumhansl profile w/ confidence + alternates), structure segmentation (self-similarity novelty → section boundaries), band-energy sketch (librosa/numpy) | CPU | 5–20 s |
 | T2 | **instrument-activity timeline**: audio tagger (PANNs CNN14-class / Essentia MTG-Jamendo instrument model) on hop windows → per-second instrument probabilities | CPU or tiny GPU | 10–30 s |
 | T3 | **targeted separation**: ONE registry checkpoint, cropped to the region of interest ± 5 s context (crop first, separate second — a 20 s crop is ~12× cheaper than the full song) | GPU | 10–60 s |
-| T4 | **escalation**: alternate checkpoint, 2-model ensemble (spectrogram averaging), complement subtraction, or full-song separation | GPU | minutes |
-| T5 | **last resort**: multi-instrument MIDI transcription (basic-pitch; MT3-class optional later) | GPU/CPU | minutes |
+| T4 | **escalation**: alternate checkpoint, 2-model ensemble (waveform averaging), complement subtraction, or full-song separation | GPU | minutes |
+| T5 | **last resort**: polyphonic note transcription (basic-pitch — instrument-agnostic single note stream; MT3-class per-instrument attribution deferred) | GPU/CPU | minutes |
 
 Routing table (question class → max tier): key/tempo/structure/loudness/"is it in tune" → **T1**;
 "what instruments, when / arrangement density / what enters at the chorus" → **T2**; "this
@@ -95,8 +95,8 @@ directly and override.
 
 Two standing efficiency rules: **(a) region first** — when the user's question names a moment or
 recon/tagging can localize it, never separate the whole song; **(b) exposure check** — if the
-tagger shows the target sound is *exposed* (solo/intro/break: non-target probability mass < 0.15
-in that window), skip separation entirely and characterize the mix region directly. Distinctive
+tagger shows the target sound is *exposed* (solo/intro/break: normalized non-target activation,
+§5.2 definition, < 0.15 in that window), skip separation entirely and characterize the mix region directly. Distinctive
 sounds are very often exposed somewhere; the router searches the timeline for the target's most
 exposed window before reaching for a separator.
 
@@ -108,31 +108,33 @@ tagger | dereverb | drumkit-split | transcription), `targets` (e.g. `["vocals"]`
 same policy as the sound-pack), `vram_gb`, `rt_factor` (× realtime on reference HW), `benchmark`
 (published SDR where known), `license`, `rank` (router preference order per target).
 
-**Inference engine:** `python-audio-separator` (MIT, pip-installable, wraps the
-UVR/ZFTurbo-ecosystem checkpoints incl. RoFormer + SCNet + Demucs families, handles checkpoint
-download/caching) as the single engine dependency; fall back to vendoring ZFTurbo's
-`Music-Source-Separation-Training` inference path if a needed checkpoint isn't exposed. Decision
-point for next session: pin exact engine + version.
+**Inference engines (two — both required, verified 2026-07-22):** `python-audio-separator`
+(MIT, pip-installable) covers the MDX/VR/Demucs/MDXC families — which includes BS-RoFormer and
+Mel-Band RoFormer — but does **not** implement SCNet. Since SCNet is the cross-architecture
+arbiter (§5.4) and ensemble partner (§6 R2), vendoring ZFTurbo's
+`Music-Source-Separation-Training` inference path for SCNet is a **hard requirement**, not a
+contingency. All checkpoints are pre-fetched at install time (§9); tools never hit the network at
+call time. Decision point for next session: pin exact versions + hashes of both engines.
 
 **v1 registry seed** (exact checkpoint ids/hashes pinned at implementation time — the *slots* are
 the spec):
 
 | Slot | Model family | Notes |
 |---|---|---|
-| 4-stem A (default) | **BS-RoFormer** (viperx-class checkpoint) | frontier quality, ~9.6+ SDR |
-| 4-stem B (ensemble partner / arbiter) | **SCNet-XL** | different architecture → useful disagreement signal |
+| 4-stem A (default) | **BS-RoFormer ep17** (ZFTurbo GitHub release, avg SDR 9.65) | free, no account; runs in audio-separator. NOT the viperx checkpoints — those are 2-stem vocal models |
+| 4-stem B (arbiter / ensemble partner) | **SCNet-XL** (ZFTurbo release, avg SDR 9.80) | different architecture → the disagreement signal; actually beats A on avg SDR; needs the MSST engine |
 | 4-stem C (CPU fallback) | HTDemucs-FT | runs anywhere, well-understood |
-| vocals (dedicated) | Mel-Band RoFormer vocal checkpoint | best-in-class isolation for vocal questions |
-| guitar | community Mel-RoFormer guitar checkpoint | quality varies by mix — always gate (§6) |
-| piano | community Mel-RoFormer piano checkpoint | same caveat |
-| bass (dedicated) | RoFormer bass checkpoint | for bass-tone questions beyond 4-stem output |
-| drum-kit split | DrumSep/LarsNet-class | kick/snare/hats/cymbals from the drum stem |
-| de-reverb | community de-reverb RoFormer | doubles as the reverb *estimator*: wet − dry = the reverb character (§7) |
-| tagger | PANNs CNN14 or Essentia MTG-Jamendo instrument head | T2 timeline + §6 bleed judge |
-| transcription | basic-pitch (Spotify, OSS) | T5 only |
+| vocals (dedicated) | Mel-Band RoFormer vocal checkpoint (viperx/KimberleyJensen class) | 2-stem vocal/instrumental models — vocal questions only |
+| 6-stem | **BS-Roformer-SW** (jarredou HF mirror) + htdemucs_6s fallback | adds guitar + piano stems — the free piano answer. **No dedicated free piano or bass RoFormer checkpoints exist** (verified 2026-07: MVSEP piano is site/account-gated); bass = the bass stem of 4/6-stem models |
+| guitar (dedicated) | becruily Mel-RoFormer guitar (HF, free) | quality varies by mix — always gate (§5) |
+| drum-kit split | DrumSep (jarredou release) / LarsNet | kick/snare/hats/cymbals from the drum stem. **LarsNet weights are CC BY-NC 4.0** — record in `license` |
+| de-reverb | anvuew de-reverb Mel-RoFormer | **vocal-only by training domain** → reverb estimator for VOCAL stems only (§7); non-vocal stems use the decay heuristic, flagged approximate |
+| tagger | PANNs **framewise SED variant** (CNN14-DecisionLevel*-class) | T2 timeline + §5 bleed judge. Plain CNN14 is clip-level — the framewise variant is required. Essentia is OUT: no Windows wheels on PyPI, MTG-Jamendo weights CC BY-NC (this settles §11 Q2) |
+| transcription | basic-pitch (Spotify, Apache-2.0) | T5 only. **Instrument-agnostic**: ONE undifferentiated note stream, no per-instrument attribution (that is MT3-class territory, deferred). Pins Python ≤3.11; low-maintenance upstream |
 
-**Known gap, stated honestly:** no strong open checkpoints for strings/winds/brass sections as of
-this writing (commercial-only territory). Router strategy for those targets: complement
+**Known gap, stated honestly:** no strong open checkpoints for strings/winds/brass sections, and
+no *dedicated* free piano/bass extractors (6-stem models are the free ceiling there) as of this
+writing (commercial-only territory). Router strategy for those targets: complement
 subtraction (extract vocals+drums+bass with the strong models; the residual *is* the
 section) + exposure search + tagger timeline. Registry slots exist so the moment community
 checkpoints appear, they're a JSON entry, not code.
@@ -142,23 +144,35 @@ checkpoints appear, they're a JSON entry, not code.
 There is no ground-truth stem for a commercial mix, so verification is **triangulation from four
 independent, cheap signals**. Each produces a number; together they gate.
 
-1. **Mix consistency (physics).** Stems from one model must sum back to the input:
-   `residual_db = 20·log10(rms(mix − Σstems)/rms(mix))`. Great ≤ −30 dB; suspect > −15 dB.
-   Catches over-suppression and model collapse. (Mask-based models pass this easily — necessary,
-   not sufficient; it exists to catch catastrophic failures cheaply.)
-2. **Bleed score (independent judge).** Run the T2 tagger *on the isolated stem*. Probability
-   mass assigned to non-target instrument classes = `bleed`. Pass < 0.20; hard-fail > 0.40.
-   The judge (tagger) and the contestant (separator) are different models trained on different
-   tasks — that independence is what makes the check meaningful.
-3. **Silence honesty.** In windows where the tagger timeline says the target is *not playing*,
-   the stem's energy should be ≈ 0. `false_energy_db` = stem RMS in those windows relative to its
-   active-window RMS. Pass ≤ −35 dB. Catches "the model put a ghost of everything everywhere."
+1. **Mix consistency (physics) — multi-stem outputs ONLY.** Stems from one model must sum back
+   to the input: `residual_db = 20·log10(rms(mix − Σstems)/rms(mix))`. Great ≤ −30 dB; suspect
+   > −15 dB. Catches over-suppression and model collapse. Explicitly **not applicable to
+   single-target extractions** (vocal/guitar/de-reverb models): there the "residual" is the whole
+   rest of the song by construction (and defining the complement as `mix − stem` makes it
+   identically zero) — single-target runs are judged by gates 2–4 alone. (Mask-based multi-stem
+   models pass this easily — necessary, not sufficient; it exists to catch catastrophic failures
+   cheaply.)
+2. **Bleed score (independent judge).** Run the T2 tagger *on the isolated stem*. The tagger is
+   multi-label (independent per-class sigmoids that do NOT sum to 1), so the metric must be
+   defined, not hand-waved: `bleed = mean over active frames of [max non-target activation] /
+   (target activation + ε)`, clipped to [0, 1]. Pass < 0.20; hard-fail > 0.40. The judge (tagger)
+   and the contestant (separator) are different models trained on different tasks — that
+   independence is what makes the check meaningful. (§3.1's exposure check uses this same
+   normalized definition.)
+3. **Silence honesty — with FX-tail tolerance.** In windows where the tagger timeline says the
+   target is *not playing*, the stem's energy should be ≈ 0. `false_energy_db` = stem RMS in
+   those windows relative to its active-window RMS. Pass ≤ −35 dB. **Carve-out:** a correctly
+   separated stem legitimately carries reverb/delay tails past the last played note — exactly the
+   character §7 wants to measure — so windows within a tail allowance (default 3 s, config) after
+   any active region are excluded from the check, not merely thresholded. Catches "the model put
+   a ghost of everything everywhere."
 4. **Cross-model agreement (escalation only).** When two architectures (RoFormer vs SCNet) have
    both produced the target: mel-spectrogram correlation between the two stems. High agreement
    (> 0.90) → high confidence, pick the one with the better bleed score. Low agreement (< 0.75)
-   → both suspect → ensemble them (average magnitude spectrograms, resynthesize) and re-gate the
-   ensemble. Disagreement between independent systems is the closest available substitute for
-   ground truth.
+   → both suspect → ensemble them and re-gate the ensemble. Ensemble method: **waveform
+   averaging** (`avg_wave`) as primary — ZFTurbo's own benchmarks show it consistently matching
+   or beating magnitude-spectrogram averaging — with spectrogram averaging as the alternate.
+   Disagreement between independent systems is the closest available substitute for ground truth.
 
 All thresholds above are **initial values, marked for calibration** against the synthetic-truth
 test set (§10) — they are spec'd as config (`analysis/verify.py` constants), not magic numbers
@@ -175,17 +189,23 @@ Deterministic ladder, driven only by gate results and the registry. Each rung lo
 run rank-1 checkpoint for target, region-cropped
  └─ gates pass → done (Stage 5)
  └─ gate fails →
-    R1 rank-2 checkpoint (different architecture)         [T3 cost]
-    R2 2-model ensemble + re-gate                          [T4]
+    R1 rank-2 checkpoint (different architecture)          [T4 stage; ~T3-scale cost]
+    R2 2-model ensemble (avg_wave) + re-gate               [T4]
     R3 complement subtraction (extract strong targets,     [T4]
        take residual as the target) + re-gate
     R4 widen region → full-song separation (some models    [T4]
        do better with full context) + re-gate
     R5 exposure fallback: best-available exposed window
        of the raw mix, descriptors flagged "mix-context"   [T1–T2 cost]
-    R6 LAST RESORT: transcription-backed analysis (notes/  [T5]
+    R6 LAST RESORT: transcription-backed analysis (notes/  [T5 — opt-in only]
        rhythm only; timbre descriptors marked unavailable)
 ```
+
+All escalation rungs are T4-stage by definition (R1's *cost* is merely T3-scale). **R6 never
+fires automatically**: it requires explicit opt-in (`max_tier=T5` or the user asking for notes) —
+consistent with §3.1's T5 rule — because on gate exhaustion the stems are by definition bad, and
+transcription on the raw mix is basic-pitch at its weakest. At default settings the ladder ends
+at R5 with confidence flagged low and the gate numbers reported honestly.
 
 Budget guard: the orchestrator takes `max_tier` and `max_seconds` parameters (defaults T4 /
 300 s); Claude can raise them when the user says "take your time, get it right." Ladder position,
@@ -205,11 +225,16 @@ of the user's own tracks — the diff of two `SoundCharacter`s is the FX-mapping
   inharmonicity estimate → "clean / warm-even / gritty-odd" classification.
 - **Stereo:** per-band mid/side ratio (width), inter-channel correlation.
 - **Time-based FX (the "hard to describe in words" payload):**
-  - delay: envelope autocorrelation → echo time(s) in ms + feedback estimate;
+  - delay: envelope autocorrelation → echo time(s) in ms + feedback estimate. **Flagged
+    approximate by design:** tempo-synced delays are confounded with musical repetition (an
+    ⅛-note echo and an ⅛-note performance pattern autocorrelate identically) — prefer measuring
+    on exposed/tail regions, and report confidence;
   - modulation: periodicity of spectral flux → rate (Hz) + depth → chorus/phaser/tremolo/vibrato
     classification;
-  - reverb: de-reverb model gives dry vs wet → wet/dry ratio, RT60-class decay estimate,
-    early/late energy ratio.
+  - reverb — two paths by stem type: **vocal stems** use the de-reverb model (wet − dry →
+    wet/dry ratio, RT60-class decay, early/late ratio; the model is vocal-only by training
+    domain, §4); **all other stems** use an envelope decay-slope heuristic on note releases,
+    always flagged approximate.
 - **Pitch (melodic stems):** f0 track summary, vibrato rate/depth, portamento presence.
 
 ## 8. The FX loop — from numbers to knobs
@@ -254,21 +279,20 @@ quality, no account walls (exceptions flagged). Each entry: name, vendor, catego
 | Plugin | What / why it's on the list | License |
 |---|---|---|
 | Surge XT | flagship OSS synth — subtractive/wavetable/FM, enormous range | GPL3 |
-| Vital | modern wavetable standard (free tier; Vitalium = OSS fork) | freemium / GPL fork |
+| Vital | modern wavetable standard — **flag: free tier needs a vital.audio account**; Vitalium (OSS fork, via DISTRHO-Ports) needs none | freemium / GPL fork |
 | Dexed | DX7-class FM, loads original patch banks | GPL3 |
 | Odin 2 | 24-voice polysynth | GPL3 |
-| OB-Xd | classic analog-poly character | GPL |
+| OB-Xd | classic analog-poly character — **catalog pins the legacy 2.x line (GPL3, reales/OB-Xd)**; current discoDSP 3.x is freemium with commercial-use restrictions | GPL3 (legacy line) |
 | sforzando + **VSCO2 Community Edition** | free SFZ player + CC0 orchestral library — **the concert-band answer** on the synthesis side | free / CC0 |
-| Decent Sampler (+ Pianobook libraries) | free sampler with a large free-library ecosystem | freeware |
+| Decent Sampler (+ Pianobook libraries) | free sampler with a large free-library ecosystem — **flag: email-gated download** | freeware |
 | MT Power Drum Kit 2 | workhorse free acoustic drums | freeware |
-| **Neural Amp Modeler (NAM)** | OSS neural guitar-amp modeling + thousands of free community captures (tonehunt) — the guitar-tone-replication workhorse | GPL |
-| Ignite Amps NadIR + Emissary | free cab-IR loader + amp | freeware |
-| Spitfire LABS | high-quality free instruments — **flag: account required** | freeware (account) |
+| **Neural Amp Modeler (NAM)** | OSS neural guitar-amp modeling + thousands of free community captures at **TONE3000** (ToneHunt's successor; free, no account) — the guitar-tone-replication workhorse | **MIT** |
+| Splice INSTRUMENT (free tier) | absorbed the former Spitfire LABS catalog (LABS discontinued late 2025) — **flag: Splice account required** | freeware (account) |
 
 **Effects**
 | Plugin | Intents served | License |
 |---|---|---|
-| **Airwindows Consolidated** | saturation/tape/console/character — hundreds of processors, one plugin | MIT |
+| **Airwindows Consolidated** | saturation/tape/console/character — hundreds of processors, one plugin | MIT (sources; Consolidated binaries GPL3 via JUCE) |
 | Valhalla Supermassive / FreqEcho / SpaceModulator | huge reverbs, freq-shift echo, flange — legendary free tier | freeware |
 | TDR Nova | dynamic EQ (surgical + de-harsh intents) | freeware |
 | TDR Kotelnikov | mastering-grade compressor | freeware |
@@ -278,9 +302,9 @@ quality, no account walls (exceptions flagged). Each entry: name, vendor, catego
 | CHOW Tape Model (+ ChowDSP suite) | physical-model tape saturation/wow/flutter | GPL |
 | Dragonfly Reverbs | OSS hall/room/plate family | GPL |
 | LSP plugin suite | large OSS FX collection (surgical tools) | LGPL |
-| Analog Obsession (catalog) | console/comp/EQ emulations | donationware |
+| Analog Obsession (catalog) | console/comp/EQ emulations — **flag: distributed via Patreon posts (free Patreon account)** | donationware |
 | Voxengo SPAN + Youlean Loudness Meter | analysis/metering (also useful to *show* the user what Orpheus measured) | freeware |
-| Polyverse Wider | mono-safe widening | freeware |
+| Polyverse Wider | mono-safe widening — **flag: name+email registration for download** | freeware |
 
 (REAPER stock ReaPlugs + JSFX are implicit — always present, always the apply-path default.)
 
@@ -293,16 +317,24 @@ version busts stale entries. A `clear_analysis_cache` tool + size cap (config, d
 
 **Packaging:** core Orpheus stays lean. New extras: `orpheus-mcp[analysis]` (librosa, pyloudnorm,
 tagger — CPU-friendly, enables T1/T2 everywhere incl. the laptop) and `orpheus-mcp[separation]`
-(torch + audio-separator + checkpoints — the desktop). Tools register only when their extra is
-importable; otherwise they surface a clear "install `orpheus-mcp[separation]` on this machine"
-error. Same graceful-degradation pattern already specced for BasicPitch.
+(torch + audio-separator + vendored MSST inference — the desktop). Tools register only when
+their extra is importable; otherwise they surface a clear "install `orpheus-mcp[separation]` on
+this machine" error. Same graceful-degradation pattern already specced for BasicPitch.
+**Checkpoint pre-fetch is mandatory:** an `orpheus-mcp fetch-models` install step downloads and
+hash-verifies every registry checkpoint up front — `audio-separator`'s default lazy
+download-on-first-use is disabled, so analysis tools NEVER touch the network at call time
+(keeps §1.2 honest). Note on hints: `readOnlyHint` on analysis tools means "does not modify the
+REAPER project or the input file" — they do write to the local cache. basic-pitch's Python ≤3.11
+ceiling is a packaging constraint for whichever extra carries it (isolate or sub-process it if
+the main env moves past 3.11).
 
 **New tools** (category `reference`, all `readOnlyHint` except the FX-apply verbs):
 `analyze_reference(file, question_focus?, region?, max_tier?, max_seconds?)` (the orchestrator),
 `recon_reference(file)`, `instrument_timeline(file)`, `separate_region(file, target, region,
 model_id?)`, `verify_stem(...)`, `characterize(file_or_stem, region?)`,
-`compare_character(a, b)` — plus bridge-side `render_track_region(track, region)` and the
-un-deferred `add_fx_by_name` / `set_fx_param` / `get_fx_params` in `mix`.
+`compare_character(a, b)`, `clear_analysis_cache()` — plus bridge-side
+`render_track_region(track, region)` and the un-deferred `add_fx_by_name` / `set_fx_param` /
+`get_fx_params` in `mix`.
 Every heavy tool streams progress + returns gate numbers in meta (Claude must be able to say
 "this took the R2 ensemble rung; bleed 0.12").
 
@@ -322,11 +354,13 @@ desktop-verified like everything live-REAPER.
 
 ## 11. Open questions for next session (the "discuss more" list)
 
-1. **Engine pin:** `python-audio-separator` vs vendoring ZFTurbo inference — verify on the
-   desktop which one cleanly exposes the chosen RoFormer/SCNet + guitar/piano/de-reverb
-   checkpoints, then pin versions + hashes.
-2. **Tagger pick:** PANNs CNN14 vs Essentia MTG-Jamendo instrument head — decide by label-set fit
-   (needs: guitar/piano/strings/brass/winds/synth/vocals/drums at minimum) + Windows install pain.
+1. **Engine pin:** BOTH engines are required (§4 — audio-separator lacks SCNet). Verify on the
+   desktop that audio-separator runs BS-RoFormer ep17 + the vocal/guitar/6-stem/de-reverb
+   checkpoints, that the vendored MSST path runs SCNet-XL, then pin versions + hashes.
+2. **Tagger pick — SETTLED 2026-07-22:** PANNs framewise SED variant. Essentia is out: no
+   Windows wheels on PyPI (`pip install` fails on the target machine) and the MTG-Jamendo weights
+   are CC BY-NC. Remaining sub-question: which SED head (DecisionLevelMax/Avg/Att) gives the best
+   per-second precision for the §5 gates.
 3. **Chord recognition:** T1 currently yields key + chroma; do we add a dedicated audio
    chord-sequence model (e.g. a CRNN chord estimator) or derive chords from chroma + music21?
    Affects "chord structure" fidelity on dense mixes.
