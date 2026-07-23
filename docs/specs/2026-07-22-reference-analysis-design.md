@@ -80,7 +80,7 @@ implementation plan.
 | Tier | What runs | Compute | Typical wall time |
 |---|---|---|---|
 | T0 | cache lookup by content hash | none | ms |
-| T1 | **recon**: decode, LUFS (pyloudnorm), tempo + beat grid, key estimate (chroma + Krumhansl profile w/ confidence + alternates), structure segmentation (self-similarity novelty → section boundaries), band-energy sketch (librosa/numpy) | CPU | 5–20 s |
+| T1 | **recon**: decode, LUFS (pyloudnorm), tempo + beat grid **+ downbeat/meter estimate** (bars are measured, never assumed 4/4) **+ beat-grid confidence** (low confidence → §13 falls back to fixed-window mode), **tuning-offset estimate** (`librosa.estimate_tuning`; applied to ALL downstream chroma — 432 Hz bands and detuned tapes must not smear chords — and it IS the routing table's "is it in tune" answer), key estimate (tuning-corrected chroma + Krumhansl profile w/ confidence + alternates), structure segmentation (self-similarity novelty → section boundaries; short files degrade to a single section), band-energy sketch (librosa/numpy) | CPU | 5–20 s |
 | T2 | **instrument-activity timeline + chord lane**: framewise PANNs SED tagger → per-second instrument probabilities; beat-synchronous chord recognition (§13 — baseline chord engine is CPU-only and always available; model recognizers upgrade the lane when `[separation]` is installed) | CPU or tiny GPU | 10–40 s |
 | T3 | **targeted separation**: ONE registry checkpoint, cropped to the region of interest ± 5 s context (crop first, separate second — a 20 s crop is ~12× cheaper than the full song) | GPU | 10–60 s |
 | T4 | **escalation**: alternate checkpoint, 2-model ensemble (waveform averaging), complement subtraction, or full-song separation | GPU | minutes |
@@ -96,12 +96,19 @@ at **T1–T2**; "give me the notes it plays" → **T5** only after T3/T4 stems e
 asks for notes explicitly. The convenience orchestrator tool applies this table; Claude can also call stages
 directly and override.
 
-Two standing efficiency rules: **(a) region first** — when the user's question names a moment or
+Four standing rules: **(a) region first** — when the user's question names a moment or
 recon/tagging can localize it, never separate the whole song; **(b) exposure check** — if the
 tagger shows the target sound is *exposed* (solo/intro/break: normalized non-target activation,
-§5.2 definition, < 0.15 in that window), skip separation entirely and characterize the mix region directly. Distinctive
-sounds are very often exposed somewhere; the router searches the timeline for the target's most
-exposed window before reaching for a separator.
+§5.2 definition, < 0.15 in that window), skip separation entirely and characterize the mix
+region directly (distinctive sounds are very often exposed somewhere; the router searches the
+timeline for the target's most exposed window before reaching for a separator); **(c)
+absent-target pre-gate** — if the T2 timeline never shows the target's mapped `tagger_classes`
+(§4) above the activity threshold anywhere in the song, return "target not detected in this
+song" at T2 cost and STOP: the ladder never spends a GPU-minute extracting an instrument that
+isn't there ("compare my guitar to theirs" on a song with no guitar is a T2 answer, not a T4
+failure); **(d) crop hygiene** — the ±5 s separation context is trimmed back to the requested
+region before any verify/characterize step, and every region clamps to `[0, duration]` (a
+"+8 bars" window at the song's end clamps to EOF and says so).
 
 ## 4. Model registry (`data/model_registry.json`)
 
@@ -109,7 +116,11 @@ exposed window before reaching for a separator.
 tagger | dereverb | drumkit-split | transcription), `targets` (e.g. `["vocals"]`,
 `["kick","snare","toms","hats","cymbals"]`), `engine`, `checkpoint_source` (URL + sha256, pinned —
 same policy as the sound-pack), `vram_gb`, `rt_factor` (× realtime on reference HW), `benchmark`
-(published SDR where known), `license`, `rank` (router preference order per target).
+(published SDR where known), `license`, `rank` (router preference order per target), and
+`tagger_classes` — the PANNs/AudioSet class ids that count as *target* for the §5.2 bleed gate
+and the §3.1 exposure/absent-target checks. An empty `tagger_classes` list (e.g. "synth pad",
+which has no clean AudioSet class) means those gates return **N/A** for that entry rather than
+computing garbage against the wrong class.
 
 **Inference engines (two — both required, verified 2026-07-22):** `python-audio-separator`
 (MIT, pip-installable) covers the MDX/VR/Demucs/MDXC families — which includes BS-RoFormer and
@@ -149,6 +160,16 @@ checkpoints appear, they're a JSON entry, not code.
 There is no ground-truth stem for a commercial mix, so verification is **triangulation from four
 independent, cheap signals**. Each produces a number; together they gate.
 
+**Decision rule (this, precisely, is what makes §6 deterministic):** every gate returns
+`pass` / `fail` / `N/A`. The ladder escalates **iff any applicable gate is not `pass`**;
+`N/A` gates are excluded from the decision; if ALL gates are N/A the artifact is delivered
+flagged `unverifiable` and the ladder does **not** climb (climbing cannot fix
+unverifiability). The prose quality bands below ("great … suspect") are calibration targets
+for §15.1, not decision inputs — the shipped decision is binary per gate. Alignment
+precondition for all gates: separator outputs are length-aligned and resampled to the input
+before any arithmetic (separators pad/resample; an unaligned `mix − Σstems` residual is
+spuriously huge).
+
 1. **Mix consistency (physics) — multi-stem outputs ONLY.** Stems from one model must sum back
    to the input: `residual_db = 20·log10(rms(mix − Σstems)/rms(mix))`. Great ≤ −30 dB; suspect
    > −15 dB. Catches over-suppression and model collapse. Explicitly **not applicable to
@@ -160,21 +181,28 @@ independent, cheap signals**. Each produces a number; together they gate.
 2. **Bleed score (independent judge).** Run the T2 tagger *on the isolated stem*. The tagger is
    multi-label (independent per-class sigmoids that do NOT sum to 1), so the metric must be
    defined, not hand-waved: `bleed = mean over active frames of [max non-target activation] /
-   (target activation + ε)`, clipped to [0, 1]. Pass < 0.20; hard-fail > 0.40. The judge (tagger)
-   and the contestant (separator) are different models trained on different tasks — that
-   independence is what makes the check meaningful. (§3.1's exposure check uses this same
-   normalized definition.)
+   (target activation + ε)`, clipped to [0, 1]. "Target" = the registry entry's
+   `tagger_classes` (§4); empty mapping ⇒ **N/A**. **Zero active frames ⇒ N/A** (mean over an
+   empty set is not a number — this is also what the §3.1 absent-target pre-gate should have
+   caught upstream). Pass < 0.20 (single threshold; the former 0.20–0.40 band is a §15.1
+   calibration range only). The judge (tagger) and the contestant (separator) are different
+   models trained on different tasks — that independence is what makes the check meaningful.
+   Calibration note: PANNs is trained on full mixes, and its activations on dry isolated stems
+   are domain-shifted — §15.1 calibrates bleed thresholds on *stems*, not mixes. (§3.1's
+   exposure check uses this same normalized definition.)
 3. **Silence honesty — with FX-tail tolerance.** In windows where the tagger timeline says the
    target is *not playing*, the stem's energy should be ≈ 0. `false_energy_db` = stem RMS in
    those windows relative to its active-window RMS. Pass ≤ −35 dB. **Carve-out:** a correctly
    separated stem legitimately carries reverb/delay tails past the last played note — exactly the
    character §7 wants to measure — so windows within a tail allowance (default 3 s, config) after
-   any active region are excluded from the check, not merely thresholded. Catches "the model put
-   a ghost of everything everywhere."
+   any active region are excluded from the check, not merely thresholded. **Wall-to-wall
+   instruments (a pad or bass that never stops) have zero inactive windows ⇒ N/A** — stated so
+   the gate is honestly absent rather than silently vacuous; gating then rests on bleed +
+   agreement. Catches "the model put a ghost of everything everywhere."
 4. **Cross-model agreement (escalation only).** When two architectures (RoFormer vs SCNet) have
-   both produced the target: mel-spectrogram correlation between the two stems. High agreement
-   (> 0.90) → high confidence, pick the one with the better bleed score. Low agreement (< 0.75)
-   → both suspect → ensemble them and re-gate the ensemble. Ensemble method: **waveform
+   both produced the target: mel-spectrogram correlation between the two stems. Agreement
+   ≥ 0.90 → pass, pick the stem with the better bleed score. **< 0.90 → ensemble them and
+   re-gate the ensemble** (no undefined middle band — one threshold, one action). Ensemble method: **waveform
    averaging** (`avg_wave`) as primary — ZFTurbo's own benchmarks show it consistently matching
    or beating magnitude-spectrogram averaging — with spectrogram averaging as the alternate.
    Disagreement between independent systems is the closest available substitute for ground truth.
@@ -212,15 +240,33 @@ consistent with §3.1's T5 rule — because on gate exhaustion the stems are by 
 transcription on the raw mix is basic-pitch at its weakest. At default settings the ladder ends
 at R5 with confidence flagged low and the gate numbers reported honestly.
 
+**R3 precondition:** complement subtraction is only as good as what's subtracted — the stems
+being subtracted must *individually* pass gates 2–4 first; if the ladder reached R3 because
+those same stems failed, R3 is skipped (subtracting bad stems yields a worse residual, plus
+the residual inherits the reverb/delay tails of everything subtracted — the residual's
+descriptors carry a `complement: true` flag so Claude discounts tail-sensitive numbers).
+
 Budget guard: the orchestrator takes `max_tier` and `max_seconds` parameters (defaults T4 /
-300 s); Claude can raise them when the user says "take your time, get it right." Ladder position,
-like every other artifact, is cached — re-asking a question never re-climbs.
+300 s); Claude can raise them when the user says "take your time, get it right."
+**Exhaustion semantics:** if the budget expires mid-ladder, the orchestrator returns the best
+gate-scored artifact so far + the ladder log + `budget_capped: true` — never an error, never
+a silent partial. The cache records **the cap under which the ladder stopped**; a later call
+with a larger budget *resumes the climb from the recorded rung* — the "re-asking never
+re-climbs" rule applies only to ladders that ran to completion, otherwise a capped first run
+would freeze a low-quality answer forever.
 
 ## 7. The descriptor schema — "the character sheet"
 
 `descriptors.py` computes a versioned `SoundCharacter` dataclass (JSON-serializable; schema
 version field for cache invalidation). Computed identically for reference stems and for renders
 of the user's own tracks — the diff of two `SoundCharacter`s is the FX-mapping input.
+
+`SoundCharacter` carries `source` metadata: `{stem_type (vocals|guitar|…|mix-region|complement),
+produced_by (model id or "render"), region, sample_rate, bandwidth_hz, channels}` — §15.3's
+vocal-only rules read `stem_type` (the intent engine otherwise cannot know a diff is vocal),
+and §8's normalization reads `bandwidth_hz`. **Mono policy:** stereo descriptors (width,
+correlation) are N/A on mono sources — never fabricated via upmixing; separators that require
+stereo receive dual-mono input, and the output's stereo descriptors stay N/A.
 
 - **Spectral:** centroid, rolloff, tilt (dB/oct fit), 8-band energy profile, harmonic-vs-
   percussive ratio.
@@ -247,6 +293,15 @@ of the user's own tracks — the diff of two `SoundCharacter`s is the FX-mapping
 **Inputs:** `SoundCharacter(reference_stem)` vs `SoundCharacter(render_of_user_track)` (rendering
 a solo'd track is a bridge verb: `render_track_region` — new, small, needed anyway for M3's
 `render_and_audit`).
+
+**Normalization before ANY diff (mandatory, `compare_character` enforces it):** resample both
+sides to a common analysis rate, detect the reference's codec bandwidth ceiling (lossy files
+have a spectral cliff, typically 16–20 kHz for mp3), and restrict every spectral descriptor
+diff to the common band `min(ref_ceiling, user_ceiling)`. Without this, a full-bandwidth
+32-bit render diffed against an mp3 reads systematically as "reference is darker," rules 3/5
+fire in the wrong direction, and the closed loop *converges by making the user's track duller
+than the codec artifacts* — the flagship feature optimizing toward mp3 damage. The applied
+band is recorded in the diff output so Claude can say "compared up to 16 kHz (mp3-limited)."
 
 **Step 1 — diff → effect intents.** Rule table mapping descriptor deltas to intent objects:
 `{"intent": "boost", "what": "presence 2–5 kHz", "amount_db": 6}`, `{"intent": "add_delay",
@@ -315,16 +370,37 @@ quality, no account walls (exceptions flagged). Each entry: name, vendor, catego
 
 ## 9. Caching, packaging, tool surface
 
-**Cache** (`~/.orpheus_cache/<sha256-of-file>/`): `recon.json`, `timeline.json`,
-`stems/<model-id>/<region>/*.flac` + `verify.json` per stem, `descriptors/<stem-or-region>.json`,
-`ladder.log`. Content-addressed → renames/moves of the mp3 don't invalidate; descriptor schema
-version busts stale entries. A `clear_analysis_cache` tool + size cap (config, default 20 GB, LRU).
+**Input contract** (stated once, here): supported inputs are mp3/wav/flac/m4a(AAC)/ogg/aiff,
+decoded via soundfile+ffmpeg; DRM-protected files (`.m4p`, FairPlay AAC) are **rejected with a
+clear message**, never worked around; corrupted/truncated files raise a defined `DecodeError`
+result (partial decodes are not silently analyzed). The cache key is the **sha256 of the
+decoded PCM** (not the file bytes) — so editing an ID3 tag does not orphan minutes of cached
+GPU work, and byte-identical audio in different containers shares one cache entry.
 
-**Packaging:** core Orpheus stays lean. New extras: `orpheus-mcp[analysis]` (librosa, pyloudnorm,
-tagger — CPU-friendly, enables T1/T2 everywhere incl. the laptop) and `orpheus-mcp[separation]`
-(torch + audio-separator + vendored MSST inference — the desktop). Tools register only when
-their extra is importable; otherwise they surface a clear "install `orpheus-mcp[separation]` on
-this machine" error. Same graceful-degradation pattern already specced for BasicPitch.
+**Cache** (`~/.orpheus_cache/<pcm-sha256>/`): `recon.json`, `timeline.json`, `chords.json`,
+`lyrics.json`+`lines.json`+`sections.json`, `stems/<model-id>/<region>/*.flac` + `verify.json`
+per stem, `descriptors/<stem-or-region>.json`, `ladder.log`. **Every artifact's key includes
+the identity of what produced it**: `(producing model id + checkpoint hash, registry version,
+verify-config hash, schema version)` — not just the audio hash. Without this, swapping the
+SED head after §15.6, upgrading a Whisper checkpoint, or re-tuning §15.1 thresholds serves
+stale artifacts forever (and §15.1 *guarantees* those events happen). Ladder runs additionally
+record the budget cap they stopped under (§6 exhaustion semantics). Entries in use by an
+in-flight pipeline are **pinned against LRU eviction**. A `clear_analysis_cache` tool + size
+cap (config, default 20 GB, LRU).
+
+**Packaging — full dependency map (no orphan dependencies):** core Orpheus stays lean.
+`orpheus-mcp[analysis]` = librosa, pyloudnorm, PANNs tagger, music21, the §13 in-house chord
+baseline — CPU-friendly, enables T1/T2 everywhere incl. the laptop. `orpheus-mcp[separation]`
+= the torch stack: audio-separator, vendored MSST inference, BTC + music-x-lab chord models,
+faster-whisper + whisperX — the desktop extra (lyrics lives here because it *requires* the
+vocal stem). basic-pitch — **decided, not deferred**: its own `orpheus-mcp[transcribe]` extra
+running in a dedicated subprocess environment pinned to Python ≤3.11 (uv-managed), invoked
+CLI-style — it must not constrain the main env's Python. Tools register only when their extra
+is importable; otherwise they surface a clear "install `orpheus-mcp[separation]` on this
+machine" error. **Orchestrator behavior when routing demands a missing extra** (laptop asked a
+T3 question): answer at the highest available tier, with an explicit
+`capped_by_missing_extra: "separation"` note — degrade with a name, never a generic error
+when lower tiers can still say something useful.
 **Checkpoint pre-fetch is mandatory:** an `orpheus-mcp fetch-models` install step downloads and
 hash-verifies every registry checkpoint up front — `audio-separator`'s default lazy
 download-on-first-use is disabled, so analysis tools NEVER touch the network at call time
@@ -436,21 +512,38 @@ cheap → rich, all beat-synchronous on recon's beat grid.
   against rendered fixtures. The baseline is the correctness floor; models are upgrades, never
   requirements.
 
-**13.2 Bass-informed slash/inversion detection.** Per beat: fundamental of the bass lane —
-bass stem when a separation exists, else low-passed mix + pYIN — and if the bass pitch class
-is not the detected root, emit a slash chord (`C/E`) and flag the inversion. Reuses machinery
-the pipeline already has; no new model.
+**13.2 Bass-informed slash/inversion detection.** Fundamental of the bass lane — bass stem
+when a separation exists, else low-passed mix + pYIN — evaluated **per chord segment, not per
+beat**: emit a slash chord only when a single non-root bass pitch class is stable across
+≥ 60% of the segment's beats (the §13.3 stability rule, same constant) **and** is a chord
+tone; a stable non-chord-tone bass is annotated `pedal`, and unstable bass movement is left
+alone. (The naive per-beat rule would turn a walking bass under one C-major bar into
+`C, C/D, C/E, C/G` — false inversions by design; rejected.) Reuses machinery the pipeline
+already has; no new model.
 
 **13.3 Extension refinement.** Per chord segment: harmonic-chroma residual after subtracting
 the detected triad template; pitch classes above an energy threshold become candidate
 extensions (7, add9, 6, #11, 13, sus tones), accepted only when stable across ≥ 60% of the
-segment's beats → label upgrade (`C` → `Cadd9`) with per-extension confidence. This is how the
-baseline lane also reaches complex chords, model or no model.
+segment's beats **and the segment is ≥ 2 beats long** (on a 1-beat segment any single
+observation is trivially "100% stable" — noise would upgrade labels) → label upgrade
+(`C` → `Cadd9`) with per-extension confidence. This is how the baseline lane also reaches
+complex chords, model or no model.
 
-**13.4 Theory layer** (music21). Sliding-window key segments → per-chord Roman numerals against
-the *local* key; annotate borrowed chords, secondary dominants, modal mixture, and modulation
-points. Output BOTH absolute (`Fmaj7#11`) and functional (`IVmaj7#11`) spellings — Claude
-explains "why it feels like that" from the functional lane.
+**13.4 Theory layer** (music21). Sliding-window key segments — **window 16 bars, hop 4 bars,
+with hysteresis: a modulation is accepted only when the new key wins ≥ 2 consecutive
+windows** (otherwise every borrowed-chord passage would read as a key change) → per-chord
+Roman numerals against the *local* key; annotate borrowed chords, secondary dominants, modal
+mixture, and modulation points. Precedence when lanes disagree: the local key lane is
+authoritative for Roman numerals; T1's global Krumhansl key remains the headline "key of the
+song" (mode of the lane, weighted by duration). Output BOTH absolute (`Fmaj7#11`) and
+functional (`IVmaj7#11`) spellings — Claude explains "why it feels like that" from the
+functional lane.
+
+**Beat-grid fallback (rubato / no steady pulse):** when recon's beat-grid confidence is below
+threshold (ambient, free-time ballads, drifting live takes), the whole chord lane switches
+from beat-synchronous to **fixed 1 s windows**, `chords.json` gains `grid: "fixed"` so every
+consumer knows beat/bar arithmetic is unavailable, and bar-based region math (§14) degrades
+to seconds. Stated here so no worker session invents it.
 
 **Output schema** (`chords.json`, versioned): `[{start_beat, end_beat, start_s, end_s, root,
 bass, quality, extensions[], label, roman, key_context, confidence, produced_by}]` where
@@ -477,6 +570,14 @@ quote as a region specifier.
    ISMIR 2023). Accuracy remains genre-dependent (strong on clear pop vocals, weak on
    screamed/heavily-processed vocals); the system degrades *honestly* — low-confidence words
    carry their confidence, nothing is invented.
+   **Hallucination gate (mandatory, runs BEFORE ASR):** energy/VAD gate the vocal stem
+   per-window; windows below the vocal-activity threshold are **excluded from transcription
+   entirely**, and a file whose stem never crosses it returns `no_vocals` — because
+   Whisper-family models famously hallucinate confident text ("Thanks for watching…") on
+   silence and instrumental bleed, with plausible timestamps. Without this gate, instrumentals
+   grow fabricated lyrics, section naming clusters them, and `locate_lyric` "finds" lines
+   nobody sang — the exact failure the honesty rule forbids. `locate_lyric` on a `no_vocals`
+   file returns a defined "no vocal content detected" result, not an empty fuzzy match.
 3. **Alignment tightening** — **whisperX** (BSD-2-Clause; actively maintained, py3.12 +
    Windows + CUDA verified 2026-07) wav2vec2-CTC forced alignment snapping word boundaries;
    melisma stretches sung words far beyond any speech-timing assumption, so Whisper's own
@@ -488,6 +589,14 @@ quote as a region specifier.
    near-identical repeated line blocks clustered → chorus candidates; cross-checked against
    §3.1 recon's structure boundaries → **named, indexed sections** (`verse 1`, `chorus 2`, …).
    Side effect: "the second chorus" now resolves textually too, not just structurally.
+   **Through-composed fallback:** no repeated blocks → sections stay structural
+   (`section A/B/C` from recon boundaries) — the namer never invents a "chorus."
+   **Language:** Whisper's detected language is recorded; the wav2vec2 aligner is selected
+   per-language (the default aligner is English-only — aligning Japanese lyrics with it
+   fails); if no aligner exists for the detected language, Whisper's own coarser timestamps
+   are used and flagged. `locate_lyric`'s phonetic scorer (double-metaphone) is
+   English-phonetics — for other languages matching drops to edit-distance-only, stated in
+   the result meta.
 
 Cache artifacts: `lyrics.json` `[{word, start_s, end_s, conf}]`, `lines.json`, `sections.json`.
 
@@ -496,7 +605,11 @@ Cache artifacts: `lyrics.json` `[{word, start_s, end_s, conf}]`, `lines.json`, `
 distance + phonetic equivalence (double-metaphone class), because the two failure modes are
 symmetric and both guaranteed: the ASR mishears, and the user misremembers. Returns ranked
 matches `[{start_s, end_s, matched_text, score, section, occurrence}]` — a repeated chorus
-line returns *all* occurrences; `occurrence` selects. Best score < 0.6 → return top-3
+line returns *all* occurrences; `occurrence` indexes **temporal order** (occurrence 2 = the
+second time it's sung), independent of score ranking. Quotes may span line boundaries (the
+match window slides over the word stream, not line-by-line). Normalization handles Whisper's
+asterisk-masked profanity (`f***` ↔ the user's actual word must not tank the edit distance —
+masked tokens match any token sharing the visible prefix). Best score < 0.6 → return top-3
 candidates + a low-confidence flag; Claude asks the user instead of guessing.
 
 **Router integration:** "what am I hearing after the line ⟨quote⟩" → `locate_lyric` → region
@@ -521,15 +634,34 @@ metrics; per gate, choose the threshold at the ROC knee separating good (SDR > 7
 automatically (CI, CPU-models-only job) whenever the registry or fixtures change.
 
 **15.2 `render_track_region` bridge mechanics** (closes Q5). One handler, settings always
-restored (Lua pcall-wrapped, restore in the error path too): snapshot `GetSetProjectInfo`
-`RENDER_*` values + all solo states → `GetSet_LoopTimeRange(region)` → exclusive-solo the
-target track (`I_SOLO=2`) → set render source = master mix, bounds = time selection,
-`RENDER_FILE` = cache path, format WAV 32-bit float, `RENDER_SRATE` = project rate →
-`Main_OnCommand(42230)` ("Render project, using the most recent render settings" — never
-40015, which opens the dialog) → assert output file exists and is non-empty → restore
-snapshot + solos. Returns `{path, region, sr}`. Failure modes specced: missing/empty file →
-`BridgeError` with the snapshot diff; region given in beats → converted via the beat grid
-before the call; cleanup via the §9 cache LRU.
+restored (Lua pcall-wrapped, restore in the error path too), **serialized by a bridge-side
+render mutex** (REAPER render settings are global project state — two racing render calls
+would snapshot each other's temp values and corrupt the project's render config permanently):
+1. Refuse if transport is playing/recording (stop-or-error, configurable; default error).
+2. Snapshot `GetSetProjectInfo` `RENDER_*` values + **every track's** solo state + master-FX
+   bypass state.
+3. **Clear `I_SOLO` on ALL tracks** (a track the user left soloed would otherwise contaminate
+   the render), then set the target track `I_SOLO=2` — that is **solo-in-place** (0=off,
+   1=solo, 2=SIP; "exclusive solo" is a misnomer for this value): SIP is chosen
+   *deliberately* because it keeps sends, so a guitar routed through a reverb bus renders
+   WITH its bus FX — which is the sound the user actually hears. Consequence, stated: solo'ing
+   a bus renders its whole submix; that is correct behavior, not a bug.
+4. **Bypass the master FX chain** (snapshot in step 2, restored after): the user's master
+   limiter/EQ must not be baked into per-track renders — the reference stem has no master
+   chain on it, and rule 7 (compression) would misfire against limiter squash otherwise.
+5. `GetSet_LoopTimeRange(region)` — region arrives in seconds; callers converting from
+   beats/bars MUST use the **project tempo map** (`TimeMap2_beatsToTime`), never recon's
+   reference-song grid (they are different songs' grids).
+6. Set render source = master mix, bounds = time selection, `RENDER_FILE` = cache *directory*
+   + `RENDER_PATTERN` = fixed basename (REAPER splits directory and filename across these two
+   — using only RENDER_FILE mis-targets), format WAV 32-bit float, `RENDER_SRATE` = project
+   rate → `Main_OnCommand(42230)` ("Render project, using the most recent render settings" —
+   never 40015, which opens the dialog).
+7. Assert the output exists, is non-empty, **and is not digital silence** (an offline-media /
+   frozen track renders a valid silent file that passes an existence check; silence ⇒
+   `BridgeError("track rendered silent — offline media? muted item?")`).
+8. Restore snapshot (render settings, all solos, master-FX bypass). Returns
+   `{path, region, sr}`. Cleanup via the §9 cache LRU.
 
 **15.3 Descriptor→intent rule table v1** (closes Q6) — ships with **exactly these 14 rules**,
 stored as data (`data/intent_rules.json`), each `{trigger on §7 diff → intent JSON → stock
@@ -553,6 +685,13 @@ pairs:
 | 13 | 5–9 kHz dynamic Δ on vocals | de-ess | ReaXcomp band |
 | 14 | LUFS + crest joint Δ | limiting/loudness — **master bus only with explicit user opt-in** | JSFX limiter |
 
+Rule notes (each closes an ambiguity a worker would otherwise guess at): rule 11's musical
+division snaps to the **project's** tempo when applying (the user's song is the canvas), while
+the reference's raw ms value is reported alongside; rule 10's mono-safety check = post-widen
+inter-channel correlation must stay ≥ 0.5 in the widened band (verified in the audit render,
+reverted if violated); rule 13 knows a diff is vocal via `SoundCharacter.source.stem_type`
+(§7) — vocal-only rules are skipped, with a note, when stem identity is `mix-region`.
+
 Diffs outside these 14: Claude reasons and recommends freely, but Orpheus does **not**
 auto-apply — the automation boundary is explicit and honest.
 
@@ -560,11 +699,16 @@ auto-apply — the automation boundary is explicit and honest.
 `data/vst_catalog.json`; returns entries + URLs + license/account flags. Recommend-only —
 Orpheus never downloads or installs plugins (standing decision from the original design).
 
-**15.5 VRAM guard** (closes Q8): before every GPU tool call, query free VRAM
-(`torch.cuda.mem_get_info`); registry entries carry `vram_gb`; the router filters to models
-fitting 0.8 × free VRAM, else falls through the CPU chain (HTDemucs-FT-CPU / §13 baseline
-chord / int8-CPU ASR) and **reports the degradation + reason in tool meta**. Never OOM,
-never silently skip, never silently downgrade.
+**15.5 VRAM guard + concurrency** (closes Q8): before every GPU tool call, check
+`torch.cuda.is_available()` **first** (`mem_get_info` *raises* with no CUDA device — the
+guard itself must not crash on a CPU-only box or after a driver failure; no CUDA ⇒ CPU chain
+directly), then query free VRAM; registry entries carry `vram_gb`; the router filters to
+models fitting 0.8 × free VRAM, else falls through the CPU chain (HTDemucs-FT-CPU / §13
+baseline chord / int8-CPU ASR) and **reports the degradation + reason in tool meta**.
+**A process-wide GPU semaphore (1 slot) serializes all model loads/inference** — MCP clients
+can issue parallel tool calls, and two calls that both see "9 GB free" then both load 6 GB
+models is a textbook time-of-check/time-of-use OOM; the free-VRAM check is only meaningful
+under the semaphore. Never OOM, never silently skip, never silently downgrade.
 
 **15.6 PANNs SED-head pick** (closes the Q2 residue): scripted — run DecisionLevelMax /
 DecisionLevelAvg / DecisionLevelAtt over the §15.1 fixture set, select highest frame-level

@@ -17,9 +17,11 @@ verified); RoFormer/SCNet-era model registry with checkpoint-availability verifi
 bass-informed slash detection + in-house baseline; madmom excluded — no py3.12 install);
 §14 lyric-anchored navigation ("after the line …" → faster-whisper + whisperX on the isolated
 vocal stem, fuzzy `locate_lyric`); §15 closes every open question (calibration protocol,
-render mechanics, the 14 launch FX-intent rules, VRAM guard). Spec survived two adversarial
-verification passes (separation claims; chord/lyrics tooling) — 10+ factual errors found and
-fixed before commit, sources in the spec. **Not done here:** any code, any implementation
+render mechanics, the 14 launch FX-intent rules, VRAM guard). Spec survived three adversarial
+verification passes (separation claims; chord/lyrics tooling; a design-logic/edge-case audit
+that found 7 wrong-as-written behaviors — incl. the FX loop converging toward mp3 codec
+artifacts, Whisper hallucinating lyrics on instrumentals, walking-bass false slash chords,
+render-solo contamination — and ~19 unspecified policies, all fixed in-spec). **Not done here:** any code, any implementation
 plan — that starts at the desktop per §12.
 
 ## 2026-07-18 — LIVE SMOKE PASS (REAPER 7.77, Slices 1+2)
