@@ -4,6 +4,24 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-07-22 — Reference Analysis Engine spec (docs-only session, off-site)
+
+Hotel session, no code by design (home PC has local-only work in flight). Produced the full
+design spec for the song-analyzer direction: **`docs/specs/2026-07-22-reference-analysis-design.md`**.
+Read that top to bottom to resume — §12 is the exact next-session sequence (desktop
+experiments → `writing-plans`). Highlights: local-only/free-only constraint set; staged
+recon→route→separate→verify→escalate pipeline with reference-free quality gates; dual
+inference engines (audio-separator + vendored MSST for SCNet — audio-separator lacks SCNet,
+verified); RoFormer/SCNet-era model registry with checkpoint-availability verified per slot;
+§13 harmony engine (complex chords first-class: BTC large-voca + music-x-lab ISMIR2019 +
+bass-informed slash detection + in-house baseline; madmom excluded — no py3.12 install);
+§14 lyric-anchored navigation ("after the line …" → faster-whisper + whisperX on the isolated
+vocal stem, fuzzy `locate_lyric`); §15 closes every open question (calibration protocol,
+render mechanics, the 14 launch FX-intent rules, VRAM guard). Spec survived two adversarial
+verification passes (separation claims; chord/lyrics tooling) — 10+ factual errors found and
+fixed before commit, sources in the spec. **Not done here:** any code, any implementation
+plan — that starts at the desktop per §12.
+
 ## 2026-07-18 — LIVE SMOKE PASS (REAPER 7.77, Slices 1+2)
 
 First end-to-end run against a live REAPER. Bridge installed via `install-bridge` + run as a ReaScript action; `~/.orpheus_bridge` heartbeat confirmed (Lua falls back `HOME`→`USERPROFILE`, so it matches the Python default on Windows). Built a 5-section, 18-bar A-minor ballad (Intro/Verse/Chorus/Verse/Chorus) via `set_tempo` + `add_marker` + `_build_section` per section.

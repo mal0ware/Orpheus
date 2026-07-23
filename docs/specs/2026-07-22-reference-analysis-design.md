@@ -81,16 +81,19 @@ implementation plan.
 |---|---|---|---|
 | T0 | cache lookup by content hash | none | ms |
 | T1 | **recon**: decode, LUFS (pyloudnorm), tempo + beat grid, key estimate (chroma + Krumhansl profile w/ confidence + alternates), structure segmentation (self-similarity novelty → section boundaries), band-energy sketch (librosa/numpy) | CPU | 5–20 s |
-| T2 | **instrument-activity timeline**: audio tagger (PANNs CNN14-class / Essentia MTG-Jamendo instrument model) on hop windows → per-second instrument probabilities | CPU or tiny GPU | 10–30 s |
+| T2 | **instrument-activity timeline + chord lane**: framewise PANNs SED tagger → per-second instrument probabilities; beat-synchronous chord recognition (§13 — baseline chord engine is CPU-only and always available; model recognizers upgrade the lane when `[separation]` is installed) | CPU or tiny GPU | 10–40 s |
 | T3 | **targeted separation**: ONE registry checkpoint, cropped to the region of interest ± 5 s context (crop first, separate second — a 20 s crop is ~12× cheaper than the full song) | GPU | 10–60 s |
 | T4 | **escalation**: alternate checkpoint, 2-model ensemble (waveform averaging), complement subtraction, or full-song separation | GPU | minutes |
 | T5 | **last resort**: polyphonic note transcription (basic-pitch — instrument-agnostic single note stream; MT3-class per-instrument attribution deferred) | GPU/CPU | minutes |
 
 Routing table (question class → max tier): key/tempo/structure/loudness/"is it in tune" → **T1**;
-"what instruments, when / arrangement density / what enters at the chorus" → **T2**; "this
-specific sound at 1:12 / compare my guitar to theirs" → **T3** (+T4 only on gate failure);
-"give me the notes it plays" → **T5** only after T3/T4 stems exist or the user asks for notes
-explicitly. The convenience orchestrator tool applies this table; Claude can also call stages
+"what instruments, when / arrangement density / what enters at the chorus / what are the chords
+and why do they feel like that" → **T2**; "this specific sound at 1:12 / compare my guitar to
+theirs" → **T3** (+T4 only on gate failure); **lyric-quote navigation** ("what am I hearing
+after the line '…'") → the first such question on a song builds the lyric index (§14: vocal
+separation + ASR, T3-scale, cached once per file), after which lyric-anchored questions resolve
+at **T1–T2**; "give me the notes it plays" → **T5** only after T3/T4 stems exist or the user
+asks for notes explicitly. The convenience orchestrator tool applies this table; Claude can also call stages
 directly and override.
 
 Two standing efficiency rules: **(a) region first** — when the user's question names a moment or
@@ -131,6 +134,8 @@ the spec):
 | de-reverb | anvuew de-reverb Mel-RoFormer | **vocal-only by training domain** → reverb estimator for VOCAL stems only (§7); non-vocal stems use the decay heuristic, flagged approximate |
 | tagger | PANNs **framewise SED variant** (CNN14-DecisionLevel*-class) | T2 timeline + §5 bleed judge. Plain CNN14 is clip-level — the framewise variant is required. Essentia is OUT: no Windows wheels on PyPI, MTG-Jamendo weights CC BY-NC (this settles §11 Q2) |
 | transcription | basic-pitch (Spotify, Apache-2.0) | T5 only. **Instrument-agnostic**: ONE undifferentiated note stream, no per-instrument attribution (that is MT3-class territory, deferred). Pins Python ≤3.11; low-maintenance upstream |
+| chord (model lane) | rank-1 **BTC large-voca** (MIT, ckpt in-repo, 170 classes); rank-2 **music-x-lab ISMIR2019** (MIT, extensions + inversions) — §13.1 | complex chords are the point (§13); the in-house template+Viterbi baseline in `[analysis]` is the correctness floor, models are upgrades. madmom EXCLUDED (no py3.12 install; NC-licensed models; majmin-only) |
+| lyrics ASR | **faster-whisper** (MIT, large-v3, word timestamps) + **whisperX** wav2vec2 forced alignment (BSD-2, maintained, py3.12 OK) — §14.1 | runs on the ISOLATED VOCAL STEM, never the raw mix; stable-ts (MIT, archived 2026-05) as fallback only |
 
 **Known gap, stated honestly:** no strong open checkpoints for strings/winds/brass sections, and
 no *dedicated* free piano/bass extractors (6-stem models are the free ceiling there) as of this
@@ -332,9 +337,10 @@ the main env moves past 3.11).
 `analyze_reference(file, question_focus?, region?, max_tier?, max_seconds?)` (the orchestrator),
 `recon_reference(file)`, `instrument_timeline(file)`, `separate_region(file, target, region,
 model_id?)`, `verify_stem(...)`, `characterize(file_or_stem, region?)`,
-`compare_character(a, b)`, `clear_analysis_cache()` — plus bridge-side
-`render_track_region(track, region)` and the un-deferred `add_fx_by_name` / `set_fx_param` /
-`get_fx_params` in `mix`.
+`compare_character(a, b)`, `get_chords(file, region?)` (§13), `transcribe_lyrics(file)` +
+`locate_lyric(file, quote, occurrence?)` (§14), `suggest_free_vst(need, limit?)` (§15.4),
+`clear_analysis_cache()` — plus bridge-side `render_track_region(track, region)` and the
+un-deferred `add_fx_by_name` / `set_fx_param` / `get_fx_params` in `mix`.
 Every heavy tool streams progress + returns gate numbers in meta (Claude must be able to say
 "this took the R2 ensemble rung; bleed 0.12").
 
@@ -352,7 +358,12 @@ schema-version busting); registry tests (checkpoint hash pinning — the `<PIN_B
 lesson). CI runs CPU-only with a tiny Demucs or stubbed engine; the RoFormer checkpoints are
 desktop-verified like everything live-REAPER.
 
-## 11. Open questions for next session (the "discuss more" list)
+## 11. Open questions — ALL RESOLVED 2026-07-22 (kept for the record)
+
+Design policy after the second session: **nothing is deferred to worker sessions as "think
+about it."** Every former open question now has either a decision (with its section) or a
+defined mechanical procedure with an acceptance bar. The only legitimately-open items are
+empirical results (hash pins, F1 scores, ear-panel labels) whose procedures are fully specified.
 
 1. **Engine pin:** BOTH engines are required (§4 — audio-separator lacks SCNet). Verify on the
    desktop that audio-separator runs BS-RoFormer ep17 + the vocal/guitar/6-stem/de-reverb
@@ -361,29 +372,200 @@ desktop-verified like everything live-REAPER.
    Windows wheels on PyPI (`pip install` fails on the target machine) and the MTG-Jamendo weights
    are CC BY-NC. Remaining sub-question: which SED head (DecisionLevelMax/Avg/Att) gives the best
    per-second precision for the §5 gates.
-3. **Chord recognition:** T1 currently yields key + chroma; do we add a dedicated audio
-   chord-sequence model (e.g. a CRNN chord estimator) or derive chords from chroma + music21?
-   Affects "chord structure" fidelity on dense mixes.
-4. **Threshold calibration protocol:** how many synthetic fixtures, which genres, and do we also
-   hand-label a handful of *owned* real songs as a sanity panel?
-5. **`render_track_region` mechanics:** REAPER render API via bridge (which render preset,
-   where do files land, cleanup policy).
-6. **Descriptor→intent rule table v1:** which 10–15 deltas ship first (presence, mud, air, width,
-   delay, reverb size, saturation flavor, transient snap, …)?
-7. **VST catalog delivery:** recommend-only (JSON + docstrings) in v1, or also a
-   `suggest_free_vst(intent)` tool that reads the catalog?
-8. **VRAM guard:** detect available VRAM at tool call time and auto-degrade (3080 = 10 GB is
-   fine, but don't OOM if REAPER + a big project already holds memory)?
+3. **Chord recognition — SETTLED:** dedicated harmony engine, complex chords first-class → §13.
+   (Chroma-only was rejected this session: simplified majmin output loses exactly the voicings
+   that make progressions land.)
+4. **Threshold calibration protocol — SETTLED:** fixed procedure + acceptance bar → §15.1.
+5. **`render_track_region` mechanics — SETTLED:** exact bridge sequence, settings snapshot/
+   restore, failure modes → §15.2.
+6. **Descriptor→intent rule table v1 — SETTLED:** exactly 14 launch rules, enumerated with
+   trigger conditions and stock mappings → §15.3.
+7. **VST catalog delivery — SETTLED:** `suggest_free_vst` tool ships; recommend-only, Orpheus
+   never installs plugins → §15.4.
+8. **VRAM guard — SETTLED:** call-time free-VRAM query + registry `vram_gb` filter + CPU
+   fallback chain, degradation always reported → §15.5. (SED-head pick mechanized in §15.6.)
 
 ## 12. Suggested next-session sequence (at the desktop)
 
 1. Read this spec top to bottom; argue with it; edit inline.
-2. Resolve open questions 1–3 (they gate everything else) with quick local experiments:
-   install `audio-separator`, run the rank-1 vocal + 4-stem checkpoints on an owned mp3,
-   eyeball/ear-check stems, time them on the 3080.
-3. Run the tagger candidates on the same file; compare timelines against your ears.
-4. Then invoke the planning flow (superpowers `writing-plans`) to cut this into TDD tasks —
+2. Empirical pins, in order (each is run-and-record, not think-and-decide):
+   a. both engines: run the 4-stem A/B + vocal + guitar + 6-stem + de-reverb checkpoints on an
+      owned mp3; ear-check; time on the 3080; pin versions + sha256.
+   b. chord: run the §13 baseline + rank-1 model on 2–3 owned songs whose chords Mal can verify
+      by ear (pick ones with real 7ths/slash chords); record exact-label accuracy impressions.
+   c. lyrics: vocal stem + faster-whisper on one owned song; test `locate_lyric` matching by
+      hand against 3 quotes, including one deliberate misquote.
+   d. tagger: the §15.6 SED-head script over the §15.1 fixtures.
+3. Then invoke the planning flow (superpowers `writing-plans`) to cut this into TDD tasks —
    suggested slice order: **(1)** cache+recon (T0/T1), **(2)** tagger timeline (T2),
-   **(3)** registry+engine+separate_region (T3), **(4)** verify gates + ladder (T4),
-   **(5)** descriptors, **(6)** compare + FX intents, **(7)** FX verbs + apply loop,
-   **(8)** orchestrator tool + docs.
+   **(3)** chord baseline + theory lane (§13, CPU parts), **(4)** registry + engines +
+   `separate_region` (T3), **(5)** verify gates + ladder (T4), **(6)** descriptors (§7),
+   **(7)** lyrics pipeline + `locate_lyric` (§14), **(8)** chord model lane + bass-informed
+   refinement (§13 GPU parts), **(9)** compare + FX intents (§15.3), **(10)** FX verbs +
+   apply loop, **(11)** orchestrator + `suggest_free_vst` + docs.
+
+---
+
+## 13. Harmony engine — chord structure done properly (closes §11 Q3)
+
+Simplified majmin chord tracking is explicitly NOT acceptable (user requirement, 2026-07-22):
+the target output is the chord *as played* — `Fmaj7#11/A`, `B♭m9`, `G7sus4 → G7` — because
+voicing and extensions are usually the entire reason a progression lands. Three layers,
+cheap → rich, all beat-synchronous on recon's beat grid.
+
+**13.1 Base recognizer** (registry task `chord`) — pinned by the 2026-07-22 verification pass:
+- **Rank-1: BTC large-voca** (jayg996/BTC-ISMIR19; MIT; checkpoint committed in-repo, no
+  account). Vocabulary: 170 classes = 12 roots × 14 qualities (maj, min, dim, aug, min6, maj6,
+  min7, minmaj7, maj7, 7, dim7, hdim7, sus2, sus4) + N/X. **Known limit: NO inversions — the
+  label set strips bass distinctions**, which is precisely why §13.2 (bass-informed slash
+  detection) is a separate, mandatory layer rather than an optional nicety. 2019-era PyTorch,
+  unmaintained — vendor the inference path like MSST.
+- **Rank-2: music-x-lab ISMIR2019 Large-Vocabulary Chord Recognition** ("Chord Structure
+  Decomposition"; MIT; pretrained models in-repo/Drive). Decomposed output includes
+  **extensions AND bass/inversions natively** — richer than rank-1 but older code; use as the
+  cross-check/escalation model, same pattern as SCNet vs BS-RoFormer.
+- **Considered and excluded:** crema (BSD-2; structured root/bass/pitch-class decode ≈602
+  classes incl. inversions — attractive on paper, but TensorFlow ⇒ CPU-only on native Windows
+  and Keras-3-fragile on py3.12; keep as a registry candidate, do not build on it). madmom
+  (pip install broken on py3.12 — issues #527/#535; models CC BY-NC-SA; chord model
+  majmin-only). ChordFormer (2025 paper, **no public checkpoint**). OMAR-RQ (AGPL code +
+  NC weights). No 2023+ turnkey large-vocab open model exists as of 2026-07 — verified.
+- **Always-available baseline** (no torch, ships in `[analysis]`): in-house beat-synchronous
+  template matching over HPSS-harmonic chroma with Viterbi smoothing — vocabulary
+  maj/min/7/maj7/min7/sus2/sus4/dim/aug + no-chord. ≈200 LOC, pure numpy/librosa, unit-tested
+  against rendered fixtures. The baseline is the correctness floor; models are upgrades, never
+  requirements.
+
+**13.2 Bass-informed slash/inversion detection.** Per beat: fundamental of the bass lane —
+bass stem when a separation exists, else low-passed mix + pYIN — and if the bass pitch class
+is not the detected root, emit a slash chord (`C/E`) and flag the inversion. Reuses machinery
+the pipeline already has; no new model.
+
+**13.3 Extension refinement.** Per chord segment: harmonic-chroma residual after subtracting
+the detected triad template; pitch classes above an energy threshold become candidate
+extensions (7, add9, 6, #11, 13, sus tones), accepted only when stable across ≥ 60% of the
+segment's beats → label upgrade (`C` → `Cadd9`) with per-extension confidence. This is how the
+baseline lane also reaches complex chords, model or no model.
+
+**13.4 Theory layer** (music21). Sliding-window key segments → per-chord Roman numerals against
+the *local* key; annotate borrowed chords, secondary dominants, modal mixture, and modulation
+points. Output BOTH absolute (`Fmaj7#11`) and functional (`IVmaj7#11`) spellings — Claude
+explains "why it feels like that" from the functional lane.
+
+**Output schema** (`chords.json`, versioned): `[{start_beat, end_beat, start_s, end_s, root,
+bass, quality, extensions[], label, roman, key_context, confidence, produced_by}]` where
+`produced_by` records which layer wrote the segment. **Placement:** baseline at T2 (CPU,
+seconds, alongside the tagger); model lane + bass refinement re-write segments at T2-GPU/T3
+with higher confidence. **Acceptance bar (fixtures, §15.1 set extended with rendered
+progressions containing extensions + inversions per genre):** baseline ≥ 90% majmin-correct;
+model lane ≥ 80% exact-label. Below bar → thresholds/templates iterate before ship.
+
+## 14. Lyric-anchored navigation — "after the line …" (user requirement 2026-07-22)
+
+People locate song moments by lyric, not bar number. Every reference tool accepts a lyric
+quote as a region specifier.
+
+**14.1 Pipeline** (one-time per song, cached):
+1. **Vocal stem** — rank-1 vocal model, full song (T3/T4 cost; cached and shared with §7's
+   vocal descriptors — this is the same stem, computed once).
+2. **Local ASR** — **faster-whisper** (MIT; large-v3; `int8_float16` on the 3080, `int8` on
+   CPU) with `word_timestamps=True`, run on the vocal stem; model downloads are ungated
+   (pre-fetched per §9). Singing is materially harder than speech — the isolated stem is what
+   makes this viable at all, and this is now *evidenced*, not assumed: source-separated vocals
+   give consistent WER reductions over full mixes for Whisper-family lyrics transcription
+   (arXiv:2506.15514, SOTA open-source on the Jam-ALT benchmark zero-shot; also LyricWhiz,
+   ISMIR 2023). Accuracy remains genre-dependent (strong on clear pop vocals, weak on
+   screamed/heavily-processed vocals); the system degrades *honestly* — low-confidence words
+   carry their confidence, nothing is invented.
+3. **Alignment tightening** — **whisperX** (BSD-2-Clause; actively maintained, py3.12 +
+   Windows + CUDA verified 2026-07) wav2vec2-CTC forced alignment snapping word boundaries;
+   melisma stretches sung words far beyond any speech-timing assumption, so Whisper's own
+   timestamps are treated as coarse until aligned. Note: whisperX's *diarization* extra pulls
+   HF-gated pyannote models — diarization is irrelevant on a solo vocal stem and MUST stay
+   uninstalled (keeps the no-accounts rule intact). Fallback if whisperX breaks: stable-ts
+   (MIT — archived upstream 2026-05, fallback only).
+4. **Line + section assembly** — words → lines (silence-gap + punctuation heuristics);
+   near-identical repeated line blocks clustered → chorus candidates; cross-checked against
+   §3.1 recon's structure boundaries → **named, indexed sections** (`verse 1`, `chorus 2`, …).
+   Side effect: "the second chorus" now resolves textually too, not just structurally.
+
+Cache artifacts: `lyrics.json` `[{word, start_s, end_s, conf}]`, `lines.json`, `sections.json`.
+
+**14.2 `locate_lyric(file, quote, occurrence?)` — the resolver.** Normalize both sides
+(case/punctuation/whitespace); slide the quote over the transcript scoring token-level edit
+distance + phonetic equivalence (double-metaphone class), because the two failure modes are
+symmetric and both guaranteed: the ASR mishears, and the user misremembers. Returns ranked
+matches `[{start_s, end_s, matched_text, score, section, occurrence}]` — a repeated chorus
+line returns *all* occurrences; `occurrence` selects. Best score < 0.6 → return top-3
+candidates + a low-confidence flag; Claude asks the user instead of guessing.
+
+**Router integration:** "what am I hearing after the line ⟨quote⟩" → `locate_lyric` → region
+`[match.end_s, +8 bars]` → §3.1 timeline diff (which instrument activations rise vs the
+preceding region) → answered at T1–T2. Separation fires only if the follow-up chases a
+specific sound's *character*.
+
+**14.3 Policy** (extends the standing copyright decisions): transcripts are locally-derived
+navigation metadata from audio the user owns — cached locally, **never fetched from lyric
+services** (no Genius/Musixmatch/etc.: network egress + ToS + §1.1), never embedded into
+project files. `place_lyric_markers`' original-lyrics-only rule is unchanged and unaffected.
+
+## 15. Closing decisions (nothing left as "think about it")
+
+**15.1 Threshold calibration protocol** (closes Q4). Fixture set: **24 synthetic mixes** =
+8 genre profiles × 3 densities (sparse/mid/dense), 8–16 bars, rendered by the compose stack
+through free SFZ instruments (VSCO2 CE + free kits); truth stems retained. Plus a **6-song
+owned-audio sanity panel**, ear-labeled at the desktop (clean/acceptable/bad per stem).
+Procedure: run every registry separator on every fixture; compute true SDR + all §5 gate
+metrics; per gate, choose the threshold at the ROC knee separating good (SDR > 7) from bad
+(SDR < 4) runs; freeze in `verify.py` config together with the fixture-set hash. Re-runs
+automatically (CI, CPU-models-only job) whenever the registry or fixtures change.
+
+**15.2 `render_track_region` bridge mechanics** (closes Q5). One handler, settings always
+restored (Lua pcall-wrapped, restore in the error path too): snapshot `GetSetProjectInfo`
+`RENDER_*` values + all solo states → `GetSet_LoopTimeRange(region)` → exclusive-solo the
+target track (`I_SOLO=2`) → set render source = master mix, bounds = time selection,
+`RENDER_FILE` = cache path, format WAV 32-bit float, `RENDER_SRATE` = project rate →
+`Main_OnCommand(42230)` ("Render project, using the most recent render settings" — never
+40015, which opens the dialog) → assert output file exists and is non-empty → restore
+snapshot + solos. Returns `{path, region, sr}`. Failure modes specced: missing/empty file →
+`BridgeError` with the snapshot diff; region given in beats → converted via the beat grid
+before the call; cleanup via the §9 cache LRU.
+
+**15.3 Descriptor→intent rule table v1** (closes Q6) — ships with **exactly these 14 rules**,
+stored as data (`data/intent_rules.json`), each `{trigger on §7 diff → intent JSON → stock
+apply recipe → one-line human explanation template}`, unit-tested on constructed descriptor
+pairs:
+
+| # | Trigger (descriptor diff) | Intent | Stock apply path |
+|---|---|---|---|
+| 1 | 2–5 kHz band Δ > +3 dB | presence boost | ReaEQ bell 3.5 kHz |
+| 2 | 200–400 Hz Δ (ref leaner) | mud cut | ReaEQ cut ~300 Hz |
+| 3 | 10–16 kHz Δ | air shelf | ReaEQ high shelf 12 kHz |
+| 4 | 100–250 Hz Δ (ref fuller) | warmth shelf | ReaEQ low shelf 180 Hz |
+| 5 | spectral tilt Δ > 1.5 dB/oct | tilt | ReaEQ two-shelf |
+| 6 | attack-time distribution Δ | transient snap ± | JSFX transient controller |
+| 7 | crest factor Δ > 4 dB | compression (ratio/attack derived from Δ) | ReaComp |
+| 8 | even-harmonic energy Δ | saturation, tape/tube flavor | JSFX saturation / Airwindows |
+| 9 | odd-harmonic energy Δ | saturation, drive/clip flavor | same, different flavor param |
+| 10 | per-band M/S Δ | widen (band-scoped, mono-safety check) | JSFX stereo width |
+| 11 | echo detected in ref, absent in user | delay (time snapped to nearest musical division, feedback, mix) | ReaDelay |
+| 12 | wet/dry + decay-class Δ | reverb (size, mix, predelay) | ReaVerb w/ bundled IRs |
+| 13 | 5–9 kHz dynamic Δ on vocals | de-ess | ReaXcomp band |
+| 14 | LUFS + crest joint Δ | limiting/loudness — **master bus only with explicit user opt-in** | JSFX limiter |
+
+Diffs outside these 14: Claude reasons and recommends freely, but Orpheus does **not**
+auto-apply — the automation boundary is explicit and honest.
+
+**15.4 VST catalog delivery** (closes Q7): ship `suggest_free_vst(need, limit=3)` reading
+`data/vst_catalog.json`; returns entries + URLs + license/account flags. Recommend-only —
+Orpheus never downloads or installs plugins (standing decision from the original design).
+
+**15.5 VRAM guard** (closes Q8): before every GPU tool call, query free VRAM
+(`torch.cuda.mem_get_info`); registry entries carry `vram_gb`; the router filters to models
+fitting 0.8 × free VRAM, else falls through the CPU chain (HTDemucs-FT-CPU / §13 baseline
+chord / int8-CPU ASR) and **reports the degradation + reason in tool meta**. Never OOM,
+never silently skip, never silently downgrade.
+
+**15.6 PANNs SED-head pick** (closes the Q2 residue): scripted — run DecisionLevelMax /
+DecisionLevelAvg / DecisionLevelAtt over the §15.1 fixture set, select highest frame-level
+F1; tie breaks to DecisionLevelAtt. Part of the calibration CI job, not a discussion.
