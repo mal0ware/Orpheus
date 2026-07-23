@@ -1,7 +1,9 @@
-# Reference Analysis Engine — Design Spec (DRAFT FOR DISCUSSION)
+# Reference Analysis Engine — Design Spec
 
-**Date:** 2026-07-22 · **Status:** draft — written off-site (docs only); discuss + refine at the
-desktop before writing the implementation plan. · **Target milestone:** replaces/absorbs the
+**Date:** 2026-07-22 · **Status:** **authoritative design** (v3 — survived four adversarial
+review passes: separation claims, chord/lyrics tooling, edge-case audit, implementer-coherence
+audit). Remaining desktop work is the §12 empirical pins, then `writing-plans`. Sections 13–16
+were added in the resolution passes and are as normative as 1–12. · **Target milestone:** replaces/absorbs the
 roadmap's M2 `analysis/audio.py` line and Slice 4 (`reference-ingest`), and pulls the M1-deferred
 FX verbs onto the critical path.
 
@@ -50,8 +52,9 @@ plugins I actually have."
 ## 3. Architecture — the staged pipeline
 
 One new package: `src/orpheus_mcp/analysis/` with submodules `recon.py`, `router.py`,
-`separation.py`, `verify.py`, `descriptors.py`, `cachefs.py`, plus `data/model_registry.json`
-and `data/vst_catalog.json`. Tools land in a new `reference` category (registry-gated like
+`separation.py`, `verify.py`, `descriptors.py`, `harmony.py` (§13), `lyrics.py` (§14),
+`cachefs.py`, `config.py` (§16 — ALL tunables), plus `data/model_registry.json`,
+`data/vst_catalog.json`, `data/intent_rules.json`, `data/fx_param_maps.json`. Tools land in a new `reference` category (registry-gated like
 `arrange`, present in `default`/`full`).
 
 ```
@@ -79,7 +82,7 @@ implementation plan.
 
 | Tier | What runs | Compute | Typical wall time |
 |---|---|---|---|
-| T0 | cache lookup by content hash | none | ms |
+| T0 | cache lookup — key is §9's **decoded-PCM hash**, computed once at first decode (cost folded into that first T1 run) and memoized `file-bytes-hash → pcm-hash` so later lookups are ms | none after first decode | ms |
 | T1 | **recon**: decode, LUFS (pyloudnorm), tempo + beat grid **+ downbeat/meter estimate** (bars are measured, never assumed 4/4) **+ beat-grid confidence** (low confidence → §13 falls back to fixed-window mode), **tuning-offset estimate** (`librosa.estimate_tuning`; applied to ALL downstream chroma — 432 Hz bands and detuned tapes must not smear chords — and it IS the routing table's "is it in tune" answer), key estimate (tuning-corrected chroma + Krumhansl profile w/ confidence + alternates), structure segmentation (self-similarity novelty → section boundaries; short files degrade to a single section), band-energy sketch (librosa/numpy) | CPU | 5–20 s |
 | T2 | **instrument-activity timeline + chord lane**: framewise PANNs SED tagger → per-second instrument probabilities; beat-synchronous chord recognition (§13 — baseline chord engine is CPU-only and always available; model recognizers upgrade the lane when `[separation]` is installed) | CPU or tiny GPU | 10–40 s |
 | T3 | **targeted separation**: ONE registry checkpoint, cropped to the region of interest ± 5 s context (crop first, separate second — a 20 s crop is ~12× cheaper than the full song) | GPU | 10–60 s |
@@ -113,7 +116,7 @@ region before any verify/characterize step, and every region clamps to `[0, dura
 ## 4. Model registry (`data/model_registry.json`)
 
 **No model is hard-coded.** Each entry declares: `id`, `task` (multi-stem | single-target |
-tagger | dereverb | drumkit-split | transcription), `targets` (e.g. `["vocals"]`,
+tagger | dereverb | drumkit-split | transcription | chord | lyrics-asr), `targets` (e.g. `["vocals"]`,
 `["kick","snare","toms","hats","cymbals"]`), `engine`, `checkpoint_source` (URL + sha256, pinned —
 same policy as the sound-pack), `vram_gb`, `rt_factor` (× realtime on reference HW), `benchmark`
 (published SDR where known), `license`, `rank` (router preference order per target), and
@@ -239,6 +242,13 @@ fires automatically**: it requires explicit opt-in (`max_tier=T5` or the user as
 consistent with §3.1's T5 rule — because on gate exhaustion the stems are by definition bad, and
 transcription on the raw mix is basic-pitch at its weakest. At default settings the ladder ends
 at R5 with confidence flagged low and the gate numbers reported honestly.
+
+**Checkpoint-less targets** (strings/winds/brass — §4's known gap): there is no rank-1 to run,
+so the ladder ENTERS at R3 (complement subtraction — its precondition below applies to the
+stems being subtracted), with R5 as the next rung; R1/R2 are skipped by construction. **R6
+input:** transcription runs on the best gate-scoring artifact from the climb if at least one
+gate passed on it, otherwise on the target's most-exposed raw-mix window (§3.1b) — never on
+known-bad stems; the chosen source is recorded in the result meta.
 
 **R3 precondition:** complement subtraction is only as good as what's subtracted — the stems
 being subtracted must *individually* pass gates 2–4 first; if the ladder reached R3 because
@@ -383,17 +393,23 @@ per stem, `descriptors/<stem-or-region>.json`, `ladder.log`. **Every artifact's 
 the identity of what produced it**: `(producing model id + checkpoint hash, registry version,
 verify-config hash, schema version)` — not just the audio hash. Without this, swapping the
 SED head after §15.6, upgrading a Whisper checkpoint, or re-tuning §15.1 thresholds serves
-stale artifacts forever (and §15.1 *guarantees* those events happen). Ladder runs additionally
-record the budget cap they stopped under (§6 exhaustion semantics). Entries in use by an
+stale artifacts forever (and §15.1 *guarantees* those events happen). **Encoding: every
+artifact gets a sidecar `meta.json`** — `{model_id, checkpoint_sha256, registry_version,
+verify_config_hash, schema_version, budget_cap?}` — compared field-for-field on read; any
+mismatch is a cache MISS (the stale artifact is left for LRU, not trusted). Ladder runs
+additionally record the budget cap they stopped under (§6 exhaustion semantics). Entries in use by an
 in-flight pipeline are **pinned against LRU eviction**. A `clear_analysis_cache` tool + size
 cap (config, default 20 GB, LRU).
 
 **Packaging — full dependency map (no orphan dependencies):** core Orpheus stays lean.
-`orpheus-mcp[analysis]` = librosa, pyloudnorm, PANNs tagger, music21, the §13 in-house chord
-baseline — CPU-friendly, enables T1/T2 everywhere incl. the laptop. `orpheus-mcp[separation]`
-= the torch stack: audio-separator, vendored MSST inference, BTC + music-x-lab chord models,
-faster-whisper + whisperX — the desktop extra (lyrics lives here because it *requires* the
-vocal stem). basic-pitch — **decided, not deferred**: its own `orpheus-mcp[transcribe]` extra
+`orpheus-mcp[analysis]` = librosa, pyloudnorm, PANNs tagger (**pins torch-cpu** — small, still
+laptop-friendly; `[separation]` swaps in CUDA torch), music21, the §13 in-house chord baseline
+— enables T1/T2 everywhere incl. the laptop. `orpheus-mcp[separation]` = the CUDA torch stack:
+audio-separator, vendored MSST inference, BTC + music-x-lab chord models, faster-whisper +
+whisperX (+ stable-ts as the pinned fallback) — the desktop extra (lyrics lives here because
+it *requires* the vocal stem). **ffmpeg** is a documented system prerequisite (checked by
+`fetch-models` alongside checkpoint downloads; clear error naming the install command if
+absent). basic-pitch — **decided, not deferred**: its own `orpheus-mcp[transcribe]` extra
 running in a dedicated subprocess environment pinned to Python ≤3.11 (uv-managed), invoked
 CLI-style — it must not constrain the main env's Python. Tools register only when their extra
 is importable; otherwise they surface a clear "install `orpheus-mcp[separation]` on this
@@ -405,18 +421,38 @@ when lower tiers can still say something useful.
 hash-verifies every registry checkpoint up front — `audio-separator`'s default lazy
 download-on-first-use is disabled, so analysis tools NEVER touch the network at call time
 (keeps §1.2 honest). Note on hints: `readOnlyHint` on analysis tools means "does not modify the
-REAPER project or the input file" — they do write to the local cache. basic-pitch's Python ≤3.11
-ceiling is a packaging constraint for whichever extra carries it (isolate or sub-process it if
-the main env moves past 3.11).
+REAPER project or the input file" — they do write to the local cache.
 
-**New tools** (category `reference`, all `readOnlyHint` except the FX-apply verbs):
-`analyze_reference(file, question_focus?, region?, max_tier?, max_seconds?)` (the orchestrator),
-`recon_reference(file)`, `instrument_timeline(file)`, `separate_region(file, target, region,
-model_id?)`, `verify_stem(...)`, `characterize(file_or_stem, region?)`,
-`compare_character(a, b)`, `get_chords(file, region?)` (§13), `transcribe_lyrics(file)` +
-`locate_lyric(file, quote, occurrence?)` (§14), `suggest_free_vst(need, limit?)` (§15.4),
-`clear_analysis_cache()` — plus bridge-side `render_track_region(track, region)` and the
-un-deferred `add_fx_by_name` / `set_fx_param` / `get_fx_params` in `mix`.
+**New tools** (category `reference`, all `readOnlyHint` except the FX-apply verbs). Contracts —
+return shapes are normative, an implementer must not invent them:
+- `analyze_reference(file, question_focus?, region?, max_tier?, max_seconds?)` — the
+  orchestrator. Returns the **answer envelope**: `{question_class, tier_reached, recon_summary,
+  artifacts: {timeline?, chords?, sections?, stems?[], descriptors?[]}, gates: {...per stem},
+  ladder_log, budget_capped?, capped_by_missing_extra?, notes[]}` — only the artifact groups
+  the question class needed are populated.
+- `recon_reference(file)` → the T1 `recon.json` object.
+- `instrument_timeline(file)` → `timeline.json`: `{classes: [mapped-subset ids], hop_s,
+  frames: [[activation-per-class]]}` — the *mapped* class subset (§4 `tagger_classes` union),
+  raw activations; thresholds are applied by consumers, not baked in.
+- `separate_region(file, target, region, model_id?)` → `{stem_path, model_id, region_trimmed,
+  gates}`.
+- `verify_stem(stem_path, mix_path, region, timeline?)` → `{gates: {mix_consistency|bleed|
+  silence_honesty|agreement: {verdict: pass|fail|na, value}}, overall: pass|fail|unverifiable}`.
+- `characterize(source, region?)` — `source` is a **stem handle** (`{file_pcm_hash, model_id,
+  region}` triple or a literal path; the same handle convention is how `compare_character`
+  addresses its inputs) → a `SoundCharacter` (§7).
+- `compare_character(a, b)` → `{diffs: {descriptor: {a, b, delta, unit}}, intents: [§15.3
+  intent objects fired by the rule table], band_limit_hz, notes[]}` — **this tool is where
+  intent generation lives**; Claude reads `intents`, it does not compute them.
+- `get_chords(file, region?)` → the §13 `chords.json` lane (filtered to region).
+- `transcribe_lyrics(file)` → `{status: ok|no_vocals, language, words, lines, sections}`;
+  `locate_lyric(file, quote, occurrence?)` → §14.2's ranked-match list (or the defined
+  `no_vocals` result). `lines.json` = `[{text, start_s, end_s, word_idx_range}]`;
+  `sections.json` = `[{name, index, start_s, end_s, kind: chorus|verse|section}]`.
+- `suggest_free_vst(need, limit?)` (§15.4), `clear_analysis_cache()`.
+- Bridge-side: `render_track_region(track, region)` (§15.2); the un-deferred `add_fx_by_name`
+  / `set_fx_param` / `get_fx_params` join the **existing** `mix` surface alongside
+  `list_installed_fx` (already shipped — §8 step 2.1 uses it as-is).
 Every heavy tool streams progress + returns gate numbers in meta (Claude must be able to say
 "this took the R2 ensemble rung; bleed 0.12").
 
@@ -429,7 +465,8 @@ calibrates the §5 gate thresholds empirically (choose thresholds that separate 
 known-bad runs) instead of hand-waving them. Plus: unit tests for every descriptor on
 constructed signals (a synthetic 28 ms echo must yield `delay_ms ≈ 28`; a 6 dB/oct tilt must
 read back as one); router table tests (question class → tier ceiling, fake registry); ladder
-tests (forced gate failures walk R1→R6 in order, with logging); cache tests (hash stability,
+tests (forced gate failures walk R1→R5 in order, with logging; R6 only under an explicit
+`max_tier=T5` case); cache tests (hash stability,
 schema-version busting); registry tests (checkpoint hash pinning — the `<PIN_BEFORE_SHIP>`
 lesson). CI runs CPU-only with a tiny Demucs or stubbed engine; the RoFormer checkpoints are
 desktop-verified like everything live-REAPER.
@@ -473,12 +510,30 @@ empirical results (hash pins, F1 scores, ear-panel labels) whose procedures are 
       hand against 3 quotes, including one deliberate misquote.
    d. tagger: the §15.6 SED-head script over the §15.1 fixtures.
 3. Then invoke the planning flow (superpowers `writing-plans`) to cut this into TDD tasks —
-   suggested slice order: **(1)** cache+recon (T0/T1), **(2)** tagger timeline (T2),
-   **(3)** chord baseline + theory lane (§13, CPU parts), **(4)** registry + engines +
-   `separate_region` (T3), **(5)** verify gates + ladder (T4), **(6)** descriptors (§7),
-   **(7)** lyrics pipeline + `locate_lyric` (§14), **(8)** chord model lane + bass-informed
-   refinement (§13 GPU parts), **(9)** compare + FX intents (§15.3), **(10)** FX verbs +
-   apply loop, **(11)** orchestrator + `suggest_free_vst` + docs.
+   slice order below, each with its acceptance bar (bars without a § pointer are stated here,
+   normatively):
+   **(1)** cache+recon (T0/T1) — bar: recon fields present incl. tuning/downbeats/grid
+   confidence on 3 fixture files; PCM-hash stability tests (§9).
+   **(2)** tagger timeline (T2) — bar: §15.6 frame-F1 script runs; timeline schema (§9)
+   round-trips.
+   **(3)** chord baseline + theory lane (§13 CPU) — bar: §13's ≥90% majmin on fixtures.
+   **(4)** registry + engines + `separate_region` (T3) — bar: both engines produce gated
+   stems on one fixture; checkpoint hashes pinned.
+   **(5)** verify gates + ladder (T4) — bar: §15.1 calibration run completes; ladder tests
+   (§10) green.
+   **(6)** descriptors (§7) — bar: §10's constructed-signal tests (28 ms echo etc.) green.
+   **(7)** `render_track_region` (§15.2) — bar: rendered region matches solo'd track audio
+   on a live-REAPER smoke; silence/solo-restore cases tested against the fake bridge.
+   **(8)** lyrics pipeline + `locate_lyric` (§14) — bar: known-lyrics fixture (self-recorded
+   or synthesized vocal) locates 5/5 exact quotes + 1 misquote; `no_vocals` on an
+   instrumental fixture.
+   **(9)** chord model lane + bass refinement (§13 GPU) — bar: §13's ≥80% exact-label.
+   **(10)** compare + FX intents (§15.3) — bar: all 14 rules fire on constructed descriptor
+   pairs; band-limit normalization test (mp3-vs-wav fixture must NOT fire rule 3).
+   **(11)** FX verbs + apply loop — bar: applied ReaEQ chain moves the §7 diff toward zero
+   on a fake-bridge render loop; live smoke at the desktop.
+   **(12)** orchestrator + `suggest_free_vst` + docs — bar: answer envelope (§9) golden
+   tests per question class, incl. `capped_by_missing_extra` and absent-target paths.
 
 ---
 
@@ -543,13 +598,15 @@ functional lane.
 threshold (ambient, free-time ballads, drifting live takes), the whole chord lane switches
 from beat-synchronous to **fixed 1 s windows**, `chords.json` gains `grid: "fixed"` so every
 consumer knows beat/bar arithmetic is unavailable, and bar-based region math (§14) degrades
-to seconds. Stated here so no worker session invents it.
+to fixed seconds: **"+8 bars" → +16 s** (`FIXED_GRID_BARS_TO_SECONDS`, §16). Stated here so
+no worker session invents it.
 
 **Output schema** (`chords.json`, versioned): `[{start_beat, end_beat, start_s, end_s, root,
 bass, quality, extensions[], label, roman, key_context, confidence, produced_by}]` where
 `produced_by` records which layer wrote the segment. **Placement:** baseline at T2 (CPU,
-seconds, alongside the tagger); model lane + bass refinement re-write segments at T2-GPU/T3
-with higher confidence. **Acceptance bar (fixtures, §15.1 set extended with rendered
+seconds, alongside the tagger); model lane + bass refinement re-write segments at **T3** (on
+CPU-only machines the lane simply stays baseline — no phantom "T2-GPU" tier exists) with
+higher confidence. **Acceptance bar (fixtures, §15.1 set extended with rendered
 progressions containing extensions + inversions per genre):** baseline ≥ 90% majmin-correct;
 model lane ≥ 80% exact-label. Below bar → thresholds/templates iterate before ship.
 
@@ -713,3 +770,37 @@ under the semaphore. Never OOM, never silently skip, never silently downgrade.
 **15.6 PANNs SED-head pick** (closes the Q2 residue): scripted — run DecisionLevelMax /
 DecisionLevelAvg / DecisionLevelAtt over the §15.1 fixture set, select highest frame-level
 F1; tie breaks to DecisionLevelAtt. Part of the calibration CI job, not a discussion.
+
+## 16. Constants appendix — every tunable, one home
+
+**Normative rule: every tunable in this spec lives in `analysis/config.py` as a named
+constant. Nothing is hard-coded at a call site.** Initial values below are engineering
+estimates good enough to build and test against; rows marked **cal** are re-fit by the §15.1
+calibration job (which records the fixture-set hash it fit against — §9 cache invalidation).
+
+| Constant | Initial | Used by | cal? |
+|---|---|---|---|
+| `GATE_MIX_RESIDUAL_PASS_DB` | −20 dB | §5.1 | cal |
+| `GATE_BLEED_PASS` | 0.20 | §5.2 | cal |
+| `GATE_SILENCE_PASS_DB` | −35 dB | §5.3 | cal |
+| `GATE_SILENCE_TAIL_ALLOWANCE_S` | 3.0 s | §5.3 | cal |
+| `GATE_AGREEMENT_PASS` | 0.90 | §5.4 | cal |
+| `TIMELINE_ACTIVITY_THRESHOLD` | 0.30 | §3.1(c) absent-target, §5.2 active frames | cal |
+| `EXPOSURE_THRESHOLD` | 0.15 | §3.1(b) | cal |
+| `VAD_VOCAL_ACTIVE_DBFS` | −45 dBFS frame RMS | §14.1 hallucination gate | cal |
+| `BEAT_GRID_CONFIDENCE_MIN` | 0.60 | §13.4 fixed-grid fallback | no |
+| `FIXED_GRID_BARS_TO_SECONDS` | 2.0 s/bar (so +8 bars → +16 s) | §13.4/§14.2 | no |
+| `CHORD_STABILITY_RATIO` | 0.60 | §13.2 slash, §13.3 extensions | no |
+| `CHORD_EXTENSION_MIN_BEATS` | 2 | §13.3 | no |
+| `CHORD_EXTENSION_ENERGY_RATIO` | 0.15 of triad energy | §13.3 | cal |
+| `KEY_WINDOW_BARS` / `KEY_HOP_BARS` / `KEY_HYSTERESIS_WINDOWS` | 16 / 4 / 2 | §13.4 | no |
+| `LYRIC_MATCH_MIN_SCORE` | 0.60 | §14.2 | no |
+| `FX_LOOP_MAX_ITERATIONS` | 4 | §8 step 3 | no |
+| `FX_LOOP_PLATEAU_EPSILON` | < 5% diff improvement per iteration ⇒ stop | §8 step 3 | no |
+| `WIDEN_MONO_SAFETY_CORR_MIN` | 0.50 | §15.3 rule 10 | no |
+| `DEFAULT_MAX_TIER` / `DEFAULT_MAX_SECONDS` | T4 / 300 s | §6 | no |
+| `VRAM_FIT_FRACTION` | 0.80 | §15.5 | no |
+| `CACHE_SIZE_CAP_GB` | 20 | §9 | no |
+
+Where a § passage mentions a threshold prose-first (e.g. "below the vocal-activity
+threshold"), the constant above is the definition; the prose never overrides the table.
