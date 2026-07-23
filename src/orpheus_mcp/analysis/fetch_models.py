@@ -26,7 +26,7 @@ from typing import TextIO
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from orpheus_mcp.analysis.model_registry import ModelEntry, checkpoint_dir, load_registry
+from orpheus_mcp.analysis.model_registry import checkpoint_dir, load_registry
 
 _CHUNK_SIZE = 1024 * 1024
 
@@ -54,15 +54,14 @@ def require_ffmpeg() -> None:
         )
 
 
-def _checkpoint_filename(entry: ModelEntry) -> str:
-    """The local filename for an entry's checkpoint - the URL PATH's basename, query
+def _filename_for_url(url: str, entry_id: str) -> str:
+    """The local filename for a single checkpoint URL - the URL PATH's basename, query
     strings stripped (a raw ``rsplit("/")`` on a Google Drive ``?id=...&export=download``
     URL, or on an HF repo-root URL with no path segment, produces a Windows-illegal or
     empty filename)."""
-    assert entry.checkpoint_url is not None
-    path = urlparse(entry.checkpoint_url).path
+    path = urlparse(url).path
     name = path.rstrip("/").rsplit("/", 1)[-1]
-    return name or f"{entry.id.replace('/', '_')}.bin"
+    return name or f"{entry_id.replace('/', '_')}.bin"
 
 
 def _sha256_file(path: Path) -> str:
@@ -87,12 +86,14 @@ def fetch_models(
     pin: bool = False,
     out: TextIO = sys.stdout,
     downloader=download_checkpoint,
-) -> dict[str, str]:
+) -> dict[str, str | list[str]]:
     """Download + verify (or, in pin mode, record) every registry checkpoint.
 
     Returns ``{entry.id: status}`` where status is ``"skipped (no checkpoint_url)"``,
-    ``"verified"``, or — in pin mode — the freshly computed sha256 hex digest.
-    ``downloader`` is injectable so tests never hit the network (default streams for real).
+    ``"verified"``, or — in pin mode — the freshly computed sha256 hex digest (a ``str`` for a
+    single-file entry, a ``list[str]`` for a bag-of-models entry, positionally matching the
+    entry's ``checkpoint_url`` list). ``downloader`` is injectable so tests never hit the
+    network (default streams for real).
 
     Scope: every registry checkpoint, not just separator engines — PANNs SED weights, the
     BTC + musicxlab chord checkpoints, and the faster-whisper large-v3 snapshot are fetched
@@ -101,7 +102,7 @@ def fetch_models(
     require_ffmpeg()
 
     entries = load_registry(allow_unpinned=True)
-    results: dict[str, str] = {}
+    results: dict[str, str | list[str]] = {}
 
     for entry in entries:
         if entry.checkpoint_url is None:
@@ -115,21 +116,32 @@ def fetch_models(
                 "workflow) to populate hashes first."
             )
 
-        dest = checkpoint_dir(entry.id) / _checkpoint_filename(entry)
-        print(f"Fetching {entry.id} -> {dest}", file=out)
-        downloader(entry.checkpoint_url, dest)
-        digest = _sha256_file(dest)
+        urls = (
+            entry.checkpoint_url
+            if isinstance(entry.checkpoint_url, list)
+            else [entry.checkpoint_url]
+        )
+        expected = entry.sha256 if isinstance(entry.sha256, list) else [entry.sha256]
+
+        digests: list[str] = []
+        for url in urls:
+            dest = checkpoint_dir(entry.id) / _filename_for_url(url, entry.id)
+            print(f"Fetching {entry.id} -> {dest}", file=out)
+            downloader(url, dest)
+            digests.append(_sha256_file(dest))
 
         if pin:
-            results[entry.id] = digest
+            # Preserve the entry's shape: str hash for a str url, list for a list.
+            results[entry.id] = digests if isinstance(entry.checkpoint_url, list) else digests[0]
             continue
 
-        if digest != entry.sha256:
-            raise FetchModelsError(
-                f"{entry.id}: sha256 mismatch for {dest}. Expected {entry.sha256}, got "
-                f"{digest}. The checkpoint may be corrupted or the upstream file changed — "
-                "delete it and re-run, or re-pin if the upstream release genuinely moved."
-            )
+        for url, digest, want in zip(urls, digests, expected, strict=True):
+            if digest != want:
+                raise FetchModelsError(
+                    f"{entry.id}: sha256 mismatch for {url}. Expected {want}, got {digest}. "
+                    "The checkpoint may be corrupted or the upstream file changed — delete it "
+                    "and re-run, or re-pin if the upstream release genuinely moved."
+                )
         results[entry.id] = "verified"
 
     return results

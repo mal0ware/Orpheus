@@ -19,7 +19,7 @@ import threading
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from orpheus_mcp.analysis.config import CFG
 
@@ -61,14 +61,42 @@ class ModelEntry(BaseModel):
     task: Task
     targets: list[str]
     engine: Engine
-    checkpoint_url: str | None
-    sha256: str | None  # None until pinned; loader REJECTS None outside pin mode
+    # A checkpoint may be a single file (str) OR a bag-of-models (list[str], e.g. htdemucs-ft's
+    # 4 upstream .th files). ``sha256`` mirrors the shape positionally: a str hash for a str url,
+    # a list of hashes for a list of urls (same length, same order). None on either => unpinned.
+    checkpoint_url: str | list[str] | None
+    sha256: str | list[str] | None  # None until pinned; loader REJECTS None outside pin mode
     vram_gb: float
     rt_factor: float | None
     benchmark: str | None
     license: str
     rank: int
     tagger_classes: list[str]  # empty => bleed/exposure gates N/A for this entry (§4)
+
+    @model_validator(mode="after")
+    def _url_hash_shapes_agree(self) -> ModelEntry:
+        """A list ``checkpoint_url`` requires a list ``sha256`` of equal length (once pinned).
+
+        Positional matching is the whole contract of the bag-of-models shape, so a str url with
+        a list hash (or vice-versa), or length-mismatched lists, is a registry bug — reject it
+        at parse time rather than silently mis-verify a checkpoint. An unpinned ``sha256`` (None)
+        is always allowed regardless of the url shape.
+        """
+        if self.sha256 is None:
+            return self
+        url_is_list = isinstance(self.checkpoint_url, list)
+        hash_is_list = isinstance(self.sha256, list)
+        if url_is_list != hash_is_list:
+            raise ValueError(
+                f"{self.id}: checkpoint_url and sha256 must have the same shape "
+                "(both str or both list), positionally matched."
+            )
+        if url_is_list and len(self.checkpoint_url) != len(self.sha256):  # type: ignore[arg-type]
+            raise ValueError(
+                f"{self.id}: checkpoint_url has {len(self.checkpoint_url)} entries but "  # type: ignore[arg-type]
+                f"sha256 has {len(self.sha256)} — they must match positionally."  # type: ignore[arg-type]
+            )
+        return self
 
 
 def registry_path() -> Path:

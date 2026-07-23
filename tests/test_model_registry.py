@@ -54,15 +54,45 @@ def test_chord_model_lane_rank_order():
     assert entries["chord/musicxlab-ismir2019"].rank == 2
 
 
-def test_load_registry_rejects_unpinned_checkpoints_by_default():
+def test_load_registry_rejects_unpinned_checkpoints_by_default(tmp_path, monkeypatch):
+    # Post-0.3 the seed is fully pinned, so exercise the rejection on a controlled unpinned entry.
+    import json
+
+    from orpheus_mcp.analysis import model_registry as mr
+
+    path = tmp_path / "registry.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "unpinned/thing",
+                    "task": "single-target",
+                    "targets": ["vocals"],
+                    "engine": "audio-separator",
+                    "checkpoint_url": "https://h/a.ckpt",
+                    "sha256": None,
+                    "vram_gb": 1.0,
+                    "rt_factor": None,
+                    "benchmark": None,
+                    "license": "MIT",
+                    "rank": 1,
+                    "tagger_classes": [],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mr, "registry_path", lambda: path)
     with pytest.raises(RegistryError):
         load_registry(allow_unpinned=False)
+    # allow_unpinned=True tolerates the same registry.
+    assert load_registry(allow_unpinned=True)[0].sha256 is None
 
 
-def test_load_registry_allows_unpinned_when_asked():
-    entries = load_registry(allow_unpinned=True)
-    # The seed JSON is genuinely unpinned pre-0.3 — every downloadable entry has sha256=None.
-    assert any(e.sha256 is None for e in entries)
+def test_seed_registry_is_fully_pinned():
+    # Task 0.3 pinned every downloadable checkpoint — the strict load now succeeds.
+    entries = load_registry(allow_unpinned=False)
+    assert all(e.sha256 is not None for e in entries if e.checkpoint_url is not None)
 
 
 def test_resolve_multi_stem_vocals_filters_over_vram_budget():
