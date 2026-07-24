@@ -18,25 +18,9 @@ The env is created ONCE at install time. ``analysis/transcribe_cli.py``'s ``tran
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
-
-def transcribe_env_dir() -> Path:
-    """Location of the isolated basic-pitch env: ``~/.orpheus_transcribe_env``."""
-    return Path.home() / ".orpheus_transcribe_env"
-
-
-def transcribe_env_cli() -> Path:
-    """Path to the ``basic-pitch`` console script inside the isolated env.
-
-    Windows lays console scripts under ``Scripts/`` with a ``.exe`` suffix; POSIX uses
-    ``bin/``. Returns the expected path whether or not it exists yet (callers check).
-    """
-    root = transcribe_env_dir()
-    if sys.platform == "win32":
-        return root / "Scripts" / "basic-pitch.exe"
-    return root / "bin" / "basic-pitch"
+from orpheus_mcp.analysis.transcribe_cli import transcribe_env_cli, transcribe_env_dir
 
 
 def setup() -> Path:

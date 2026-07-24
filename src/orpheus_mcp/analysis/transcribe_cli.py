@@ -17,12 +17,34 @@ from __future__ import annotations
 import csv
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from scripts.setup_transcribe_env import transcribe_env_cli
+__all__ = [
+    "NoteEvent",
+    "TranscribeEnvMissing",
+    "transcribe",
+    "transcribe_env_dir",
+    "transcribe_env_cli",
+]
 
-__all__ = ["NoteEvent", "TranscribeEnvMissing", "transcribe"]
+
+def transcribe_env_dir() -> Path:
+    """Location of the isolated basic-pitch env: ``~/.orpheus_transcribe_env``."""
+    return Path.home() / ".orpheus_transcribe_env"
+
+
+def transcribe_env_cli() -> Path:
+    """Path to the ``basic-pitch`` console script inside the isolated env.
+
+    Windows lays console scripts under ``Scripts/`` with a ``.exe`` suffix; POSIX uses
+    ``bin/``. Returns the expected path whether or not it exists yet (callers check).
+    """
+    root = transcribe_env_dir()
+    if sys.platform == "win32":
+        return root / "Scripts" / "basic-pitch.exe"
+    return root / "bin" / "basic-pitch"
 
 
 class TranscribeEnvMissing(Exception):
@@ -69,7 +91,7 @@ def _parse_note_events_csv(text: str) -> list[NoteEvent]:
             pitch_midi = int(row[2])
             velocity = int(row[3])
             pitch_bend = [int(v) for v in row[4:]] if len(row) > 4 else None
-        except (TypeError, ValueError):
+        except ValueError:
             malformed += 1
             continue
         events.append(NoteEvent(start_time_s, end_time_s, pitch_midi, velocity, pitch_bend))
