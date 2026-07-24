@@ -212,7 +212,12 @@ def test_load_overrides_applies_only_cal_fields(tmp_path: Path, cfg_cal_snapshot
     f = tmp_path / "calibrated_thresholds.json"
     f.write_text(json.dumps(payload), encoding="utf-8")
 
-    applied = config.load_calibration_overrides(f)
+    # the two non-cal keys must each be warned about (drift observability) AND ignored;
+    # asserting the warnings also keeps pytest's summary pristine.
+    with pytest.warns(UserWarning) as caught:
+        applied = config.load_calibration_overrides(f)
+    warned = " ".join(str(w.message) for w in caught)
+    assert "KEY_WINDOW_BARS" in warned and "NOT_A_FIELD" in warned
     assert applied == ["GATE_BLEED_PASS"]
     assert pytest.approx(0.055) == CFG.GATE_BLEED_PASS
     assert CFG.KEY_WINDOW_BARS == 16  # untouched
