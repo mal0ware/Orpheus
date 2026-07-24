@@ -7,13 +7,15 @@ model weights in the CI-safe suite).
 from __future__ import annotations
 
 import math
+import sys
+import types
 from pathlib import Path
 
 import numpy as np
 import pytest
 import soundfile as sf
 
-from orpheus_mcp.analysis import cachefs
+from orpheus_mcp.analysis import cachefs, model_registry
 from orpheus_mcp.analysis.cachefs import CacheFS, decode
 from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.analysis.timeline import build_timeline, most_exposed_window, target_absent
@@ -277,6 +279,65 @@ async def test_instrument_timeline_not_registered_without_panns_or_torch(monkeyp
         tools = {t.name for t in await client.list_tools()}
     assert "instrument_timeline" not in tools
     assert "recon_reference" in tools  # category-level tool unaffected
+
+
+# --------------------------------------------------------------------------- #
+# PannsTagger: §15.5 GPU_SEMAPHORE serialization -- CI-safe, no real model/torch.
+# --------------------------------------------------------------------------- #
+
+
+def _assert_semaphore_held() -> None:
+    """Fails unless ``model_registry.GPU_SEMAPHORE`` is currently held by someone else --
+    a non-blocking acquire only SUCCEEDS when the single slot is free. If it does succeed
+    (bug: semaphore not actually held), release it immediately so the failing assertion
+    doesn't leave the process-wide semaphore permanently exhausted for later tests."""
+    acquired = model_registry.GPU_SEMAPHORE.acquire(blocking=False)
+    if acquired:
+        model_registry.GPU_SEMAPHORE.release()
+    assert not acquired, "GPU_SEMAPHORE (§15.5) was not held while this ran"
+
+
+def test_panns_tagger_activations_holds_gpu_semaphore_during_inference(tmp_path):
+    from orpheus_mcp.analysis.timeline import PannsTagger
+
+    class FakeSed:
+        def inference(self, audio_batch: np.ndarray) -> np.ndarray:
+            _assert_semaphore_held()
+            return np.zeros((1, 3, 2), dtype=np.float64)
+
+    tagger = PannsTagger()
+    # Pre-set `_sed` so `_load()` (called at the top of `activations()`) short-circuits on
+    # its `if self._sed is not None: return` guard -- no torch/panns_inference needed.
+    tagger._sed = FakeSed()
+    tagger._classes = ["a", "b"]
+
+    path = make_sine(tmp_path / "sine.wav", seconds=0.5)
+    pcm = decode(str(path))
+
+    raw = tagger.activations(pcm)
+    assert raw.shape == (3, 2)
+
+
+def test_panns_tagger_load_holds_gpu_semaphore_during_model_load(monkeypatch):
+    from orpheus_mcp.analysis import timeline as timeline_mod
+    from orpheus_mcp.analysis.timeline import PannsTagger
+
+    class FakeSoundEventDetection:
+        def __init__(self, *, checkpoint_path: str, device: str) -> None:
+            _assert_semaphore_held()
+
+    fake_panns_inference = types.SimpleNamespace(
+        SoundEventDetection=FakeSoundEventDetection,
+        config=types.SimpleNamespace(labels=["a", "b"]),
+    )
+    monkeypatch.setitem(sys.modules, "panns_inference", fake_panns_inference)
+    monkeypatch.setattr(timeline_mod, "_ensure_audioset_labels_csv", lambda: None)
+    monkeypatch.setattr(timeline_mod, "_panns_checkpoint_path", lambda: Path("fake-checkpoint.pth"))
+
+    tagger = PannsTagger()
+    tagger._load()
+
+    assert tagger._classes == ["a", "b"]
 
 
 # --------------------------------------------------------------------------- #

@@ -111,7 +111,8 @@ class PannsTagger:
             mono = librosa.resample(mono, orig_sr=pcm.sample_rate, target_sr=_PANNS_SR)
 
         audio_batch = mono[np.newaxis, :].astype(np.float32)
-        framewise_output = self._sed.inference(audio_batch)  # (1, frames, classes)
+        with model_registry.GPU_SEMAPHORE:  # §15.5: serialize ALL GPU inference calls
+            framewise_output = self._sed.inference(audio_batch)  # (1, frames, classes)
         return np.asarray(framewise_output[0], dtype=np.float64)
 
     def _load(self) -> None:
@@ -123,9 +124,10 @@ class PannsTagger:
         import panns_inference
 
         checkpoint_path = _panns_checkpoint_path()
-        self._sed = panns_inference.SoundEventDetection(
-            checkpoint_path=str(checkpoint_path), device="cuda"
-        )
+        with model_registry.GPU_SEMAPHORE:  # §15.5: serialize ALL GPU model loads
+            self._sed = panns_inference.SoundEventDetection(
+                checkpoint_path=str(checkpoint_path), device="cuda"
+            )
         self._classes = list(panns_inference.config.labels)
 
 
