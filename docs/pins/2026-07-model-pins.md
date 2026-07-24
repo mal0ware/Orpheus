@@ -77,3 +77,28 @@ The `TIMELINE_ACTIVITY_THRESHOLD` row carries the §3.1c absent-fire guard (a fi
 
 Caveat: the `GATE_MIX_RESIDUAL_PASS_DB` good/bad sample counts (80/64) include one shared per-separation mix-residual value fanned out across every target scored from that separation, not 80/64 independent measurements — a pseudo-replication caveat on that row's ROC-J read, not a correctness bug in the fit.
 
+## Fix wave 1: `lyrics/faster-whisper-large-v3` full CT2 snapshot
+
+Task 8.1's desktop ASR smoke found the registry's `lyrics/faster-whisper-large-v3` entry
+pinned only `model.bin` — the CT2 loader also needs `tokenizer.json`, `vocabulary.json`,
+`config.json`, and `preprocessor_config.json` from the same repo (`RuntimeError: Cannot load
+the vocabulary from the model directory` without them). Task 8.1 fetched the 4 sidecars ad
+hoc into `checkpoint_dir` to unblock its smoke run; this fix promotes that ad-hoc snapshot
+into the registry proper via the url-list schema (Task 0.3's `str | list` extension,
+positionally matched).
+
+| file | sha256 (full) |
+| --- | --- |
+| model.bin | `69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1` |
+| tokenizer.json | `6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca` |
+| vocabulary.json | `c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1` |
+| config.json | `a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9` |
+| preprocessor_config.json | `7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711` |
+
+All 5 hashes were computed from the files already resident in `checkpoint_dir` on the
+reference desktop box (they originated from Task 8.1's ad hoc pull off the same pinned HF
+repo, `Systran/faster-whisper-large-v3`) — no re-download was needed to record them. All 5
+`resolve/main/<file>` URLs were re-verified live (HTTP 200) before pinning. `fetch-models`
+(non-`--pin` mode) will now download-and-verify all 5 files for this entry instead of just
+`model.bin`, so a clean install produces a loadable CT2 snapshot without an ad hoc fetch.
+

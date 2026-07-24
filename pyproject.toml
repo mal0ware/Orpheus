@@ -45,6 +45,10 @@ separation = [
                                # HF-gated models. Pin run 0.3 verifies install needs no account.
     "stable-ts>=2.17",         # pinned fallback aligner (§14.1)
     "einops>=0.8", "omegaconf>=2.3",   # vendored MSST runtime deps (trim after 0.3 pin run)
+    "setuptools<81",           # ctranslate2 (a faster-whisper dep) still does `import
+                               # pkg_resources` at import time; setuptools 81 dropped it
+                               # (removed entirely in 83, see infra fix wave 1). Pin until
+                               # ctranslate2 ships a pkg_resources-free release.
 ]
 transcribe = ["basic-pitch>=0.3"]      # NOTE: installed only in the isolated ≤3.11 env (Task 0.5)
 dev = [

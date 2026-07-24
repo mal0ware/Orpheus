@@ -32,8 +32,11 @@ owns — never fetched from lyric services, never embedded into project files.
 from __future__ import annotations
 
 import math
+import os
+import sys
 from collections import Counter
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -146,6 +149,28 @@ def _flatten_clips(windows: list[Window]) -> list[float]:
     return clips
 
 
+def _register_torch_cuda_dll_dir() -> None:
+    """Windows-only: put torch's bundled cuDNN DLLs on the OS DLL search path.
+
+    ctranslate2's CUDA build dynamically loads ``cudnn_ops_infer64_8.dll`` (and its sibling
+    cuDNN 8 DLLs) via the OS loader at ``WhisperModel(...)`` construction time, but on
+    Windows nothing on a fresh venv ships them on system PATH — torch's own wheel bundles a
+    private copy under ``torch/lib`` that only torch's own DLL-search-path registration
+    covers. Since Python 3.8, ``PATH`` is no longer consulted for extension-module DLL
+    loads on Windows (:pep:`this changed` in CPython's ``os.add_dll_directory`` model), so
+    without an explicit registration ctranslate2 aborts with
+    ``Could not locate cudnn_ops_infer64_8.dll``. A no-op on non-Windows platforms (Linux
+    resolves shared libs via rpath/``LD_LIBRARY_PATH`` instead, which torch already sets up).
+    """
+    if sys.platform != "win32":
+        return
+    import torch
+
+    torch_lib_dir = Path(torch.__file__).parent / "lib"
+    if torch_lib_dir.is_dir():
+        os.add_dll_directory(str(torch_lib_dir))
+
+
 class FasterWhisperAsr:
     """The real §14.1 ASR engine: faster-whisper large-v3 (CTranslate2), ``int8_float16`` on
     CUDA / ``int8`` on CPU, ``word_timestamps=True``, run under ``GPU_SEMAPHORE`` (§15.5). The
@@ -191,6 +216,9 @@ class FasterWhisperAsr:
             cuda = False
         self._device = "cuda" if cuda else "cpu"
         self._compute_type = "int8_float16" if cuda else "int8"
+
+        if cuda:
+            _register_torch_cuda_dll_dir()  # Windows: cudnn_ops_infer64_8.dll et al.
 
         model_dir = self._checkpoint_dir()
         with model_registry.GPU_SEMAPHORE:  # §15.5: serialize ALL GPU model loads

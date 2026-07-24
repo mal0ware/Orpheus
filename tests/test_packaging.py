@@ -18,6 +18,9 @@ def test_extras_declared():
     # audio-separator lives in an ISOLATED env (D9) - its deps cap fastmcp<3.4
     assert not any(d.startswith("audio-separator") for d in extras["separation"])
     assert any(d.startswith("faster-whisper") for d in extras["separation"])
+    # ctranslate2 (a faster-whisper dep) still does `import pkg_resources` at import time;
+    # setuptools 81 dropped it (83 removed it outright) - pinned until ctranslate2 drops it.
+    assert any(d.startswith("setuptools<81") for d in extras["separation"])
 
 def test_markers_registered():
     ini = _pyproject()["tool"]["pytest"]["ini_options"]

@@ -10,6 +10,8 @@ faster-whisper end-to-end smoke is ``@pytest.mark.desktop @pytest.mark.gpu`` (bo
 from __future__ import annotations
 
 import math
+import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -332,6 +334,101 @@ def test_snap_to_recon_reads_lyric_section_snap_s(monkeypatch):
 
     assert start == pytest.approx(12.0)  # snapped to the recon edge, not left at raw 10.0
     assert end == pytest.approx(20.0)  # snapped to the recon edge, not left at raw 18.0
+
+
+# --------------------------------------------------------------------------- #
+# Windows cuDNN DLL search-path registration (infra fix wave 1). CI-safe: sys.platform and
+# os.add_dll_directory are both mocked, so this never depends on a real Windows DLL load.
+# --------------------------------------------------------------------------- #
+
+
+def test_register_torch_cuda_dll_dir_calls_add_dll_directory_on_win32(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from orpheus_mcp.analysis import lyrics
+
+    calls: list[str] = []
+    monkeypatch.setattr(lyrics.sys, "platform", "win32")
+    monkeypatch.setattr(lyrics.os, "add_dll_directory", calls.append, raising=False)
+
+    lyrics._register_torch_cuda_dll_dir()
+
+    expected = str(Path(torch.__file__).parent / "lib")
+    assert calls == [expected]
+
+
+def test_register_torch_cuda_dll_dir_noop_off_windows(monkeypatch):
+    pytest.importorskip("torch")
+    from orpheus_mcp.analysis import lyrics
+
+    calls: list[str] = []
+    monkeypatch.setattr(lyrics.sys, "platform", "linux")
+    monkeypatch.setattr(lyrics.os, "add_dll_directory", calls.append, raising=False)
+
+    lyrics._register_torch_cuda_dll_dir()
+
+    assert calls == []  # non-Windows: never touches the DLL search path
+
+
+def test_faster_whisper_asr_load_registers_dll_dir_before_model_on_cuda(monkeypatch, tmp_path):
+    """The actual §infra-fix-wave-1 wiring: ``FasterWhisperAsr._load`` must call the DLL-dir
+    registration BEFORE constructing ``WhisperModel`` whenever torch reports CUDA available
+    (``device == "cuda"``) — not just the helper in isolation."""
+    torch = pytest.importorskip("torch")
+    import orpheus_mcp.analysis.lyrics as lyrics_mod
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        lyrics_mod, "_register_torch_cuda_dll_dir", lambda: calls.append("called")
+    )
+
+    class _FakeModel:
+        def __init__(self, model_dir, device, compute_type):
+            self.model_dir = model_dir
+            self.device = device
+            self.compute_type = compute_type
+
+    fake_module = types.SimpleNamespace(WhisperModel=_FakeModel)
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
+
+    asr = lyrics_mod.FasterWhisperAsr()
+    monkeypatch.setattr(asr, "_checkpoint_dir", lambda: str(tmp_path))
+
+    asr._load()
+
+    assert calls == ["called"]  # registered
+    assert asr._device == "cuda"
+    assert isinstance(asr._model, _FakeModel)
+
+
+def test_faster_whisper_asr_load_skips_dll_registration_on_cpu(monkeypatch, tmp_path):
+    """No CUDA -> no DLL registration needed (device == "cpu"): the fix must not fire
+    unconditionally on every load, only on the CUDA path that actually needs the DLLs."""
+    torch = pytest.importorskip("torch")
+    import orpheus_mcp.analysis.lyrics as lyrics_mod
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        lyrics_mod, "_register_torch_cuda_dll_dir", lambda: calls.append("called")
+    )
+
+    class _FakeModel:
+        def __init__(self, model_dir, device, compute_type):
+            pass
+
+    fake_module = types.SimpleNamespace(WhisperModel=_FakeModel)
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
+
+    asr = lyrics_mod.FasterWhisperAsr()
+    monkeypatch.setattr(asr, "_checkpoint_dir", lambda: str(tmp_path))
+
+    asr._load()
+
+    assert calls == []
+    assert asr._device == "cpu"
 
 
 # --------------------------------------------------------------------------- #

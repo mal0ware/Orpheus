@@ -396,11 +396,23 @@
       "lyrics"
     ],
     "engine": "fasterwhisper",
-    "checkpoint_url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/model.bin",
-    "sha256": "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1",
+    "checkpoint_url": [
+      "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/model.bin",
+      "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/tokenizer.json",
+      "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/vocabulary.json",
+      "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/config.json",
+      "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/preprocessor_config.json"
+    ],
+    "sha256": [
+      "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1",
+      "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca",
+      "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+      "a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9",
+      "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711"
+    ],
     "vram_gb": 6.0,
     "rt_factor": null,
-    "benchmark": "faster-whisper large-v3 (CTranslate2, FP16), word timestamps. Verified: model.bin exists at this resolve URL (3.09 GB). NOTE: config.json/tokenizer.json/vocabulary.json sidecars from the same repo are also needed for real inference - Task 0.3's fetch/pin logic should snapshot the whole repo, not just this one file",
+    "benchmark": "faster-whisper large-v3 (CTranslate2, FP16), word timestamps. Full CT2 snapshot pinned (Task 8.1/infra fix wave 1): model.bin (3.09 GB) plus the tokenizer.json/vocabulary.json/config.json/preprocessor_config.json sidecars from the same Systran/faster-whisper-large-v3 repo - all 5 required for WhisperModel to load; hashes recorded from the files already present in checkpoint_dir (fetched ad hoc by Task 8.1's desktop smoke), positionally matched to the url list above",
     "license": "MIT",
     "rank": 1,
     "tagger_classes": []
