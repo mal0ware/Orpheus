@@ -17,7 +17,7 @@ import numpy as np
 import soundfile as sf
 
 from orpheus_mcp.analysis.cachefs import Pcm
-from orpheus_mcp.models import GateResult, GateSet, LyricWord, StemResult, Window
+from orpheus_mcp.models import ChordSegment, GateResult, GateSet, LyricWord, StemResult, Window
 
 if TYPE_CHECKING:
     from orpheus_mcp.analysis.model_registry import ModelEntry
@@ -227,6 +227,58 @@ class StubAsr:
         self.calls += 1
         self.received_windows = list(windows)
         return self.language, [w.model_copy() for w in self._words]
+
+
+def model_chord_segment(
+    root: str,
+    quality: str,
+    start_s: float,
+    end_s: float,
+    *,
+    extensions: Sequence[str] | None = None,
+    label: str | None = None,
+    confidence: float = 0.9,
+    produced_by: str = "btc",
+) -> ChordSegment:
+    """Build a time-based model-lane :class:`ChordSegment` (``start_beat``/``end_beat`` ``None``,
+    ``bass`` ``None`` per §13.1) for scripting :class:`StubChordModel` streams. ``label`` defaults
+    to a plain ``root + quality-suffix + extensions`` spelling, enough for the re-write tests."""
+    exts = list(extensions) if extensions is not None else []
+    if label is None:
+        suffixes = {"maj": "", "min": "m", "min7": "m7", "maj7": "maj7", "7": "7"}
+        suffix = suffixes.get(quality, quality)
+        label = "N" if quality == "N" else root + suffix + "".join(exts)
+    return ChordSegment(
+        start_beat=None,
+        end_beat=None,
+        start_s=start_s,
+        end_s=end_s,
+        root=root,
+        bass=None,
+        quality=quality,
+        extensions=exts,
+        label=label,
+        confidence=confidence,
+        produced_by=produced_by,
+    )
+
+
+class StubChordModel:
+    """A deterministic, no-weights ``ChordModel`` double (Task 9.1, §13 model lane).
+
+    ``predict`` returns a scripted, time-ordered list of :class:`ChordSegment`s (fresh copies
+    each call) regardless of the ``Pcm`` it is handed, and counts its calls (``self.calls``) so a
+    test can assert the model was (or was NOT) run. ``produced_by`` on the scripted segments is
+    what ``chord_lane_model`` stamps onto re-written baseline segments — default ``"btc"``, so the
+    rank-1 stub stands in for BTC and the re-write/disagreement assertions read the real tags."""
+
+    def __init__(self, segments: Sequence[ChordSegment]) -> None:
+        self._segments: list[ChordSegment] = list(segments)
+        self.calls = 0
+
+    def predict(self, pcm: Pcm) -> list[ChordSegment]:  # noqa: ARG002 - scripted, ignores audio
+        self.calls += 1
+        return [s.model_copy() for s in self._segments]
 
 
 class ScriptedGates:

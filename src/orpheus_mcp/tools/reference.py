@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import math
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -25,7 +24,6 @@ from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.analysis.separation import SeparationError
 from orpheus_mcp.analysis.separation import separate_region as _run_separation_core
 from orpheus_mcp.models import (
-    BeatGrid,
     ChordsLane,
     GateResult,
     GateSet,
@@ -40,6 +38,9 @@ from orpheus_mcp.models import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from orpheus_mcp.analysis.harmony import ChordModel
     from orpheus_mcp.analysis.lyrics import AsrEngine
     from orpheus_mcp.analysis.model_registry import ModelEntry
     from orpheus_mcp.analysis.separation import SeparatorEngine
@@ -175,63 +176,120 @@ def instrument_timeline(
     return timeline
 
 
-def _chords_meta(file: str) -> dict:
-    """The cache sidecar shape for kind ``"chords"``. ``produced_by`` is pinned to
-    ``"baseline"`` here (not derived per-segment) — this task only ships the §13 baseline
-    lane; a future model-lane rewrite (Phase 9) would need its own cache-key ingredient the
-    way ``instrument_timeline``'s ``tagger_id`` does, not a change to this constant."""
+def _chords_meta(file: str, produced_by: str) -> dict:
+    """The cache sidecar shape for kind ``"chords"``. ``produced_by`` names the lane that
+    produced the artifact — ``"baseline"`` for the always-available librosa lane, or the §13
+    model entry id (``"chord/btc-large-voca"``) when the model lane resolved and re-wrote the
+    baseline at T3. A model-lane result and a baseline result for the same audio must not
+    collide in the cache (a box that gains/loses the model, or swaps its checkpoint, must
+    re-compute), the same way ``instrument_timeline``'s ``tagger_id`` keys the timeline cache;
+    ``registry_version`` additionally busts on any checkpoint re-pin."""
     return {
         "schema_version": _CHORDS_SCHEMA_VERSION,
         "registry_version": cachefs.registry_version(),
         "verify_config_hash": cachefs.verify_config_hash(),
         "decoder": cachefs.decoder_for(file),
-        "produced_by": "baseline",
+        "produced_by": produced_by,
     }
 
 
-def _fixed_frame_grid(pcm: Pcm) -> BeatGrid:
-    """A synthetic one-window-per-second ``BeatGrid`` reproducing ``harmony.py``'s private
-    ``_fixed_window_chroma`` window boundaries (whole seconds, ``ceil(duration)`` windows) —
-    ``beat_chroma``/``bass_pc_lane`` only ever read ``grid.times_s`` as interval boundaries,
-    so this lets the §13.4 rubato fallback reuse the public beat-mode functions instead of
-    reaching into harmony.py's internals for a second, fixed-window chroma path."""
-    n_windows = max(1, math.ceil(pcm.duration_s))
-    return BeatGrid(
-        times_s=[float(i) for i in range(n_windows)],
-        downbeats_s=[],
-        meter=(4, 4),
-        confidence=0.0,
-        meter_confidence=0.0,
-        kind="fixed",
-    )
+_CHORD_TASK = "chord"
+_CHORD_TARGET = "chord"
 
 
-def _full_baseline_lane(pcm: Pcm, recon: Recon) -> ChordsLane:
-    """The §13 fully-refined baseline lane. ``harmony.py`` (Task 3.1) ships the recognizer
-    and each refinement layer as standalone functions with no compose entry point — this is
-    the one place that chains them in the documented order (§13 output schema) so
-    ``bass``/``extensions``/``roman``/``key_context`` come back populated instead of at the
-    raw recognizer's defaults: templates+Viterbi (``chord_lane_baseline``) -> §13.3
-    extensions -> §13.2 bass-informed slash -> §13.4 theory (local key + Roman numerals)."""
-    from orpheus_mcp.analysis.harmony import (
-        bass_pc_lane,
-        beat_chroma,
-        chord_lane_baseline,
-        detect_slash,
-        refine_extensions,
-        theory_layer,
-    )
+def _btc_checkpoint_path(entry: ModelEntry) -> Path | None:
+    """The local path the ``btc`` checkpoint lands at (``fetch-models``), or ``None`` for an
+    entry with no single-file ``checkpoint_url`` — a cheap file-stat probe (no torch load) so
+    ``_resolve_chord_model_entry`` can gate on checkpoint presence without paying to build the
+    model on a cache HIT."""
+    from orpheus_mcp.analysis.fetch_models import _filename_for_url
 
-    lane = chord_lane_baseline(pcm, recon)
-    frame_grid = recon.grid if lane.grid == "beat" else _fixed_frame_grid(pcm)
+    url = entry.checkpoint_url
+    if not isinstance(url, str):
+        return None
+    return model_registry.checkpoint_dir(entry.id) / _filename_for_url(url, entry.id)
 
-    chroma = beat_chroma(pcm, frame_grid, recon.tuning_offset_cents)
-    lane = refine_extensions(lane, chroma, recon.grid)
 
-    bass_pcs = bass_pc_lane(pcm, frame_grid)
-    lane = detect_slash(lane, bass_pcs)
+def _resolve_chord_model_entry() -> ModelEntry | None:
+    """The rank-1 §13 MODEL entry usable RIGHT NOW, or ``None`` (→ the baseline lane). This is
+    the "no phantom tier" gate (§13 placement): ``resolve`` already drops the internal baseline's
+    non-model peers by VRAM (BTC's 2 GB entry is excluded when ``free_vram_gb()`` is ``None`` — a
+    CPU-only box — leaving only the ``vram_gb==0`` internal baseline, which is NOT a model here)
+    and the no-engine rank-2 musicxlab entry (D12). We additionally require the checkpoint to be
+    present on disk, so a box that resolves to BTC but never fetched it degrades honestly to the
+    baseline rather than advertising a model tier it can't run."""
+    free = model_registry.free_vram_gb()
+    candidates = model_registry.resolve(_CHORD_TASK, _CHORD_TARGET, vram_free_gb=free)
+    for entry in candidates:  # rank order
+        if entry.engine == "internal":
+            continue  # the baseline lane, not a model tier
+        if entry.engine == "btc":
+            ckpt = _btc_checkpoint_path(entry)
+            if ckpt is not None and ckpt.is_file():
+                return entry
+    return None
 
-    return theory_layer(lane, recon.grid)
+
+def _build_chord_models(entry: ModelEntry) -> list[ChordModel]:
+    """Construct the model-lane recognizers for ``entry`` (rank-1 first). Only ``btc`` is
+    buildable today (rank-2 ``musicxlab`` is a no-engine skeleton, D12 — its cross-check runs
+    against a scripted stub, never a fabricated checkpoint), so this returns ``[BtcChordModel]``
+    or ``[]`` on any load failure (degrading to the baseline the caller already holds). Building
+    a model LOADS torch + the checkpoint, so this is only ever called on a cache MISS."""
+    from orpheus_mcp.analysis.harmony import BtcChordModel
+
+    if entry.engine != "btc":
+        return []
+    ckpt = _btc_checkpoint_path(entry)
+    if ckpt is None or not ckpt.is_file():
+        return []
+    try:
+        return [BtcChordModel(str(ckpt))]
+    except Exception:  # noqa: BLE001 - any torch/checkpoint load failure degrades to baseline
+        return []
+
+
+def _find_cached_bass_stem(fs: CacheFS, pcm_hash: str) -> str | None:
+    """A cached full-ish bass stem for this audio, or ``None`` (§13.2 preference). Searches the
+    §9 ``stems/<model-id>/<start_ms>-<end_ms>/bass.flac`` layout under this pcm-hash and prefers
+    the WIDEST region (a whole-song separation over a narrow region crop), so a chord lane that
+    covers the whole song refines its bass against the most-complete stem available."""
+    stems_root = fs.root / pcm_hash / "stems"
+    if not stems_root.is_dir():
+        return None
+    candidates = list(stems_root.rglob("bass.flac"))
+    if not candidates:
+        return None
+
+    def _region_span(p: Path) -> int:
+        try:
+            start_ms, end_ms = p.parent.name.split("-")
+            return int(end_ms) - int(start_ms)
+        except (ValueError, AttributeError):
+            return 0
+
+    candidates.sort(key=_region_span, reverse=True)
+    return str(candidates[0])
+
+
+def _bass_pc_lane_for(pcm: Pcm, recon: Recon, fs: CacheFS) -> list[int | None]:
+    """The §13.2 per-frame bass pitch-class lane, PREFERRING a cached bass STEM when a
+    separation exists (pYIN on the isolated bass is far cleaner than on the low-passed mix),
+    falling back to the low-passed-mix pYIN lane otherwise. The frame grid matches
+    ``compose_lane``'s (recon beat grid when confident, else fixed 1 s windows) so the returned
+    lane indexes align with the segments ``detect_slash`` refines."""
+    from orpheus_mcp.analysis.harmony import _fixed_frame_grid, bass_pc_lane
+
+    confident = recon.grid.confidence >= CFG.BEAT_GRID_CONFIDENCE_MIN
+    frame_grid = recon.grid if confident else _fixed_frame_grid(pcm)
+
+    stem_path = _find_cached_bass_stem(fs, pcm.pcm_hash)
+    if stem_path is not None:
+        try:
+            return bass_pc_lane(cachefs.decode(stem_path), frame_grid)  # STEM preferred (§13.2)
+        except cachefs.DecodeError:
+            pass  # a corrupt/unreadable cached stem falls through to the mix lane
+    return bass_pc_lane(pcm, frame_grid)  # the no-separation low-passed-mix path
 
 
 def _clamp_region(region: Window, duration_s: float) -> tuple[float, float]:
@@ -254,20 +312,41 @@ def _filter_lane_to_region(lane: ChordsLane, region: Window, duration_s: float) 
 
 
 def get_chords(
-    file: str, region: Window | None = None, *, cache: CacheFS | None = None
+    file: str,
+    region: Window | None = None,
+    *,
+    cache: CacheFS | None = None,
+    models: Sequence[ChordModel] | None = None,
 ) -> ChordsLane:
-    """Decode ``file``, compute the full §13 baseline chord lane (recognizer + extensions +
-    slash + theory), and cache the WHOLE-SONG lane under kind ``"chords"`` (keyed by the
-    decoded-PCM hash + this artifact's meta shape). A cache HIT never re-decodes or
-    re-computes the lane (§9 T0); recon is reused via the shared ``_recon_read_through``
-    read-through so a recon already cached by ``recon_reference`` is never recomputed.
+    """Decode ``file``, compute the full §13 chord lane (recognizer + extensions + [T3 model
+    re-write] + slash + theory via ``harmony.compose_lane``), and cache the WHOLE-SONG lane
+    under kind ``"chords"`` (keyed by the decoded-PCM hash + this artifact's meta shape, which
+    includes the producing lane's identity). A cache HIT never re-decodes or re-computes the
+    lane (§9 T0); recon is reused via the shared ``_recon_read_through`` read-through so a recon
+    already cached by ``recon_reference`` is never recomputed.
+
+    The §13 MODEL lane (vendored BTC) engages automatically at T3 when the registry resolves a
+    runnable chord model for this box (CUDA + VRAM + the checkpoint fetched — see
+    ``_resolve_chord_model_entry``); otherwise the always-available baseline lane is returned,
+    with no phantom model tier (§13 placement). The §13.2 slash step prefers a cached bass STEM
+    when one exists. ``models`` is a test seam (an explicit sequence of ``ChordModel``s bypassing
+    registry resolution); production callers leave it ``None``.
 
     ``region``, if given, filters the (cached or freshly computed) lane to segments
     overlapping ``[region.start_s, min(region.end_s, duration)]`` — clamped per §3.1d —
     AFTER the cache read/write, so the cache always holds the whole song."""
+    from orpheus_mcp.analysis.harmony import compose_lane
+
     fs = cache if cache is not None else CacheFS()
     file_hash = cachefs.pcm_hash(file)
-    meta = _chords_meta(file)
+
+    if models is not None:
+        entry = None
+        produced_by = "model:injected"
+    else:
+        entry = _resolve_chord_model_entry()
+        produced_by = entry.id if entry is not None else "baseline"
+    meta = _chords_meta(file, produced_by)
 
     duration_s: float | None
     hit = fs.read_json(file_hash, _CHORDS_KIND, meta=meta)
@@ -277,7 +356,13 @@ def get_chords(
     else:
         pcm = cachefs.decode(file)
         recon, _ = _recon_read_through(file, fs, pcm=pcm)
-        lane = _full_baseline_lane(pcm, recon)
+        chord_models = (
+            list(models)
+            if models is not None
+            else (_build_chord_models(entry) if entry is not None else [])
+        )
+        bass_pc = _bass_pc_lane_for(pcm, recon, fs)
+        lane = compose_lane(pcm, recon, models=chord_models or None, bass_pc=bass_pc)
         fs.write_json(file_hash, _CHORDS_KIND, lane.model_dump(mode="json"), meta=meta)
         duration_s = recon.duration_s
 

@@ -371,6 +371,8 @@
     "benchmark": "music-x-lab ISMIR2019 large-vocabulary chord transcription via chord structure decomposition (extensions + inversions). checkpoint_url intentionally null: the repo ships no in-repo checkpoint; the only Google Drive link found in the README is explicitly the 'with label reweighting' variant, not confidently this entry's default - needs verification at Task 9.1's pin run",
     "license": "MIT",
     "rank": 2,
+    "engine_status": "no-engine",
+    "engine_status_note": "Task 9.1 pin run: no pinnable, no-auth checkpoint exists for this entry (checkpoint_url stays null - the only upstream Google Drive link is the 'with label reweighting' variant, not confidently this default; cannot be sha256-pinned). MusicXLabChordModel is implemented as a ChordModel-protocol SKELETON (analysis/harmony.py) so the rank-2 cross-check seam is real the day a checkpoint is pinned; resolve() skips this entry until then (D12 precedent), and the §13 disagreement path is exercised by a scripted stub, never a fabricated checkpoint.",
     "tagger_classes": []
   },
   {

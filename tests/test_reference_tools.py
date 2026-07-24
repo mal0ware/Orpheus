@@ -1,7 +1,9 @@
-"""``tools/reference.py``'s ``get_chords`` (Task 3.2, §13/§9): the read-through ``"chords"``
-cache over the full baseline lane (``harmony.py``'s recognizer + §13.3 extensions + §13.2
-slash + §13.4 theory, composed by ``_full_baseline_lane`` since ``harmony.py`` ships no single
-compose entry point), plus the post-cache region filter (§3.1d clamping).
+"""``tools/reference.py``'s ``get_chords`` (Task 3.2/9.1, §13/§9): the read-through ``"chords"``
+cache over the full chord lane (``harmony.compose_lane`` — recognizer + §13.3 extensions +
+[§13 T3 model re-write] + §13.2 slash + §13.4 theory), plus the post-cache region filter (§3.1d
+clamping). The §13 model lane and its bass-STEM slash preference are covered in
+``test_harmony_models.py``; these tests force the CPU-only baseline path where the lane identity
+matters.
 
 Contract tests run through an in-memory FastMCP ``Client`` (``tests/test_m2_tools.py``'s
 pattern); the compute-count / cache-sharing assertions call ``get_chords``/``recon_reference``
@@ -82,14 +84,17 @@ def fs(tmp_path) -> CacheFS:
 
 
 def test_full_lane_fetch_computes_once_then_cache_hits(audio_path, fs, monkeypatch):
+    from orpheus_mcp.analysis import harmony
+
     calls = {"n": 0}
-    real = reference_tools._full_baseline_lane
+    real = harmony.compose_lane
 
-    def counted(pcm, recon):
+    def counted(pcm, recon, **kwargs):
         calls["n"] += 1
-        return real(pcm, recon)
+        return real(pcm, recon, **kwargs)
 
-    monkeypatch.setattr(reference_tools, "_full_baseline_lane", counted)
+    # get_chords imports compose_lane from harmony at call time, so patch it at the source.
+    monkeypatch.setattr(harmony, "compose_lane", counted)
 
     first = get_chords(str(audio_path), cache=fs)
     assert calls["n"] == 1
@@ -189,7 +194,11 @@ def test_get_chords_reuses_recon_already_cached_by_recon_reference(audio_path, f
     assert lane.segments
 
 
-def test_chords_meta_sidecar_records_produced_by_baseline(audio_path, fs):
+def test_chords_meta_sidecar_records_produced_by_baseline(audio_path, fs, monkeypatch):
+    # Force the CPU-only path (no chord model resolves) so the baseline lane is deterministic
+    # regardless of the box: on a CUDA box with the BTC checkpoint fetched, get_chords would
+    # otherwise engage the §13 model lane and key the sidecar under the model entry id.
+    monkeypatch.setattr(model_registry, "free_vram_gb", lambda: None)
     get_chords(str(audio_path), cache=fs)
 
     file_hash = cachefs.pcm_hash(str(audio_path))

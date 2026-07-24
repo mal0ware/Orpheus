@@ -21,12 +21,17 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
 from orpheus_mcp.analysis.cachefs import Pcm
 from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.models import BeatGrid, ChordSegment, ChordsLane, Recon
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
 
 _EPS = 1e-9
 
@@ -588,3 +593,273 @@ def _roman(seg: ChordSegment, key: tuple[str, str]) -> str | None:
         return str(rn.figure)
     except Exception:
         return None
+
+
+# --------------------------------------------------------------------------- #
+# §13 MODEL lane — the ChordModel protocol, the vendored BTC + rank-2 musicxlab
+# adapters, the T3 baseline re-write, and the single ``compose_lane`` entry point both
+# the baseline and model paths share.
+# --------------------------------------------------------------------------- #
+
+
+class ChordModel(Protocol):
+    """Structural contract every §13 model-lane recognizer satisfies. ``predict`` reads a
+    decoded ``Pcm`` and returns time-based :class:`ChordSegment`s on the MODEL's own frame grid
+    (``start_beat``/``end_beat`` ``None`` — a model lane is not beat-synchronous; ``compose_lane``
+    re-writes the beat-aligned baseline segments FROM these). ``produced_by`` on each segment
+    names the model (``"btc"`` for BTC); ``bass`` is ``None`` (§13.1: BTC has no bass head — the
+    slash comes from ``compose_lane``'s §13.2 bass refinement, never the model)."""
+
+    def predict(self, pcm: Pcm) -> list[ChordSegment]:
+        """Model chord segments for ``pcm``, in time order, on the model's own frame grid."""
+        ...
+
+
+# §13.1 mapping table (Task 9.1): BTC's 14-quality large vocabulary → our (base quality,
+# extensions). The base quality ALWAYS stays inside harmony's 9-quality set (so
+# ``_QUALITY_INTERVALS`` / ``detect_slash`` / ``theory_layer`` keep working); the extension
+# strings compose cleanly through ``_compose_label`` (e.g. ``("dim", ["7"])`` → ``"Cdim7"``,
+# ``("min7", ["b5"])`` → ``"Cm7b5"``). Exhaustively covered by a test — every one of BTC's 14
+# qualities has a row here, none guessed at a call site.
+_BTC_QUALITY_MAP: dict[str, tuple[str, tuple[str, ...]]] = {
+    "maj": ("maj", ()),
+    "min": ("min", ()),
+    "dim": ("dim", ()),
+    "aug": ("aug", ()),
+    "maj6": ("maj", ("6",)),
+    "min6": ("min", ("6",)),
+    "maj7": ("maj7", ()),
+    "min7": ("min7", ()),
+    "7": ("7", ()),
+    "dim7": ("dim", ("7",)),  # composes to "…dim7"
+    "hdim7": ("min7", ("b5",)),  # half-diminished == m7♭5 → "…m7b5"
+    "minmaj7": ("min", ("maj7",)),  # minor-major seventh → "…mmaj7"
+    "sus2": ("sus2", ()),
+    "sus4": ("sus4", ()),
+}
+
+
+def _parse_btc_label(voca: str) -> tuple[str, str, list[str]]:
+    """Parse one upstream BTC voca-chord label (``"C:min7"``, bare ``"C"`` for maj, ``"N"``,
+    ``"X"``) into our ``(root, quality, extensions)``. ``"N"`` (no chord) and ``"X"`` (unknown)
+    both map to the no-chord reading ``("N", "N", [])`` — an ``"X"`` frame is not a confident
+    chord, so the re-write step leaves the baseline in place under it."""
+    if voca in ("N", "X"):
+        return "N", "N", []
+    root, _, quality_token = voca.partition(":")
+    quality_token = quality_token or "maj"
+    quality, extensions = _BTC_QUALITY_MAP[quality_token]
+    return root, quality, list(extensions)
+
+
+def _segments_from_btc(
+    idx: np.ndarray, prob: np.ndarray, feature_per_second: float, vocab: list[str]
+) -> list[ChordSegment]:
+    """Collapse BTC's per-frame ``(idx, prob)`` stream into time-based ``ChordSegment``s
+    (``produced_by="btc"``, ``start_beat``/``end_beat`` ``None``, ``bass`` ``None``).
+    Confidence is the mean per-frame max-softmax over the segment's frames."""
+    segments: list[ChordSegment] = []
+    n = len(idx)
+    i = 0
+    while i < n:
+        j = i
+        while j < n and idx[j] == idx[i]:
+            j += 1
+        root, quality, extensions = _parse_btc_label(vocab[int(idx[i])])
+        confidence = float(np.clip(np.mean(prob[i:j]), 0.0, 1.0)) if j > i else 0.0
+        segments.append(
+            ChordSegment(
+                start_beat=None,
+                end_beat=None,
+                start_s=float(i) * feature_per_second,
+                end_s=float(j) * feature_per_second,
+                root=root,
+                bass=None,
+                quality=quality,
+                extensions=extensions,
+                label=_compose_label(root, quality, extensions, None),
+                confidence=confidence,
+                produced_by="btc",
+            )
+        )
+        i = j
+    return segments
+
+
+class BtcChordModel:
+    """The rank-1 §13 model lane: the vendored BTC large-voca transformer
+    (``chord/btc-large-voca``). Loads the hash-pinned checkpoint once at construction; ``predict``
+    resamples ``pcm`` to BTC's native 22050 Hz mono, extracts the log-magnitude CQT features, runs
+    the self-attention stack, and maps the 170-class output into ``ChordSegment``s (NO bass, §13.1).
+    Runs on CUDA when available, CPU otherwise (``device`` override for tests)."""
+
+    def __init__(self, checkpoint_path: str | Path, *, device: str | None = None) -> None:
+        from orpheus_mcp._vendor.btc import inference as btc_inference
+
+        self._inference = btc_inference
+        self._model, self._mean, self._std, self._device = btc_inference.load_btc(
+            checkpoint_path, device=device
+        )
+        self._vocab = btc_inference.idx_to_voca()
+
+    def predict(self, pcm: Pcm) -> list[ChordSegment]:
+        import librosa
+
+        mono = _to_mono(pcm.samples)
+        target_sr = self._inference.SONG_HZ
+        if pcm.sample_rate != target_sr:
+            mono = librosa.resample(mono, orig_sr=pcm.sample_rate, target_sr=target_sr)
+        features = self._inference.audio_to_features(mono)
+        idx, prob = self._inference.predict_frames(
+            self._model, self._mean, self._std, features, self._device
+        )
+        return _segments_from_btc(
+            idx, prob, self._inference.FEATURE_PER_SECOND, self._vocab
+        )
+
+
+class MusicXLabChordModel:
+    """The rank-2 §13 cross-check lane (``chord/musicxlab-ismir2019``): music-x-lab's ISMIR-2019
+    large-vocabulary recognizer (extensions + inversions native), used only to DISPUTE the rank-1
+    label (``compose_lane`` keeps the rank-1 reading and discounts its confidence on disagreement).
+
+    **Skeleton only (D12 / registry ``engine_status="no-engine"``).** The registry entry ships no
+    pinnable, no-auth checkpoint (``checkpoint_url`` is ``null`` — the only Drive link upstream is
+    the label-reweighting variant, not confidently this default; Task 0.2/9.1 pin runs could not
+    verify one), so there is no checkpoint to load and ``predict`` raises. The adapter exists so
+    the cross-check seam is real the day a checkpoint is pinned; until then the disagreement path
+    is exercised by a scripted stub model, never a fabricated checkpoint."""
+
+    def __init__(
+        self, checkpoint_path: str | Path | None = None, *, device: str | None = None
+    ) -> None:
+        self._checkpoint_path = checkpoint_path
+        self._device = device
+
+    def predict(self, pcm: Pcm) -> list[ChordSegment]:
+        raise NotImplementedError(
+            "MusicXLabChordModel is a skeleton: the chord/musicxlab-ismir2019 registry entry has "
+            "no pinnable checkpoint (engine_status='no-engine'). Pin a checkpoint before use; the "
+            "rank-2 cross-check runs against a scripted stub in the meantime (Task 9.1 / D12)."
+        )
+
+
+def _dominant_model_segment(
+    model_segments: Sequence[ChordSegment], start_s: float, end_s: float
+) -> ChordSegment | None:
+    """The model segment overlapping ``[start_s, end_s)`` by the most time (its label is the
+    model's reading for that span), or ``None`` if no model segment overlaps at all."""
+    best: ChordSegment | None = None
+    best_overlap = 0.0
+    for seg in model_segments:
+        overlap = min(seg.end_s, end_s) - max(seg.start_s, start_s)
+        if overlap > best_overlap:
+            best_overlap, best = overlap, seg
+    return best
+
+
+def _same_chord(a: ChordSegment, b: ChordSegment) -> bool:
+    return (a.root, a.quality, tuple(a.extensions)) == (b.root, b.quality, tuple(b.extensions))
+
+
+def chord_lane_model(
+    lane: ChordsLane, models: Sequence[ChordModel], pcm: Pcm
+) -> ChordsLane:
+    """§13 T3 re-write: the rank-1 model's reading REPLACES each baseline segment's label over
+    its span (``produced_by="btc"``, the model's confidence — higher than the baseline's). The
+    baseline segmentation (beat-aligned) is preserved so the §13.2/§13.4 layers still ride on the
+    beat grid; only the (root, quality, extensions, label, confidence, produced_by) fields move.
+
+    A baseline segment is left UNTOUCHED where the rank-1 model has no confident chord (no
+    overlapping segment, or a no-chord ``"N"`` reading) — the always-available baseline is the
+    correctness floor the model only ever UPGRADES, never erases (so a model that reads silence/N
+    under a decaying chord can't blank the lane).
+
+    With a rank-2 model present, each re-written span is cross-checked: when rank-2's dominant
+    reading disagrees with rank-1's, the rank-1 label is KEPT but its confidence is scaled by 0.7
+    and ``produced_by`` becomes ``"<producer>+disputed"`` (the disagreement is surfaced, never
+    silently resolved). ``models`` is rank-ordered (``models[0]`` rank-1); an empty list returns
+    ``lane`` unchanged."""
+    if not models:
+        return lane
+
+    primary = models[0].predict(pcm)
+    secondary = models[1].predict(pcm) if len(models) > 1 else None
+
+    out: list[ChordSegment] = []
+    for seg in lane.segments:
+        dom = _dominant_model_segment(primary, seg.start_s, seg.end_s)
+        if dom is None or dom.quality == "N":
+            out.append(seg.model_copy())
+            continue
+
+        produced_by = dom.produced_by
+        confidence = dom.confidence
+        if secondary is not None:
+            dom2 = _dominant_model_segment(secondary, seg.start_s, seg.end_s)
+            if dom2 is not None and dom2.quality != "N" and not _same_chord(dom, dom2):
+                produced_by = f"{dom.produced_by}+disputed"
+                confidence *= 0.7
+
+        out.append(
+            seg.model_copy(
+                update={
+                    "root": dom.root,
+                    "bass": None,  # §13.1: the model carries no bass — slash comes from §13.2
+                    "quality": dom.quality,
+                    "extensions": list(dom.extensions),
+                    "label": _compose_label(dom.root, dom.quality, list(dom.extensions), None),
+                    "confidence": float(np.clip(confidence, 0.0, 1.0)),
+                    "produced_by": produced_by,
+                }
+            )
+        )
+    return ChordsLane(grid=lane.grid, segments=out)
+
+
+def _fixed_frame_grid(pcm: Pcm) -> BeatGrid:
+    """A synthetic one-window-per-second ``BeatGrid`` reproducing ``_fixed_window_chroma``'s
+    window boundaries (whole seconds, ``ceil(duration)`` windows). ``beat_chroma`` /
+    ``bass_pc_lane`` read only ``grid.times_s`` as interval boundaries, so this lets the §13.4
+    rubato fallback reuse the public beat-mode functions instead of a second chroma path."""
+    n_windows = max(1, math.ceil(pcm.duration_s))
+    return BeatGrid(
+        times_s=[float(i) for i in range(n_windows)],
+        downbeats_s=[],
+        meter=(4, 4),
+        confidence=0.0,
+        meter_confidence=0.0,
+        kind="fixed",
+    )
+
+
+def compose_lane(
+    pcm: Pcm,
+    recon: Recon,
+    *,
+    models: Sequence[ChordModel] | None = None,
+    bass_pc: list[int | None] | None = None,
+) -> ChordsLane:
+    """The single §13 compose entry both the baseline and model paths share (promoted from
+    ``tools/reference.py``'s ``_full_baseline_lane`` now the model lane has landed). Chains the
+    documented §13 order: recognizer (``chord_lane_baseline``) → §13.3 extensions → §13 T3 model
+    re-write (``chord_lane_model``, when ``models`` are supplied) → §13.2 bass-informed slash →
+    §13.4 theory (local key + Roman numerals).
+
+    ``models`` (rank-ordered) enables the model lane; ``None``/empty leaves the always-available
+    baseline lane (``produced_by="baseline"``). ``bass_pc`` is the per-frame bass pitch-class lane
+    for the §13.2 slash step — the caller passes the bass-STEM-derived lane when a separation
+    exists (§13.2 preference), and ``None`` falls back to the low-passed-mix pYIN lane here."""
+    lane = chord_lane_baseline(pcm, recon)
+    frame_grid = recon.grid if lane.grid == "beat" else _fixed_frame_grid(pcm)
+
+    chroma = beat_chroma(pcm, frame_grid, recon.tuning_offset_cents)
+    lane = refine_extensions(lane, chroma, recon.grid)
+
+    if models:
+        lane = chord_lane_model(lane, models, pcm)
+
+    bass_pcs = bass_pc if bass_pc is not None else bass_pc_lane(pcm, frame_grid)
+    lane = detect_slash(lane, bass_pcs)
+
+    return theory_layer(lane, recon.grid)

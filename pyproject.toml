@@ -80,6 +80,8 @@ packages = ["src/orpheus_mcp"]
 # Vendored MSST SCNet ships its runtime config + upstream LICENSE (non-.py, not auto-included).
 "src/orpheus_mcp/_vendor/msst/config_scnet_large.yaml" = "orpheus_mcp/_vendor/msst/config_scnet_large.yaml"
 "src/orpheus_mcp/_vendor/msst/LICENSE" = "orpheus_mcp/_vendor/msst/LICENSE"
+# Vendored BTC-ISMIR19 chord model ships its upstream LICENSE (non-.py, not auto-included).
+"src/orpheus_mcp/_vendor/btc/LICENSE" = "orpheus_mcp/_vendor/btc/LICENSE"
 
 [tool.uv]
 # Without this, the resolver picks numpy 2.5 and then backtracks numba all the way to
@@ -112,7 +114,13 @@ target-version = "py311"
 src = ["src", "tests"]
 # Vendored upstream MSST model code (scnet.py / separation.py) is verbatim third-party and
 # not held to our lint rules; our own inference.py in the same dir IS linted (see per-file below).
-extend-exclude = ["src/orpheus_mcp/_vendor/msst/scnet.py", "src/orpheus_mcp/_vendor/msst/separation.py"]
+extend-exclude = [
+    "src/orpheus_mcp/_vendor/msst/scnet.py",
+    "src/orpheus_mcp/_vendor/msst/separation.py",
+    # Vendored BTC-ISMIR19 model code (verbatim upstream, one numpy-2 fix) — not held to our lint.
+    "src/orpheus_mcp/_vendor/btc/btc_model.py",
+    "src/orpheus_mcp/_vendor/btc/transformer_modules.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
