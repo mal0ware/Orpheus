@@ -22,7 +22,16 @@ from orpheus_mcp.analysis import cachefs, model_registry
 from orpheus_mcp.analysis.cachefs import CacheFS, Pcm
 from orpheus_mcp.analysis.separation import SeparationError
 from orpheus_mcp.analysis.separation import separate_region as _run_separation_core
-from orpheus_mcp.models import BeatGrid, ChordsLane, GateSet, Recon, StemResult, Timeline, Window
+from orpheus_mcp.models import (
+    BeatGrid,
+    ChordsLane,
+    GateResult,
+    GateSet,
+    Recon,
+    StemResult,
+    Timeline,
+    Window,
+)
 
 if TYPE_CHECKING:
     from orpheus_mcp.analysis.model_registry import ModelEntry
@@ -34,6 +43,7 @@ __all__ = [
     "instrument_timeline",
     "get_chords",
     "separate_region",
+    "verify_stem",
     "register",
 ]
 
@@ -445,6 +455,72 @@ def separate_region(
     )
 
 
+# --------------------------------------------------------------------------- #
+# verify_stem (Task 5.3, §9) — re-verify an already-separated stem, librosa tier
+# --------------------------------------------------------------------------- #
+
+
+def verify_stem(
+    stem_path: str,
+    mix_path: str,  # noqa: ARG001 - reserved for the (N/A here) multi-stem mix-consistency gate
+    region: Window | None = None,
+    timeline: Timeline | None = None,
+    *,
+    cache: CacheFS | None = None,  # noqa: ARG001 - signature parity with the other reference tools
+) -> GateSet:
+    """§9 ``verify_stem`` contract: re-verify a single already-separated stem on disk against
+    its source mix over ``region``, returning the §5 :class:`GateSet`. This is the LIBROSA-tier
+    verifier (no PANNs/torch at call time) — deliberately lighter than ``separate_region``,
+    which re-runs the tagger for the bleed gate. Its gate applicability is therefore narrower,
+    and stated plainly rather than silently degraded:
+
+    - **Gate 1 (mix consistency)** — always ``na`` here: a single stem cannot be checked against
+      ``mix == Σ stems`` (that needs every co-produced stem; ``separate_region`` owns it). The
+      ``mix_path`` argument is accepted for signature/contract parity and a future multi-stem
+      variant, but this single-stem tool does not decode it.
+    - **Gate 2 (bleed)** — always ``na`` here: bleed requires a per-target PANNs run ON the stem,
+      which this librosa-tier tool intentionally does not do (use ``separate_region`` for a
+      bleed-judged stem).
+    - **Gate 3 (silence honesty)** — computed IFF ``timeline`` is supplied. ``timeline`` is the
+      source mix's :class:`~orpheus_mcp.models.Timeline` (from ``instrument_timeline``); it is
+      cropped to ``region`` and re-indexed so frame 0 == the stem's sample 0, and EVERY mapped
+      class in it is treated as the activity reference — i.e. the stem is expected quiet in the
+      windows where the mix shows no mapped-instrument activity at all. This is a deliberately
+      conservative honesty check (it flags energy in genuinely silent passages, not bleed under
+      other instruments); the caller may pre-filter ``timeline.classes`` to a single target's
+      classes to sharpen it. With ``timeline=None`` there is no activity reference, so gate 3 is
+      ``na`` too.
+    - **Gate 4 (agreement)** — always ``na`` here: no second engine's take is supplied.
+
+    With ``timeline=None`` every gate is ``na`` and ``overall`` is ``unverifiable`` (§5: climbing
+    cannot fix unverifiability) — an honest "this tier had nothing to check", not a false pass.
+    Does not modify the input files or any REAPER project (``readOnlyHint``).
+    """
+    from orpheus_mcp.analysis.timeline import crop_timeline
+    from orpheus_mcp.analysis.verify import gate_silence_honesty, overall_verdict
+
+    na = GateResult(verdict="na", value=None)
+    stem_data, stem_sr = sf.read(stem_path, always_2d=True, dtype="float32")
+    stem = np.asarray(stem_data, dtype=np.float32)
+
+    if timeline is None:
+        g3 = na
+    else:
+        stem_dur = stem.shape[0] / stem_sr if stem_sr else 0.0
+        crop = region if region is not None else Window(start_s=0.0, end_s=stem_dur)
+        region_tl = crop_timeline(timeline, crop)
+        target_idx = list(range(len(region_tl.classes)))
+        g3 = gate_silence_honesty(stem, int(stem_sr), region_tl, target_idx)
+
+    return GateSet(
+        mix_consistency=na,
+        bleed=na,
+        silence_honesty=g3,
+        agreement=na,
+        overall=overall_verdict([na, na, g3, na]),
+    )
+
+
 def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG001 - uniform signature
     """Registers the ``reference`` category. Probes for librosa BEFORE registering any
     tool: every tool in this category needs it, and ``registry.register_tools``'s
@@ -492,6 +568,25 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
         (``~/.orpheus_cache``).
         """
         return get_chords(file, region)
+
+    @mcp.tool(name="verify_stem", annotations=_RO)
+    def verify_stem_tool(
+        stem_path: str,
+        mix_path: str,
+        region: Window | None = None,
+        timeline: Timeline | None = None,
+    ) -> GateSet:
+        """Re-verify an already-separated stem on disk against its source mix over ``region``,
+        returning the §5 gate set (mix_consistency / bleed / silence_honesty / agreement +
+        overall). This is the lightweight librosa-tier verifier: it computes silence honesty
+        when you pass the mix's ``timeline`` (from ``instrument_timeline``) and reports the
+        other three gates as N/A (mix consistency needs every co-produced stem, bleed needs a
+        PANNs run on the stem, agreement needs a second engine's take — all owned by
+        ``separate_region``). With no ``timeline`` every gate is N/A and ``overall`` is
+        ``unverifiable`` — an honest "nothing to check at this tier". Does not modify the input
+        files or any REAPER project (``readOnlyHint``).
+        """
+        return verify_stem(stem_path, mix_path, region, timeline)
 
     _panns_available = (
         importlib.util.find_spec("panns_inference") is not None

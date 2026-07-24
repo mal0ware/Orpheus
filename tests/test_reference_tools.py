@@ -447,3 +447,72 @@ def test_separate_region_end_to_end_drums_scnet_rank1(tmp_path):
         f"  agreement:       {result.gates.agreement}\n"
         f"  overall:         {result.gates.overall}\n"
     )
+
+
+# --------------------------------------------------------------------------- #
+# verify_stem (Task 5.3, §9): the lightweight librosa-tier re-verifier. Gates 1/2/4
+# are N/A by construction (single stem, no tagger, no second take); gate 3 (silence
+# honesty) runs only when a mix timeline is supplied. Numeric cases are hand-built.
+# --------------------------------------------------------------------------- #
+
+from orpheus_mcp.models import GateSet, Timeline  # noqa: E402
+from orpheus_mcp.tools.reference import verify_stem  # noqa: E402
+
+
+def _write_stem(path: Path, loud_windows: list[bool], *, sr: int = 8000) -> Path:
+    """One 1 s frame per bool: a 220 Hz tone where True, digital silence where False."""
+    t = np.arange(sr) / sr
+    tone = (0.5 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+    frames = [tone if loud else np.zeros(sr, dtype=np.float32) for loud in loud_windows]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(path), np.concatenate(frames), sr, subtype="PCM_16")
+    return path
+
+
+def _timeline(active_windows: list[bool]) -> Timeline:
+    hot = CFG.TIMELINE_ACTIVITY_THRESHOLD + 0.5
+    return Timeline(
+        classes=["Drum kit"], hop_s=1.0,
+        frames=[[hot if a else 0.0] for a in active_windows],
+    )
+
+
+def test_verify_stem_no_timeline_is_all_na_unverifiable(tmp_path):
+    stem = _write_stem(tmp_path / "stem.flac", [True, True, False])
+    gates = verify_stem(str(stem), str(stem), None, None)
+    assert isinstance(gates, GateSet)
+    for g in (gates.mix_consistency, gates.bleed, gates.silence_honesty, gates.agreement):
+        assert g.verdict == "na"
+    assert gates.overall == "unverifiable"
+
+
+def test_verify_stem_silent_stem_passes_silence_honesty(tmp_path):
+    # Active for 3 s, then silent for 8 s. Timeline marks the same. The stem is genuinely
+    # silent in the (post-tail) inactive windows -> silence honesty passes; others stay N/A.
+    windows = [True, True, True] + [False] * 8
+    stem = _write_stem(tmp_path / "stem.flac", windows)
+    gates = verify_stem(str(stem), str(stem), None, _timeline(windows))
+    assert gates.silence_honesty.verdict == "pass"
+    assert gates.mix_consistency.verdict == "na"
+    assert gates.bleed.verdict == "na"
+    assert gates.agreement.verdict == "na"
+    assert gates.overall == "pass"
+
+
+def test_verify_stem_energy_in_silent_window_fails(tmp_path):
+    # Timeline says inactive after 3 s, but the stem keeps blaring -> false energy -> fail.
+    active = [True, True, True] + [False] * 8
+    loud = [True] * 11
+    stem = _write_stem(tmp_path / "stem.flac", loud)
+    gates = verify_stem(str(stem), str(stem), None, _timeline(active))
+    assert gates.silence_honesty.verdict == "fail"
+    assert gates.overall == "fail"
+
+
+async def test_verify_stem_tool_registered_read_only():
+    mcp = FastMCP(name="t")
+    register_tools(mcp, profile="default")
+    async with Client(mcp) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+    assert "verify_stem" in tools
+    assert tools["verify_stem"].annotations.readOnlyHint is True

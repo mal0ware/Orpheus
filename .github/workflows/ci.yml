@@ -58,3 +58,9 @@ jobs:
 
       - name: Test (excluding desktop and gpu)
         run: uv run pytest -q -m "not desktop and not gpu"
+
+      # §15.1 calibration smoke: the full pipeline (SDR math -> gate metrics -> ROC ->
+      # JSON emit) over the 2 committed CI fixtures with tests/stub_engines.py fakes —
+      # ZERO checkpoint downloads (Task 0.1 CI invariant), no GPU, no real separators.
+      - name: Gate-calibration smoke (stub engines, no downloads)
+        run: uv run python scripts/calibrate_gates.py --ci-smoke
