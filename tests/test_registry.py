@@ -58,10 +58,12 @@ IMPLEMENTED = {
     "build_section",
     "arrange_song",
     "place_lyric_markers",
-    # reference (Task 1.3 — T1 recon; Task 2.1 — T2 instrument timeline; Task 3.2 — §13 chords)
+    # reference (Task 1.3 — T1 recon; Task 2.1 — T2 instrument timeline; Task 3.2 — §13
+    # chords; Task 4.2 — §5 verification gates 1-3 + separate_region)
     "recon_reference",
     "instrument_timeline",
     "get_chords",
+    "separate_region",
 }
 
 

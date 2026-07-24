@@ -18,14 +18,16 @@ import pytest
 import soundfile as sf
 from fastmcp import Client, FastMCP
 
-from orpheus_mcp.analysis import cachefs
+from orpheus_mcp.analysis import cachefs, model_registry
 from orpheus_mcp.analysis.cachefs import CacheFS, decode
 from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.analysis.recon import run_recon
-from orpheus_mcp.models import Window
+from orpheus_mcp.analysis.separation import SeparationError
+from orpheus_mcp.models import StemResult, Window
 from orpheus_mcp.registry import register_tools
 from orpheus_mcp.tools import reference as reference_tools
-from orpheus_mcp.tools.reference import get_chords, recon_reference
+from orpheus_mcp.tools.reference import get_chords, recon_reference, separate_region
+from stub_engines import StubEngine, StubTagger
 
 # A short re-struck two-chord progression (same recipe as test_harmony_baseline.py's
 # ``_make_progression``: a decaying sine-triad strike per beat, so the beat tracker finds a
@@ -239,3 +241,209 @@ async def test_get_chords_tool_region_via_client(audio_path, mcp_client):
         seg.start_s < mid.end_s and seg.end_s > mid.start_s for seg in filtered.segments
     )
     assert filtered.segments  # the midpoint segment itself always overlaps its own span
+
+
+# --------------------------------------------------------------------------- #
+# separate_region (Task 4.2, §5/§9): resolve -> Task 4.1 core -> gates 1-3 -> §9 stem
+# cache. Driven end-to-end by StubEngine + StubTagger (tests/stub_engines.py) -- no real
+# checkpoints, no GPU. The desktop/gpu real-engine smoke lives in test_separation.py's
+# sibling module convention; this file only proves the TOOL wrapper's plumbing.
+# --------------------------------------------------------------------------- #
+
+FOUR_STEM = ["vocals", "drums", "bass", "other"]
+_HTDEMUCS_FT = "4stem-c/htdemucs-ft"  # vram_gb == 0.0 -- never triggers the VRAM fallback
+
+
+def _write_sep_wav(path: Path, *, seconds: float = 4.0, sr: int = 4000) -> Path:
+    t = np.arange(int(seconds * sr)) / sr
+    tone = (0.3 * np.sin(2 * np.pi * 110.0 * t)).astype(np.float32)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(path), tone, sr, subtype="PCM_16")
+    return path
+
+
+@pytest.fixture
+def _plenty_of_vram(monkeypatch):
+    """Same hermeticity fixture as test_separation.py -- pin free_vram_gb so the VRAM
+    guard's ``model_registry.free_vram_gb()`` call never imports real torch."""
+    monkeypatch.setattr(model_registry, "free_vram_gb", lambda: 24.0)
+
+
+def test_separate_region_returns_stem_result_with_gates(tmp_path, _plenty_of_vram):
+    audio = _write_sep_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+    engine = StubEngine(FOUR_STEM)
+    tagger = StubTagger()
+
+    result = separate_region(
+        str(audio), "drums", model_id=_HTDEMUCS_FT, cache=fs, engine=engine, tagger=tagger
+    )
+
+    assert isinstance(result, StemResult)
+    assert result.target == "drums"
+    assert result.model_id == _HTDEMUCS_FT
+    assert Path(result.stem_path).is_file()
+    assert result.gates is not None
+    assert result.gates.overall in {"pass", "fail", "unverifiable"}
+    for gate in (
+        result.gates.mix_consistency,
+        result.gates.bleed,
+        result.gates.silence_honesty,
+        result.gates.agreement,
+    ):
+        assert gate.verdict in {"pass", "fail", "na"}
+        assert (gate.value is None) == (gate.verdict == "na")
+    # Gate 4 is a Phase-5 stub -- always N/A here, never fabricated.
+    assert result.gates.agreement.verdict == "na"
+    assert result.gates.agreement.value is None
+
+
+def test_separate_region_caches_stem_and_skips_recompute_on_hit(tmp_path, _plenty_of_vram):
+    audio = _write_sep_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+    engine = StubEngine(FOUR_STEM)
+    tagger = StubTagger()
+
+    first = separate_region(
+        str(audio), "bass", model_id=_HTDEMUCS_FT, cache=fs, engine=engine, tagger=tagger
+    )
+    assert len(engine.calls) == 1
+
+    second = separate_region(
+        str(audio), "bass", model_id=_HTDEMUCS_FT, cache=fs, engine=engine, tagger=tagger
+    )
+    assert len(engine.calls) == 1  # cache HIT -- the engine was never re-invoked
+    assert second.stem_path == first.stem_path
+    assert second.gates == first.gates
+
+
+def test_separate_region_caches_under_the_9_stems_layout(tmp_path, _plenty_of_vram):
+    audio = _write_sep_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+    engine = StubEngine(FOUR_STEM)
+    tagger = StubTagger()
+
+    result = separate_region(
+        str(audio), "vocals", model_id=_HTDEMUCS_FT, cache=fs, engine=engine, tagger=tagger
+    )
+
+    stem_path = Path(result.stem_path)
+    assert stem_path.name == "vocals.flac"
+    assert stem_path.parent.parent.name == _HTDEMUCS_FT.split("/")[-1]
+    assert (stem_path.parent / "verify.json").is_file()
+    assert (stem_path.parent / "meta.json").is_file()
+
+
+def test_separate_region_unknown_target_raises_separation_error(tmp_path, _plenty_of_vram):
+    audio = _write_sep_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+
+    with pytest.raises(SeparationError):
+        separate_region(str(audio), "definitely_not_a_registry_target", cache=fs)
+
+
+def test_separate_region_explicit_model_id_bypasses_ranking(tmp_path, _plenty_of_vram):
+    audio = _write_sep_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+    engine = StubEngine(FOUR_STEM)
+    tagger = StubTagger()
+
+    result = separate_region(
+        str(audio), "other", model_id=_HTDEMUCS_FT, cache=fs, engine=engine, tagger=tagger
+    )
+    assert result.model_id == _HTDEMUCS_FT
+
+
+# --------------------------------------------------------------------------- #
+# separate_region: MCP registration (gated exactly like instrument_timeline -- §4.2
+# brief: torch + panns_inference importable suffices; the separation-stack errors are
+# typed and surface at CALL time, not registration time).
+# --------------------------------------------------------------------------- #
+
+
+async def test_separate_region_tool_registered_read_only():
+    mcp = FastMCP(name="t")
+    register_tools(mcp, profile="default")
+    async with Client(mcp) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+    assert "separate_region" in tools
+    assert tools["separate_region"].annotations.readOnlyHint is True
+
+
+async def test_separate_region_not_registered_without_panns_or_torch(monkeypatch):
+    import importlib.util as ilu
+
+    real_find_spec = ilu.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name in ("panns_inference", "torch"):
+            return None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(ilu, "find_spec", fake_find_spec)
+
+    mcp = FastMCP(name="t")
+    with pytest.warns(UserWarning, match="instrument_timeline not registered"):
+        reference_tools.register(mcp)
+
+    async with Client(mcp) as client:
+        tools = {t.name for t in await client.list_tools()}
+    assert "separate_region" not in tools
+    assert "recon_reference" in tools  # category-level tool unaffected
+
+
+# --------------------------------------------------------------------------- #
+# Desktop/gpu real-engine end-to-end: separate_region tool on ci_sparse, target
+# "drums", SCNet rank-1 (§12 slice-4 bar's separate_region half). Real PannsTagger runs
+# on both the mix (instrument_timeline) and the freshly separated stem (the bleed
+# judge) -- assert MECHANISM (stems cached, gates populated, verdicts in the enum), not
+# specific verdicts: a failing gate on real separated audio is DATA, not a test failure.
+# --------------------------------------------------------------------------- #
+
+_CI_SPARSE = Path(__file__).resolve().parent / "fixtures" / "audio" / "ci_sparse" / "mix.flac"
+
+
+@pytest.mark.desktop
+@pytest.mark.gpu
+def test_separate_region_end_to_end_drums_scnet_rank1(tmp_path):
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("no CUDA for the in-process SCNet path")
+    if not _CI_SPARSE.is_file():
+        pytest.skip("ci_sparse fixture missing")
+
+    # 4stem-b/scnet-xl is registry rank 1 for target "drums" (Task 4.1's D12 re-rank).
+    entry = {e.id: e for e in model_registry.load_registry(allow_unpinned=True)}["4stem-b/scnet-xl"]
+    assert entry.rank == 1
+    assert "drums" in entry.targets
+
+    fs = CacheFS(tmp_path / "cache")
+    result = separate_region(str(_CI_SPARSE), "drums", model_id="4stem-b/scnet-xl", cache=fs)
+
+    assert isinstance(result, StemResult)
+    assert result.target == "drums"
+    assert result.model_id == "4stem-b/scnet-xl"
+    assert Path(result.stem_path).is_file()
+    assert (Path(result.stem_path).parent / "verify.json").is_file()
+    assert (Path(result.stem_path).parent / "meta.json").is_file()
+
+    assert result.gates is not None
+    for gate in (
+        result.gates.mix_consistency,
+        result.gates.bleed,
+        result.gates.silence_honesty,
+        result.gates.agreement,
+    ):
+        assert gate.verdict in {"pass", "fail", "na"}
+        assert (gate.value is None) == (gate.verdict == "na")
+    assert result.gates.overall in {"pass", "fail", "unverifiable"}
+    assert result.gates.agreement.verdict == "na"  # Phase-5 stub, never fabricated
+
+    print(
+        "\nDESKTOP separate_region(ci_sparse, drums, 4stem-b/scnet-xl) gate values:\n"
+        f"  mix_consistency: {result.gates.mix_consistency}\n"
+        f"  bleed:           {result.gates.bleed}\n"
+        f"  silence_honesty: {result.gates.silence_honesty}\n"
+        f"  agreement:       {result.gates.agreement}\n"
+        f"  overall:         {result.gates.overall}\n"
+    )

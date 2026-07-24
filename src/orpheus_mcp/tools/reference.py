@@ -1,22 +1,41 @@
 """The ``reference`` category (§9): local reference-track analysis tools. Tools:
-``recon_reference`` (T1), ``instrument_timeline`` (T2), ``get_chords`` (§13). Logic lives in
-``orpheus_mcp.analysis`` (pure functions, no REAPER); this layer only handles
+``recon_reference`` (T1), ``instrument_timeline`` (T2), ``get_chords`` (§13),
+``separate_region`` (Task 4.2, §5/§9 — engine adapters + verification gates). Logic lives
+in ``orpheus_mcp.analysis`` (pure functions, no REAPER); this layer only handles
 decode -> cache -> tool-result plumbing.
 """
 
 from __future__ import annotations
 
+import contextlib
+import json
 import math
+import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+import soundfile as sf
 from fastmcp import FastMCP
 
-from orpheus_mcp.analysis import cachefs
+from orpheus_mcp.analysis import cachefs, model_registry
 from orpheus_mcp.analysis.cachefs import CacheFS, Pcm
-from orpheus_mcp.models import BeatGrid, ChordsLane, Recon, Timeline, Window
+from orpheus_mcp.analysis.separation import SeparationError
+from orpheus_mcp.analysis.separation import separate_region as _run_separation_core
+from orpheus_mcp.models import BeatGrid, ChordsLane, GateSet, Recon, StemResult, Timeline, Window
 
 if TYPE_CHECKING:
+    from orpheus_mcp.analysis.model_registry import ModelEntry
+    from orpheus_mcp.analysis.separation import SeparatorEngine
     from orpheus_mcp.analysis.timeline import TaggerEngine
+
+__all__ = [
+    "recon_reference",
+    "instrument_timeline",
+    "get_chords",
+    "separate_region",
+    "register",
+]
 
 _RO = {"readOnlyHint": True}
 
@@ -241,6 +260,204 @@ def get_chords(
     return _filter_lane_to_region(lane, region, duration_s)
 
 
+# --------------------------------------------------------------------------- #
+# separate_region (Task 4.2, §5/§9)
+# --------------------------------------------------------------------------- #
+
+_STEM_SCHEMA_VERSION = 1
+
+# Every §4 task that can actually produce a stem — excludes tagger/transcription/chord/
+# lyrics-asr, which have no ``targets`` a separated stem could come from.
+_SEPARATOR_TASKS = ("multi-stem", "single-target", "dereverb", "drumkit-split")
+
+
+def _resolve_separator_entry(target: str, model_id: str | None) -> ModelEntry:
+    """The rank-1 registry entry producing ``target`` (or the explicit ``model_id``,
+    looked up directly, any task, bypassing ranking). Candidates are gathered across
+    EVERY separator-capable task and merged by ``rank`` — the registry has no single
+    "task" a target belongs to (a target may be a multi-stem output AND a dedicated
+    single-target model), so this can't just call ``model_registry.resolve`` once.
+    Each per-task list already applies ``resolve``'s VRAM/license/engine-status
+    filtering (§15.5) — only the final merge-and-sort is done here."""
+    entries = model_registry.load_registry(allow_unpinned=True)
+    if model_id is not None:
+        for entry in entries:
+            if entry.id == model_id:
+                return entry
+        raise SeparationError(f"Unknown model_id: {model_id!r}")
+
+    free = model_registry.free_vram_gb()
+    candidates: list[ModelEntry] = []
+    for task in _SEPARATOR_TASKS:
+        candidates.extend(model_registry.resolve(task, target, vram_free_gb=free))
+    if not candidates:
+        raise SeparationError(
+            f"No registry entry (multi-stem/single-target/dereverb/drumkit-split) "
+            f"produces target {target!r}."
+        )
+    return sorted(candidates, key=lambda e: e.rank)[0]
+
+
+def _stem_verify_meta(entry: ModelEntry) -> dict:
+    """The §9 per-stem cache sidecar shape: same ingredients as every other artifact's
+    meta (schema/registry/verify-config) plus the producing model's identity — a
+    checkpoint swap or re-pin must bust a cached stem the same way it busts recon/
+    timeline/chords."""
+    checkpoint = entry.sha256
+    return {
+        "schema_version": _STEM_SCHEMA_VERSION,
+        "registry_version": cachefs.registry_version(),
+        "verify_config_hash": cachefs.verify_config_hash(),
+        "model_id": entry.id,
+        "checkpoint_sha256": checkpoint,
+    }
+
+
+def _crop_timeline(tl: Timeline, start_s: float, end_s: float) -> Timeline:
+    """Slice ``tl.frames`` to ``[start_s, end_s)`` and re-index so frame 0 corresponds
+    to ``start_s`` — ``gate_silence_honesty`` has no notion of a song-wide offset (its
+    contract requires frame 0 == the stem's sample 0, the caller's job)."""
+    hop = tl.hop_s
+    if hop <= 0:
+        return Timeline(classes=tl.classes, hop_s=hop, frames=[])
+    start_idx = max(0, int(math.floor(start_s / hop + 1e-9)))
+    end_idx = min(len(tl.frames), int(math.ceil(end_s / hop - 1e-9)))
+    end_idx = max(end_idx, start_idx)
+    return Timeline(classes=tl.classes, hop_s=hop, frames=list(tl.frames[start_idx:end_idx]))
+
+
+def _align_len(arr: np.ndarray, n: int) -> np.ndarray:
+    frames = arr.shape[0]
+    if frames == n:
+        return arr
+    if frames > n:
+        return arr[:n]
+    pad = np.zeros((n - frames, *arr.shape[1:]), dtype=arr.dtype)
+    return np.concatenate([arr, pad], axis=0)
+
+
+def separate_region(
+    file: str,
+    target: str,
+    region: Window | None = None,
+    model_id: str | None = None,
+    *,
+    cache: CacheFS | None = None,
+    engine: SeparatorEngine | None = None,
+    tagger: TaggerEngine | None = None,
+) -> StemResult:
+    """§9 tool contract: resolves the rank-1 (or explicit ``model_id``) registry entry
+    producing ``target``, runs the Task 4.1 separation core (region-cropped, VRAM-
+    guarded, length-aligned — ``analysis.separation.separate_region``), runs
+    verification gates 1-3 (§5: mix consistency across every co-produced stem, bleed via
+    the T2 tagger run ON the stem, silence honesty against the cached/region-cropped mix
+    timeline), caches the requested target's stem FLAC + a ``verify.json`` sidecar under
+    the §9 ``stems/<model-id>/<start_ms>-<end_ms>/`` layout, and returns that target's
+    ``StemResult`` with ``gates`` populated. Gate 4 (agreement) is not implemented yet
+    (Phase 5) — ``gates.agreement`` always reads ``na``/``None`` and is excluded from the
+    §5 overall decision rule (fail if any applicable gate fails; unverifiable iff every
+    gate is N/A).
+
+    **Desktop-tier tool** (documented, not silently hidden): needs the ``[separation]``
+    extra (audio-separator / vendored MSST) AND ``[analysis]`` (panns-inference/torch,
+    for the bleed judge) at CALL time. This module only imports numpy/soundfile eagerly;
+    the heavier deps are imported lazily inside ``analysis.separation``/
+    ``analysis.timeline`` and raise a typed error (``SeparatorEnvMissing``, an honest
+    "no compatible model for this engine" ``SeparationError``, ...) if genuinely absent
+    — the ``register()`` gate below only probes for torch+panns-inference (the same
+    probe ``instrument_timeline`` uses), matching the plan's ``capped_by_missing_extra``
+    pattern for a ``[separation]``-tier tool.
+    """
+    from orpheus_mcp.analysis.timeline import PannsTagger
+    from orpheus_mcp.analysis.verify import run_gates
+
+    fs = cache if cache is not None else CacheFS()
+    pcm = cachefs.decode(file)
+    entry = _resolve_separator_entry(target, model_id)
+    tagger_engine: TaggerEngine = tagger if tagger is not None else PannsTagger()
+
+    req_start = 0.0 if region is None else region.start_s
+    req_end = pcm.duration_s if region is None else region.end_s
+    clamp_start = max(0.0, min(req_start, pcm.duration_s))
+    clamp_end = max(clamp_start, min(req_end, pcm.duration_s))
+    cache_region = Window(start_s=clamp_start, end_s=clamp_end)
+
+    meta = _stem_verify_meta(entry)
+    stem_dir = fs.stem_dir(pcm.pcm_hash, entry.id, cache_region)
+    stem_path = stem_dir / f"{target}.flac"
+    verify_path = stem_dir / "verify.json"
+    meta_path = stem_dir / "meta.json"
+
+    if stem_path.is_file() and verify_path.is_file() and meta_path.is_file():
+        try:
+            stored_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            stored_meta = None
+        if stored_meta == meta:
+            gate_data = json.loads(verify_path.read_text(encoding="utf-8"))
+            info = sf.info(str(stem_path))
+            return StemResult(
+                stem_path=str(stem_path),
+                model_id=entry.id,
+                target=target,
+                region_trimmed=cache_region,
+                sample_rate=info.samplerate,
+                gates=GateSet.model_validate(gate_data),
+                notes=[],
+            )
+
+    results = _run_separation_core(pcm, entry, region, engine=engine)
+    if target not in results:
+        raise SeparationError(
+            f"{entry.id} did not produce a {target!r} stem (produced {sorted(results)})."
+        )
+    stem_result = results[target]
+    rt = stem_result.region_trimmed
+    sr = stem_result.sample_rate
+
+    stems_arrays: dict[str, np.ndarray] = {}
+    for tgt, res in results.items():
+        data, _sr = sf.read(res.stem_path, always_2d=True, dtype="float32")
+        stems_arrays[tgt] = data
+
+    mix_samples = pcm.samples if pcm.samples.ndim == 2 else pcm.samples.reshape(-1, 1)
+    start_i = min(int(round(rt.start_s * pcm.sample_rate)), mix_samples.shape[0])
+    end_i = min(int(round(rt.end_s * pcm.sample_rate)), mix_samples.shape[0])
+    start_i = min(start_i, end_i)
+    mix_crop = _align_len(mix_samples[start_i:end_i], stems_arrays[target].shape[0])
+
+    mix_tl = instrument_timeline(file, cache=fs, tagger=tagger_engine)
+    region_tl = _crop_timeline(mix_tl, rt.start_s, rt.end_s)
+
+    gates = run_gates(
+        mix=mix_crop,
+        stems=stems_arrays,
+        target=target,
+        sr=sr,
+        multi_stem=entry.task == "multi-stem",
+        tagger=tagger_engine,
+        target_tagger_classes=list(entry.tagger_classes),
+        mix_timeline=region_tl,
+    )
+
+    stem_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(stem_result.stem_path, stem_path)
+    verify_path.write_text(json.dumps(gates.model_dump(mode="json")), encoding="utf-8")
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    with contextlib.suppress(OSError):
+        shutil.rmtree(Path(stem_result.stem_path).parent, ignore_errors=True)
+
+    return StemResult(
+        stem_path=str(stem_path),
+        model_id=entry.id,
+        target=target,
+        region_trimmed=rt,
+        sample_rate=sr,
+        gates=gates,
+        notes=list(stem_result.notes),
+    )
+
+
 def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG001 - uniform signature
     """Registers the ``reference`` category. Probes for librosa BEFORE registering any
     tool: every tool in this category needs it, and ``registry.register_tools``'s
@@ -308,6 +525,35 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
             analysis cache (``~/.orpheus_cache``).
             """
             return instrument_timeline(file)
+
+        @mcp.tool(name="separate_region", annotations=_RO)
+        def separate_region_tool(
+            file: str,
+            target: str,
+            region: Window | None = None,
+            model_id: str | None = None,
+        ) -> StemResult:
+            """Separate ``target`` from ``file`` (optionally cropped to ``region``) and
+            verify it: resolves the rank-1 (or explicit ``model_id``) registry entry that
+            produces ``target``, runs the region-cropped/VRAM-guarded/length-aligned
+            separation engine (audio-separator or the vendored SCNet path), then runs §5
+            verification gates 1-3 (mix consistency, bleed via the T2 tagger run ON the
+            stem, silence honesty) — gate 4 (cross-model agreement) is not implemented
+            yet and always reads N/A. Returns the requested target's stem with ``gates``
+            populated; the stem FLAC + a ``verify.json`` are cached under the decoded-PCM
+            hash so repeat calls for the same (file, model, region) never re-run
+            separation or re-gate.
+
+            **Desktop-tier**: in addition to this category's [analysis] extra (librosa +
+            panns-inference/torch, needed for the bleed judge and gated by this
+            registration probe), this tool needs the [separation] extra (audio-separator
+            / vendored MSST) at CALL time — a missing isolated separator env or an
+            unsupported checkpoint raises a clear, typed error rather than a silent
+            failure. Does not modify the input file or any REAPER project
+            (``readOnlyHint``) — it does write to the local analysis cache
+            (``~/.orpheus_cache``).
+            """
+            return separate_region(file, target, region, model_id)
     else:
         import warnings
 
