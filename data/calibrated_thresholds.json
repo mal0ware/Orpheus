@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "generated_by": "scripts/calibrate_gates.py",
+  "fit_domain": "synthetic-fixtures",
+  "fixture_set_hash": "f941582f7b246bf718cebace52a383f82d81761eb611a541b0153dea6a713289",
+  "calibration_sdr_good": 7.0,
+  "calibration_sdr_bad": 4.0,
+  "n_fixtures": 24,
+  "constants": {
+    "EXPOSURE_THRESHOLD": {
+      "value": 0.15,
+      "fit_domain": "synthetic-fixtures",
+      "fixture_set_hash": "f941582f7b246bf718cebace52a383f82d81761eb611a541b0153dea6a713289",
+      "fitted": null,
+      "initial": 0.15,
+      "fallback": true,
+      "roc_quality": 0.0,
+      "n_good": 0,
+      "n_bad": 0,
+      "note": "owned-audio deferred: no per-frame clean/unclean label exists on synthetic fixtures \u2014 kept \u00a716 initial pending the ear-panel calibration pass."
+    },
+    "GATE_AGREEMENT_PASS": {
+      "value": 0.9972467261416271,
+      "fit_domain": "synthetic-fixtures",
+      "fixture_set_hash": "f941582f7b246bf718cebace52a383f82d81761eb611a541b0153dea6a713289",
+      "fitted": 0.9972467261416271,
+      "initial": 0.9,
+      "fallback": false,
+      "roc_quality": 0.7562,
+      "n_good": 40,
+      "n_bad": 32,
+      "note": "fitted at ROC knee (J=0.76)."
+    },
+    "GATE_BLEED_PASS": {
+      "value": 0.2,
+      "fit_domain": "synthetic-fixtures",
+      "fixture_set_hash": "f941582f7b246bf718cebace52a383f82d81761eb611a541b0153dea6a713289",
+      "fitted": null,
+      "initial": 0.2,
+      "fallback": true,
+      "roc_quality": 0.0,
+      "n_good": 0,
+      "n_bad": 0,
+      "note": "domain-shift fallback: only 0 good / 0 bad labelled samples (< 3 each) \u2014 kept \u00a716 initial."
+    },
+    "GATE_MIX_RESIDUAL_PASS_DB": {
+      "value": -20.0,
+      "fit_domain": "synthetic-fixtures",
+      "fixture_set_hash": "f941582f7b246bf718cebace52a383f82d81761eb611a541b0153dea6a713289",
+      "fitted": -13.513685420831859,
+      "initial": -20.0,
+      "fallback": true,
+      "roc_quality": 0.3,
+      "n_good": 80,
+      "n_bad": 64,
+      "note": "domain-shift fallback: ROC separation J=0.30 < 0.5 \u2014 kept \u00a716 initial over an untrusted fit."
+    },
+    "GATE_SILENCE_PASS_DB": {
+      "value": -35.0,
+      "fit_domain": "synthetic-fixtures",
+      "fixture_set_hash": "f941582f7b246bf718cebace52a383f82d81761eb611a541b0153dea6a713289",
+      "fitted": null,
+      "initial": -35.0,
+      "fallback": true,
+      "roc_quality": 0.0,
+      "n_good": 8,
+      "n_bad": 0,
+      "note": "domain-shift fallback: only 8 good / 0 bad labelled samples (< 3 each) \u2014 kept \u00a716 initial."
+    },
+    "TIMELINE_ACTIVITY_THRESHOLD": {
+      "value": 0.3,
+      "fit_domain": "synthetic-fixtures",
+      "fixture_set_hash": "f941582f7b246bf718cebace52a383f82d81761eb611a541b0153dea6a713289",
+      "fitted": 0.0008459232631139457,
+      "initial": 0.3,
+      "fallback": true,
+      "roc_quality": 0.6922,
+      "n_good": 1300,
+      "n_bad": 194,
+      "note": "domain-shift fallback: fitted 0.001 would read 24% of truth-active frames as inactive (> 20%), risking a false \u00a73.1c absent-target fire \u2014 kept \u00a716 initial (owned-audio calibration deferred)."
+    }
+  }
+}

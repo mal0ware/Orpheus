@@ -38,19 +38,30 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scripts.pick_sed_head import (
+
+# Standalone (`python scripts/calibrate_gates.py`) puts only scripts/ on sys.path, not the repo
+# root, so the sibling `scripts.pick_sed_head` import below would fail. Under pytest the repo root
+# is already on the path (pythonpath=["."]); inserting it here is a harmless no-op there.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scripts.pick_sed_head import (  # noqa: E402
     ROLE_CLASS_MAP,
     activity_frames_from_mono,
     verify_manifest_integrity,
 )
 
-from orpheus_mcp.analysis.config import CFG, cal_field_names, calibrated_thresholds_path
+from orpheus_mcp.analysis.config import (  # noqa: E402
+    CFG,
+    cal_field_names,
+    calibrated_thresholds_path,
+)
 
 if TYPE_CHECKING:
     from orpheus_mcp.analysis.cachefs import Pcm
