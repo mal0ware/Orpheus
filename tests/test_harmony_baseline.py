@@ -300,6 +300,23 @@ def test_maj7_strong_major_seventh_residual_never_appends_maj7_extension():
     assert out.segments[0].label == "Gmaj7"
 
 
+def test_plain_triad_gains_maj7_extension_from_genuine_residual():
+    """The other side of the seventh-guard: a PLAIN major triad with genuine, stable major-7th
+    residual energy must still be upgraded — the quality-aware guard only fires when the base
+    quality itself already encodes a seventh, never for plain triads (9.1 review item c)."""
+    chroma = np.zeros((4, 12))
+    for pc in (0, 4, 7):  # C major triad tones
+        chroma[:, pc] = 1.0
+    chroma[:, 11] = 0.5  # strong, stable B residual (major 7th of C)
+    seg = _segment("C", "maj", 0.0, 2.0, start_beat=0, end_beat=4)
+    lane = ChordsLane(grid="beat", segments=[seg])
+    grid = _beat_grid([0.0, 0.5, 1.0, 1.5], [0.0])
+
+    out = refine_extensions(lane, chroma, grid)
+    assert "maj7" in out.segments[0].extensions
+    assert out.segments[0].label == "Cmaj7"
+
+
 # --------------------------------------------------------------------------- #
 # §13.2 bass-informed slash detection
 # --------------------------------------------------------------------------- #
