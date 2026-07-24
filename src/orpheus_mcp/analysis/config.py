@@ -87,6 +87,14 @@ class AnalysisConfig:
     ATTACK_PEAK_SEARCH_FRAMES: int = 20             # §7 attack-time peak search window (frames)
     ATTACK_HOP_SAMPLES: int = 512                   # §7 attack-time onset-strength hop
     LUFS_SHORT_TERM_HOP_S: float = 1.0              # §7 short-term LUFS sliding-window hop
+    # --- §14 lyrics pipeline (Task 8.1, plan-added) ---
+    VAD_FRAME_MS: float = 20.0                      # §14.1 VAD frame length for per-frame RMS
+    VAD_HOP_MS: float = 10.0                        # §14.1 VAD frame hop
+    VAD_MERGE_GAP_S: float = 0.20                   # bridge active frames closer than this
+    VAD_MIN_WINDOW_S: float = 0.10                  # drop active windows shorter than this
+    LYRIC_LINE_GAP_S: float = 1.0                   # §14.1.4 new line when word gap exceeds this
+    LYRIC_SENTENCE_PUNCT: str = ".!?"               # §14.1.4 line-ending punctuation
+    LYRIC_CHORUS_SIMILARITY: float = 0.80           # §14.1.4 near-identical line match ratio
 
 
 # --------------------------------------------------------------------------- #

@@ -17,7 +17,7 @@ import numpy as np
 import soundfile as sf
 
 from orpheus_mcp.analysis.cachefs import Pcm
-from orpheus_mcp.models import GateResult, GateSet, StemResult
+from orpheus_mcp.models import GateResult, GateSet, LyricWord, StemResult, Window
 
 if TYPE_CHECKING:
     from orpheus_mcp.analysis.model_registry import ModelEntry
@@ -200,6 +200,33 @@ def gateset(
         agreement=_res("agreement"),
         overall=overall,  # type: ignore[arg-type]
     )
+
+
+class StubAsr:
+    """A deterministic, no-dependency ``AsrEngine`` double (Task 8.1, §14.1).
+
+    Returns a scripted ``(language, words)`` from ``transcribe`` and — crucially for the
+    §14.1 hallucination gate — COUNTS its calls (``self.calls``) so a test can assert that a
+    silent stem means ``transcribe`` was NEVER reached (``build_lyrics`` returns
+    ``no_vocals`` from the VAD gate BEFORE any ASR). It also records the exact ``windows`` it
+    was handed (``self.received_windows``) so the "ASR receives ONLY the VAD-active windows"
+    contract is directly assertable.
+    """
+
+    def __init__(
+        self, language: str | None = "en", words: Sequence[LyricWord] | None = None
+    ) -> None:
+        self.language = language
+        self._words: list[LyricWord] = list(words) if words is not None else []
+        self.calls = 0
+        self.received_windows: list[Window] | None = None
+
+    def transcribe(
+        self, wav_path: str, windows: list[Window]
+    ) -> tuple[str | None, list[LyricWord]]:
+        self.calls += 1
+        self.received_windows = list(windows)
+        return self.language, [w.model_copy() for w in self._words]
 
 
 class ScriptedGates:

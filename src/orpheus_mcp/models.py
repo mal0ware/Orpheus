@@ -216,6 +216,74 @@ class ChordsLane(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# §14 lyric-anchored-navigation primitives — the typed contract analysis/lyrics.py
+# produces (VAD-gated ASR → aligned words → lines → named/indexed sections). ``locate_lyric``
+# (§14.2) resolves lyric quotes against ``LyricsResult.words``; the section names ("chorus 2",
+# "section B") let "the second chorus" resolve textually as well as structurally (§14.1.4).
+# --------------------------------------------------------------------------- #
+
+
+class LyricWord(BaseModel):
+    """One ASR-transcribed word with its timing and confidence (§14.1 ``lyrics.json``).
+    ``start_s``/``end_s`` are Whisper's own (coarse) timestamps until whisperX forced
+    alignment tightens them — the ``LyricsResult.aligned`` flag says which (§14.1.3).
+    ``conf`` is the model's word probability [0, 1]; low-confidence words carry their
+    confidence rather than being dropped or invented (the §14.1 honesty rule)."""
+
+    word: str
+    start_s: float
+    end_s: float
+    conf: float
+
+
+class LyricLine(BaseModel):
+    """A line of lyrics assembled from consecutive words (§14.1.4): a new line begins on a
+    silence gap greater than ``CFG.LYRIC_LINE_GAP_S`` or after sentence-ending punctuation.
+    ``text`` is the words joined with single spaces; ``word_indices`` point back into
+    ``LyricsResult.words`` (temporal order)."""
+
+    text: str
+    start_s: float
+    end_s: float
+    word_indices: list[int] = Field(default_factory=list)
+
+
+class LyricSection(BaseModel):
+    """A named, indexed lyric section (§14.1.4). ``kind`` is ``"chorus"``/``"verse"`` when
+    repeated line-blocks were detected (cross-checked against ``Recon.sections``), or
+    ``"section"`` for the through-composed fallback (no repeats → structural ``section A/B/C``
+    from recon boundaries, never an invented "chorus"). ``index`` is the 1-based TEMPORAL
+    order among sections of this same ``kind`` (so "the second chorus" = ``kind="chorus",
+    index=2``), independent of any score ranking. ``line_indices`` point into
+    ``LyricsResult.lines``."""
+
+    name: str
+    kind: str
+    index: int
+    start_s: float
+    end_s: float
+    line_indices: list[int] = Field(default_factory=list)
+
+
+class LyricsResult(BaseModel):
+    """The §14.1 lyric index (``lyrics.json`` + ``lines.json`` + ``sections.json``, one
+    artifact here). ``status`` is ``"no_vocals"`` when the vocal stem never crosses the
+    §14.1 VAD hallucination gate — ASR never ran, and every list is empty (Whisper-family
+    models hallucinate confident text on silence, so the gate runs BEFORE ASR, not after).
+    ``language`` is Whisper's detected language (``None`` on ``no_vocals``). ``aligned`` is
+    ``False`` when no wav2vec2 aligner exists for the detected language (or none is installed)
+    and the coarse Whisper timestamps were kept (§14.1.3)."""
+
+    schema_version: int = 1
+    status: Literal["ok", "no_vocals"]
+    language: str | None
+    aligned: bool = False
+    words: list[LyricWord] = Field(default_factory=list)
+    lines: list[LyricLine] = Field(default_factory=list)
+    sections: list[LyricSection] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
 # Separation + verification primitives (§5/§9) — the typed contract separation.py
 # (engines, ``separate_region``) produces and verify.py (Task 4.2, gates) fills in.
 # --------------------------------------------------------------------------- #
