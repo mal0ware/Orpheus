@@ -296,6 +296,18 @@ def entries_for_task(task: str, *, allow_unpinned: bool = True) -> list[ModelEnt
     return [e for e in load_registry(allow_unpinned=allow_unpinned) if e.task == task]
 
 
+def resolve_dereverb_entry() -> ModelEntry | None:
+    """The rank-1 dereverb registry entry (task ``"dereverb"``), or ``None`` when the
+    registry ships none. Used by §7 ``characterize`` to run the vocal wet−dry measurement:
+    the engine is INJECTED by the caller (so this never touches VRAM/license filtering — a
+    dereverb run on a stem the tool already holds isn't a routing decision), hence it goes
+    through ``entries_for_task`` (unfiltered, rank-ordered) rather than ``resolve``. Returns
+    ``None`` honestly so the caller falls back to the reverb decay-slope heuristic
+    (``reverb_approx=True``) rather than fabricating a wet−dry number."""
+    entries = sorted(entries_for_task("dereverb"), key=lambda e: e.rank)
+    return entries[0] if entries else None
+
+
 def free_vram_gb() -> float | None:
     """Free VRAM on the default CUDA device, in GiB — or None if there is no CUDA to ask.
 

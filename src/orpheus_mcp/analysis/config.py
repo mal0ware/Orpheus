@@ -57,6 +57,24 @@ class AnalysisConfig:
     CACHE_DIR_ENV: str = "ORPHEUS_CACHE_DIR"        # test override hook
     CALIBRATION_SDR_GOOD: float = 7.0               # §15.1 ROC "good" floor
     CALIBRATION_SDR_BAD: float = 4.0                # §15.1 ROC "bad" ceiling
+    # --- §7 SoundCharacter descriptors (Task 6.1, plan-added) ---
+    DUAL_MONO_TOLERANCE: float = 1e-4               # |L-R| ≤ this ⇒ dual-mono is channels=1
+    SUSTAIN_MIN_WINDOW_S: float = 0.4               # §7 flavor: onset-free window floor
+    HARMONIC_TOLERANCE_HZ: float = 15.0             # ± window for per-harmonic energy tally
+    FLAVOR_EVEN_ODD_DB: float = 3.0                 # §7 even−odd warm-even/gritty-odd threshold
+    DESCRIPTOR_ENV_HOP_MS: float = 1.0              # amplitude-envelope hop for delay autocorr
+    MOD_ENV_HOP_MS: float = 2.0                     # envelope hop for modulation-rate detection
+    DELAY_MIN_MS: float = 5.0                       # delay-search lag floor (below = comb/timbre)
+    DELAY_MAX_MS: float = 600.0                     # delay-search lag ceiling
+    MOD_RATE_MIN_HZ: float = 0.5                    # modulation-rate search band
+    MOD_RATE_MAX_HZ: float = 20.0
+    MOD_DETECT_MIN_DEPTH: float = 0.05              # below this normalized depth ⇒ no modulation
+    BANDWIDTH_BAND_HZ: float = 1000.0               # spectral-cliff band width
+    BANDWIDTH_CLIFF_DROP_DB: float = 40.0           # §7 "within 40 dB of peak band" cliff rule
+    SPECTRAL_TILT_LO_HZ: float = 80.0               # tilt octave-regression band
+    SPECTRAL_TILT_HI_HZ: float = 16000.0
+    SPECTRAL_TILT_BANDS: int = 14
+    DESCRIPTOR_STFT_N: int = 2048                   # STFT size for per-frame band-dynamics
 
 
 # --------------------------------------------------------------------------- #

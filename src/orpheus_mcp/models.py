@@ -264,6 +264,68 @@ class StemResult(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# §7 SoundCharacter primitives — the per-source descriptor contract the reference
+# analysis engine's ``characterize`` tool (Task 6.1) produces. ``SourceMeta`` rides on
+# every ``SoundCharacter`` so §8 knows exactly WHAT was measured (which stem, produced how,
+# over which region, mono-vs-stereo, complement-residual-or-not); the descriptor blocks are
+# plain dicts (not sub-models) because their KEY NAMES are the shared contract with
+# ``data/intent_rules.json`` (§15.3) and Task 10.1 cross-checks them at load time — a typed
+# sub-model per block would fossilize that contract in two places.
+# --------------------------------------------------------------------------- #
+
+
+class SourceMeta(BaseModel):
+    """What a :class:`SoundCharacter` was measured FROM (§7/§8). ``stem_type`` is the
+    separation target (``"vocals"``/``"drums"``/…) or ``"mix-region"`` for a literal-path
+    source; ``produced_by`` is the producing model id or ``"file"``. ``bandwidth_hz`` is
+    stamped by ``characterize`` (the §7 spectral-cliff measurement) and is ``None`` until
+    measured. ``channels`` is the HONEST channel count of the actual audio — a dual-mono
+    stem (two identical channels) reports ``1`` so the §7 mono policy fires (stereo
+    descriptors stay ``None``, never fabricated from a fake stereo field). ``complement`` is
+    ``True`` for a §6 R3 residual stem (it inherits the tails of everything subtracted, so
+    §8 discounts tail-sensitive descriptors)."""
+
+    stem_type: str
+    produced_by: str
+    region: Window | None = None
+    sample_rate: int
+    bandwidth_hz: float | None = None
+    channels: int
+    complement: bool = False
+
+
+class StemHandle(BaseModel):
+    """A reference to an already-produced/cached stem, carrying everything
+    ``resolve_source`` needs to build honest :class:`SourceMeta` without re-deriving it: the
+    on-disk audio path, the stem's type (its separation target), what produced it, the
+    region it covers, and the producer's ``notes`` (the §6 R3 ``complement=True`` flag and
+    §7 mono-policy strings ride here)."""
+
+    stem_path: str
+    stem_type: str
+    produced_by: str
+    region: Window | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
+class SoundCharacter(BaseModel):
+    """The §7 post-FX descriptor bundle for one source. Each block is a flat dict whose keys
+    are the locked §15.3 contract (see ``analysis/descriptors.py`` for the exact key set per
+    block). ``stereo`` values are ALL ``None`` when ``source.channels == 1`` (mono policy —
+    never upmixed); ``pitch`` is ``None`` wholesale for non-melodic stems. ``notes`` carries
+    honesty strings (approximation caveats, the dereverb-degraded path, …)."""
+
+    source: SourceMeta
+    spectral: dict[str, float | None] = Field(default_factory=dict)
+    dynamics: dict[str, float | None] = Field(default_factory=dict)
+    harmonics: dict[str, float | str | None] = Field(default_factory=dict)
+    stereo: dict[str, float | None] = Field(default_factory=dict)
+    time_fx: dict[str, float | str | bool | None] = Field(default_factory=dict)
+    pitch: dict[str, float | str | None] | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
 # Analysis outputs
 # --------------------------------------------------------------------------- #
 

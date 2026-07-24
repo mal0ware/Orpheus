@@ -28,6 +28,8 @@ from orpheus_mcp.models import (
     GateResult,
     GateSet,
     Recon,
+    SoundCharacter,
+    StemHandle,
     StemResult,
     Timeline,
     Window,
@@ -44,6 +46,7 @@ __all__ = [
     "get_chords",
     "separate_region",
     "verify_stem",
+    "characterize",
     "register",
 ]
 
@@ -521,6 +524,129 @@ def verify_stem(
     )
 
 
+# --------------------------------------------------------------------------- #
+# characterize (Task 6.1, §7/§9) — SoundCharacter descriptors, librosa tier
+# --------------------------------------------------------------------------- #
+
+_DESCRIPTORS_SCHEMA_VERSION = 1
+
+
+def _descriptors_meta(
+    source_path: str, meta_stem_type: str, produced_by: str, complement: bool, dereverb_used: bool
+) -> dict:
+    """The §9 cache sidecar shape for a ``descriptors/<qualifier>`` artifact — the standard
+    schema/registry/verify-config ingredients plus WHAT was characterized (stem type, producer,
+    complement flag) and WHETHER the vocal dereverb wet−dry path ran (a heuristic-only result
+    and a dereverbed result for the same audio must not collide)."""
+    return {
+        "schema_version": _DESCRIPTORS_SCHEMA_VERSION,
+        "registry_version": cachefs.registry_version(),
+        "verify_config_hash": cachefs.verify_config_hash(),
+        "decoder": cachefs.decoder_for(source_path),
+        "stem_type": meta_stem_type,
+        "produced_by": produced_by,
+        "complement": complement,
+        "dereverb_used": dereverb_used,
+    }
+
+
+def _crop_source(src, region: Window):  # type: ignore[no-untyped-def]
+    """Return a copy of ``src`` with its PCM cropped to ``region`` (clamped to ``[0, dur]``)
+    and ``meta.region`` set — §7 descriptors then measure only the requested span."""
+    from dataclasses import replace
+
+    from orpheus_mcp.analysis.cachefs import Pcm
+
+    samples = src.pcm.samples
+    if samples.ndim < 2:
+        samples = samples.reshape(-1, 1)
+    sr = src.pcm.sample_rate
+    n = samples.shape[0]
+    start_i = max(0, min(int(round(region.start_s * sr)), n))
+    end_i = max(start_i, min(int(round(region.end_s * sr)), n))
+    cropped = samples[start_i:end_i]
+    new_pcm = Pcm(
+        samples=cropped,
+        sample_rate=sr,
+        path=src.pcm.path,
+        pcm_hash=src.pcm.pcm_hash,
+        duration_s=cropped.shape[0] / sr if sr else 0.0,
+        decoder=src.pcm.decoder,
+    )
+    clamped = Window(start_s=start_i / sr, end_s=end_i / sr) if sr else region
+    new_meta = src.meta.model_copy(update={"region": clamped})
+    return replace(src, pcm=new_pcm, meta=new_meta)
+
+
+def characterize(
+    source: str | StemHandle,
+    region: Window | None = None,
+    *,
+    cache: CacheFS | None = None,
+    dereverb: SeparatorEngine | None = None,
+) -> SoundCharacter:
+    """§7 ``SoundCharacter``: measure post-FX spectral / dynamics / harmonics / stereo /
+    time-fx / pitch descriptors for ``source`` (a literal audio path or a :class:`StemHandle`
+    to a cached stem), caching the result under kind ``descriptors/<stem-or-region>`` (§9). A
+    cache HIT never re-runs the DSP.
+
+    ``region`` (literal-path sources) crops the analysis to that span before measuring. The
+    vocal reverb wet−dry path (``reverb_approx=False``) runs only for a ``stem_type=="vocals"``
+    source with a usable dereverb engine — ``dereverb`` may be injected (tests / the ladder);
+    otherwise a default engine is resolved when [separation] is present, and the reverb
+    heuristic (``reverb_approx=True``, noted in ``SoundCharacter.notes``) runs when it is not.
+    Does not modify the input audio or any REAPER project — it does write to the local
+    analysis cache."""
+    from orpheus_mcp.analysis.descriptors import compute_character, resolve_source
+
+    fs = cache if cache is not None else CacheFS()
+    src = resolve_source(source, fs)
+    if region is not None:
+        src = _crop_source(src, region)
+
+    engine = dereverb
+    if engine is None and src.meta.stem_type == "vocals":
+        engine = _default_dereverb_engine()
+    dereverb_used = engine is not None and src.meta.stem_type == "vocals"
+
+    source_path = source if isinstance(source, str) else source.stem_path
+    file_hash = src.pcm.pcm_hash
+    qualifier = src.meta.stem_type
+    if src.meta.region is not None:
+        start_ms = round(src.meta.region.start_s * 1000)
+        end_ms = round(src.meta.region.end_s * 1000)
+        qualifier = f"{qualifier}_{start_ms}-{end_ms}"
+    kind = f"descriptors/{qualifier}"
+    meta = _descriptors_meta(
+        source_path, src.meta.stem_type, src.meta.produced_by, src.meta.complement, dereverb_used
+    )
+
+    hit = fs.read_json(file_hash, kind, meta=meta)
+    if hit is not None:
+        return SoundCharacter.model_validate(hit)
+
+    character = compute_character(src, dereverb=engine)
+    fs.write_json(file_hash, kind, character.model_dump(mode="json"), meta=meta)
+    return character
+
+
+def _default_dereverb_engine() -> SeparatorEngine | None:
+    """The default engine for the rank-1 dereverb registry entry, or ``None`` when no entry
+    exists or [separation] cannot build one — constructing the engine is cheap (heavy deps load
+    only when it actually runs), so a graceful ``None`` here just routes vocals to the reverb
+    heuristic."""
+    try:
+        from orpheus_mcp.analysis import model_registry as _mr
+        from orpheus_mcp.analysis.separation import _default_engine
+
+        entry = _mr.resolve_dereverb_entry()
+        if entry is None:
+            return None
+        return _default_engine(entry)
+    except Exception:  # noqa: BLE001 - any resolution/build failure degrades to the heuristic
+        return None
+
+
 def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG001 - uniform signature
     """Registers the ``reference`` category. Probes for librosa BEFORE registering any
     tool: every tool in this category needs it, and ``registry.register_tools``'s
@@ -587,6 +713,25 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
         files or any REAPER project (``readOnlyHint``).
         """
         return verify_stem(stem_path, mix_path, region, timeline)
+
+    @mcp.tool(name="characterize", annotations=_RO)
+    def characterize_tool(source: str, region: Window | None = None) -> SoundCharacter:
+        """§7 sound character: post-FX spectral (centroid/rolloff/tilt + sketch & rule bands),
+        dynamics (LUFS/crest/attack/kurtosis), harmonics (even/odd flavor), stereo width +
+        correlation (N/A for mono/dual-mono sources — never fabricated), time-based FX (delay
+        time + feedback, modulation rate/depth/class, reverb wet−dry or decay-heuristic), and
+        pitch (melodic sources only). Also stamps the source's measured audio bandwidth (the
+        spectral cliff).
+
+        Decodes ``source`` (optionally cropped to ``region``), caches the result under the
+        decoded-PCM hash + descriptor kind so repeat calls on the same audio never re-run the
+        DSP. CPU-only (librosa tier); the vocal dereverb wet−dry path is used when the
+        [separation] extra is present and degrades to the reverb decay heuristic (flagged in
+        the result's notes) when it is not. Does not modify the input audio or any REAPER
+        project (``readOnlyHint``) — it does write to the local analysis cache
+        (``~/.orpheus_cache``).
+        """
+        return characterize(source, region)
 
     _panns_available = (
         importlib.util.find_spec("panns_inference") is not None
