@@ -51,6 +51,10 @@ _REF_FREQ_HZ = 3500.0
 # task-11.2-report.md) so the loop needs TWO corrections to close a real, closable gap,
 # rather than one, giving this test a genuinely multi-iteration trajectory to assert over.
 _REF_Q = 3.5
+# The corrective loop deliberately uses a BLIND default Q (a common musical bell width), NOT
+# the reference's hidden Q: convergence must come from the loop re-measuring and re-correcting,
+# not from knowing the reference's bandwidth by construction (11.2 review finding).
+_CORRECTIVE_Q = 2.0
 
 
 @pytest.fixture
@@ -147,7 +151,7 @@ async def test_closed_fx_loop_converges_against_the_fake_bridge(mcp_client, refe
             )
             await c.call_tool(
                 "set_fx_param",
-                {"track": "1", "fx_index": fx_index, "param": "q", "value": _REF_Q},
+                {"track": "1", "fx_index": fx_index, "param": "q", "value": _CORRECTIVE_Q},
             )
 
             render = await c.call_tool(
@@ -160,7 +164,11 @@ async def test_closed_fx_loop_converges_against_the_fake_bridge(mcp_client, refe
             iterations += 1
 
     # §12 slice-11 convergence bar:
-    assert iterations <= CFG.FX_LOOP_MAX_ITERATIONS, deltas
+    # len(deltas) = initial measurement + one per applied iteration; convergence must have
+    # occurred strictly within the budget (the while-bound alone can't prove convergence).
+    assert len(deltas) - 1 <= CFG.FX_LOOP_MAX_ITERATIONS, deltas
+    # under rule 1's trigger WITHIN the budget, not merely at loop exit:
+    assert deltas[-1] < 3.0, deltas
     # the 2-5 kHz delta shrinks MONOTONICALLY every iteration ...
     assert all(
         abs(deltas[i + 1]) < abs(deltas[i]) for i in range(len(deltas) - 1)
