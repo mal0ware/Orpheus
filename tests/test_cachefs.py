@@ -282,3 +282,83 @@ def test_registry_version_matches_registry_file_hash():
 
     expected = hashlib.sha256(registry_path().read_bytes()).hexdigest()
     assert cachefs.registry_version() == expected
+
+
+# --------------------------------------------------------------------------- #
+# checkpoints/ reservation (review fix, Task 12.2 wave 1): clear/LRU must never touch
+# model_registry.checkpoint_dir()'s downloaded weights, which live under the SAME cache
+# root as the analysis artifacts CacheFS itself owns.
+# --------------------------------------------------------------------------- #
+
+
+def test_entry_dirs_excludes_checkpoints(tmp_path):
+    fs = CacheFS(tmp_path)
+    h = "33" * 32
+    meta = {"schema_version": 1}
+    fs.write_json(h, "recon", {"x": 1}, meta=meta)
+
+    ckpt_dir = tmp_path / "checkpoints" / "some-model"
+    ckpt_dir.mkdir(parents=True)
+    (ckpt_dir / "weights.bin").write_bytes(b"x" * 1000)
+
+    assert [d.name for d in fs.entry_dirs()] == [h]
+    assert fs.entry_count() == 1
+
+
+def test_size_bytes_excludes_checkpoints(tmp_path):
+    fs = CacheFS(tmp_path)
+    h = "44" * 32
+    meta = {"schema_version": 1}
+    fs.write_json(h, "recon", {"data": "y" * 100}, meta=meta)
+    size_before_checkpoint = fs.size_bytes()
+
+    ckpt_dir = tmp_path / "checkpoints" / "some-model"
+    ckpt_dir.mkdir(parents=True)
+    # Deliberately much bigger than the analysis entry above -- if size_bytes() ever
+    # regresses to counting checkpoints/, this assertion catches it immediately.
+    (ckpt_dir / "weights.bin").write_bytes(b"x" * 5_000_000)
+
+    assert fs.size_bytes() == size_before_checkpoint
+
+
+def test_clear_never_touches_checkpoints(tmp_path):
+    fs = CacheFS(tmp_path)
+    h = "55" * 32
+    meta = {"schema_version": 1}
+    fs.write_json(h, "recon", {"x": 1}, meta=meta)
+
+    ckpt_dir = tmp_path / "checkpoints" / "some-model"
+    ckpt_dir.mkdir(parents=True)
+    weights = ckpt_dir / "weights.bin"
+    payload = b"x" * 1000
+    weights.write_bytes(payload)
+
+    fs.clear()
+
+    assert fs.read_json(h, "recon", meta=meta) is None  # the analysis entry IS gone
+    assert weights.is_file()  # the checkpoint survives, byte-for-byte
+    assert weights.read_bytes() == payload
+
+
+def test_evict_lru_never_evicts_checkpoints(tmp_path, monkeypatch):
+    # Cap forced tiny (bytes, not GB) so eviction triggers even though the only entry that
+    # could legitimately be evicted (the "66" recon entry) is small.
+    monkeypatch.setattr(CFG, "CACHE_SIZE_CAP_GB", 1e-9)
+    fs = CacheFS(tmp_path)
+
+    ckpt_dir = tmp_path / "checkpoints" / "some-model"
+    ckpt_dir.mkdir(parents=True)
+    weights = ckpt_dir / "weights.bin"
+    payload = b"x" * 5000
+    weights.write_bytes(payload)
+
+    h = "66" * 32
+    meta = {"schema_version": 1}
+    fs.write_json(h, "recon", {"data": "z" * 5000}, meta=meta)
+
+    freed = fs.evict_lru()
+
+    assert freed > 0  # the "66" entry WAS evicted (proves the cap actually bit)
+    assert fs.read_json(h, "recon", meta=meta) is None
+    assert weights.is_file()  # but checkpoints/ was never even a candidate
+    assert weights.read_bytes() == payload

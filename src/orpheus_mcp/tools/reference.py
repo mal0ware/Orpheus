@@ -40,6 +40,7 @@ from orpheus_mcp.models import (
     StemResult,
     Timeline,
     VstEntry,
+    VstSuggestions,
     Window,
 )
 
@@ -1125,34 +1126,47 @@ def load_vst_catalog(path: str | Path | None = None) -> list[VstEntry]:
 
 def suggest_free_vst(
     need: str, limit: int = 3, *, catalog: list[VstEntry] | None = None
-) -> list[VstEntry]:
+) -> VstSuggestions:
     """§15.4 curated free-VST catalog lookup (closes Q7): a PURE data lookup over
     ``data/vst_catalog.json`` — this function makes NO network call, ever, and never
     downloads or installs anything (the standing recommend-only decision from the original
     design, §8 step 2/§15.4). Splits ``need`` into lowercase whitespace tokens and matches
     each against every entry's ``intents`` + ``category`` + ``name`` (case-insensitive
     substring match); entries are ranked by TOKEN MATCH COUNT descending (ties keep catalog
-    order), and the top ``limit`` are returned (an empty list if nothing matched at all).
+    order), and the top ``limit`` go into the result's ``entries``.
 
     Recommend-only: the returned entries carry ``url``/``license``/``account_required`` so
     Claude can hand the user a link and an honest account-wall flag, never a
     download/install action of Orpheus's own. ``catalog`` is a test seam (an explicit
     pre-loaded entry list, bypassing the file read); a production call leaves it ``None``
-    and loads ``data/vst_catalog.json`` fresh via :func:`load_vst_catalog`."""
+    and loads ``data/vst_catalog.json`` fresh via :func:`load_vst_catalog`.
+
+    ``notes`` is empty whenever ``entries`` is non-empty. On a ZERO-match ``need`` (no
+    tokens at all, or no catalog entry scored above zero), ``entries`` is ``[]`` and
+    ``notes`` carries exactly one actionable note naming ``need`` and the catalog's
+    available categories, instead of a bare empty list the caller has to interpret itself."""
     entries = catalog if catalog is not None else load_vst_catalog()
     tokens = [t for t in re.split(r"\s+", need.strip().lower()) if t]
-    if not tokens:
-        return []
 
     scored: list[tuple[int, int, VstEntry]] = []
-    for idx, entry in enumerate(entries):
-        haystack = " ".join([entry.name, entry.category, *entry.intents]).lower()
-        score = sum(1 for tok in tokens if tok in haystack)
-        if score > 0:
-            scored.append((score, idx, entry))
+    if tokens:
+        for idx, entry in enumerate(entries):
+            haystack = " ".join([entry.name, entry.category, *entry.intents]).lower()
+            score = sum(1 for tok in tokens if tok in haystack)
+            if score > 0:
+                scored.append((score, idx, entry))
+        scored.sort(key=lambda item: (-item[0], item[1]))
 
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return [entry for _, _, entry in scored[:limit]]
+    matched = [entry for _, _, entry in scored[:limit]]
+    if matched:
+        return VstSuggestions(entries=matched)
+
+    categories = sorted({entry.category for entry in entries})
+    note = (
+        f"no catalog entry matched '{need}' — try broader terms "
+        f"(categories: {', '.join(categories)})"
+    )
+    return VstSuggestions(entries=[], notes=[note])
 
 
 # --------------------------------------------------------------------------- #
@@ -1161,17 +1175,23 @@ def suggest_free_vst(
 
 
 def clear_analysis_cache(*, cache: CacheFS | None = None) -> CacheClearResult:
-    """§9 ``clear_analysis_cache``: wipe the ENTIRE local analysis cache
-    (``~/.orpheus_cache`` by default — every cached recon/timeline/chords/lyrics/stems/
-    descriptors artifact across every analyzed file, plus the file-bytes hash memo) via
-    :meth:`~orpheus_mcp.analysis.cachefs.CacheFS.clear`. Destructive (unlike every other
-    tool in this module) — the NEXT call to any reference tool re-decodes and re-computes
-    from scratch. Measures ``bytes_freed``/``entries_cleared`` BEFORE clearing (so the
-    result is honest even though the directories are gone by the time it returns)."""
+    """§9 ``clear_analysis_cache``: wipe every cached ANALYSIS artifact under the local
+    analysis cache (``~/.orpheus_cache`` by default — every cached recon/timeline/chords/
+    lyrics/stems/descriptors artifact across every analyzed file, plus the file-bytes hash
+    memo) via :meth:`~orpheus_mcp.analysis.cachefs.CacheFS.clear`. Destructive (unlike every
+    other tool in this module) — the NEXT call to any reference tool re-decodes and
+    re-computes from scratch. Measures ``bytes_freed``/``entries_cleared`` BEFORE clearing
+    (so the result is honest even though the directories are gone by the time it returns),
+    counting through :meth:`CacheFS.entry_dirs`/``entry_count`` — the SAME filter
+    ``fs.clear()`` itself uses, so this count can never drift out of sync with what actually
+    gets deleted.
+
+    NEVER touches ``checkpoints/`` (downloaded model weights, ``model_registry.
+    checkpoint_dir()`` — an install-time tool artifact, not an analysis artifact §9 owns):
+    that directory is excluded at the source, ``CacheFS.entry_dirs()`` — see
+    ``cachefs._RESERVED_TOP_LEVEL``."""
     fs = cache if cache is not None else CacheFS()
-    entries_cleared = (
-        sum(1 for d in fs.root.iterdir() if d.is_dir()) if fs.root.is_dir() else 0
-    )
+    entries_cleared = fs.entry_count()
     bytes_freed = fs.size_bytes()
     fs.clear()
     return CacheClearResult(bytes_freed=bytes_freed, entries_cleared=entries_cleared)
@@ -1362,29 +1382,37 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
         )
 
     @mcp.tool(name="suggest_free_vst", annotations=_RO)
-    def suggest_free_vst_tool(need: str, limit: int = 3) -> list[VstEntry]:
+    def suggest_free_vst_tool(need: str, limit: int = 3) -> VstSuggestions:
         """§15.4 curated free-VST catalog (closes Q7): keyword-match ``need`` (e.g. "cavern
         reverb", "tape saturation", "concert band strings") against ``data/vst_catalog.json``
-        — §8.1's instruments + effects tables — ranked by token match count, top ``limit``
-        returned. PURE data lookup: this tool makes no network call, ever, and Orpheus never
-        downloads or installs a plugin on the user's behalf (standing recommend-only
-        decision) — it only hands back names, vendors, licenses, URLs, and an honest
-        ``account_required`` flag for the catalog's account/email/Patreon-gated exceptions.
-        This is Step 2's source-3 fallback (§8): try the user's installed inventory
-        (``list_installed_fx``) and REAPER stock/JSFX (the apply path) first; reach for this
-        catalog only when neither covers the intent well. Does not modify anything
+        — §8.1's instruments + effects tables — ranked by token match count, top ``limit`` in
+        the result's ``entries``. PURE data lookup: this tool makes no network call, ever, and
+        Orpheus never downloads or installs a plugin on the user's behalf (standing
+        recommend-only decision) — it only hands back names, vendors, licenses, URLs, and an
+        honest ``account_required`` flag for the catalog's account/email/Patreon-gated
+        exceptions. This is Step 2's source-3 fallback (§8): try the user's installed
+        inventory (``list_installed_fx``) and REAPER stock/JSFX (the apply path) first; reach
+        for this catalog only when neither covers the intent well. On a ZERO-match ``need``,
+        ``entries`` is empty and ``notes`` carries one actionable note (try broader terms)
+        instead of leaving Claude to interpret a bare empty list. Does not modify anything
         (``readOnlyHint``) and does not touch the analysis cache.
         """
         return suggest_free_vst(need, limit)
 
     @mcp.tool(name="clear_analysis_cache", annotations=_DESTRUCTIVE)
     def clear_analysis_cache_tool() -> CacheClearResult:
-        """§9 wipe the ENTIRE local analysis cache (``~/.orpheus_cache``) — every cached
-        recon/timeline/chords/lyrics/stems/descriptors artifact for every file analyzed so
-        far, plus the file-bytes hash memo. Returns ``bytes_freed``/``entries_cleared``
-        (measured before the wipe). Destructive (``destructiveHint``, unlike every other tool
-        in this module): the next call to any reference tool re-decodes and re-computes from
-        scratch. Does not touch REAPER or any input audio file — only the local cache.
+        """§9 wipe every cached ANALYSIS artifact under the local analysis cache
+        (``~/.orpheus_cache``) — every cached recon/timeline/chords/lyrics/stems/descriptors
+        artifact for every file analyzed so far, plus the file-bytes hash memo. Returns
+        ``bytes_freed``/``entries_cleared`` (measured before the wipe). Destructive
+        (``destructiveHint``, unlike every other tool in this module): the next call to any
+        reference tool re-decodes and re-computes from scratch. Does not touch REAPER or any
+        input audio file — only the local cache.
+
+        Downloaded MODEL CHECKPOINTS (``~/.orpheus_cache/checkpoints/``,
+        ``model_registry.checkpoint_dir()``) are NEVER touched by this tool, at any cache
+        size — they are install-time tool artifacts, not analysis cache, and are excluded
+        from both the wipe and the ``entries_cleared``/``bytes_freed`` counts.
         """
         return clear_analysis_cache()
 

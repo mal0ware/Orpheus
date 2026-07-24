@@ -20,7 +20,7 @@ from fastmcp import Client, FastMCP
 
 from orpheus_mcp.analysis.cachefs import CacheFS
 from orpheus_mcp.analysis.config import CFG
-from orpheus_mcp.models import CacheClearResult, VstEntry
+from orpheus_mcp.models import CacheClearResult, VstEntry, VstSuggestions
 from orpheus_mcp.registry import register_tools
 from orpheus_mcp.tools.reference import (
     VstCatalogError,
@@ -145,42 +145,48 @@ def test_catalog_empty_entries_list_raises(tmp_path):
 
 
 def test_suggest_free_vst_cavern_reverb_returns_valhalla_supermassive_top3():
-    results = suggest_free_vst("cavern reverb")
-    assert len(results) <= 3
-    assert any(e.name == "Valhalla Supermassive" for e in results)
+    result = suggest_free_vst("cavern reverb")
+    assert isinstance(result, VstSuggestions)
+    assert len(result.entries) <= 3
+    assert any(e.name == "Valhalla Supermassive" for e in result.entries)
+    assert result.notes == []
 
 
 def test_suggest_free_vst_ranks_by_match_count_descending():
     # "Valhalla Supermassive" matches BOTH tokens ("cavern" is unique to it); "Dragonfly
     # Reverbs" and other reverb entries match only "reverb" -- Supermassive must rank first.
-    results = suggest_free_vst("cavern reverb", limit=5)
-    assert results[0].name == "Valhalla Supermassive"
+    result = suggest_free_vst("cavern reverb", limit=5)
+    assert result.entries[0].name == "Valhalla Supermassive"
 
 
 def test_suggest_free_vst_respects_limit():
-    results = suggest_free_vst("reverb", limit=1)
-    assert len(results) == 1
+    result = suggest_free_vst("reverb", limit=1)
+    assert len(result.entries) == 1
 
 
 def test_suggest_free_vst_default_limit_is_3():
-    results = suggest_free_vst("reverb")
-    assert len(results) <= 3
+    result = suggest_free_vst("reverb")
+    assert len(result.entries) <= 3
 
 
-def test_suggest_free_vst_no_match_returns_empty_list():
-    assert suggest_free_vst("definitely-not-a-real-plugin-need-xyzzy") == []
+def test_suggest_free_vst_no_match_returns_empty_entries_with_one_note():
+    result = suggest_free_vst("definitely-not-a-real-plugin-need-xyzzy")
+    assert result.entries == []
+    assert len(result.notes) == 1
+    assert "definitely-not-a-real-plugin-need-xyzzy" in result.notes[0]
+    assert "categories" in result.notes[0]
 
 
 def test_suggest_free_vst_case_insensitive():
-    lower = [e.name for e in suggest_free_vst("cavern reverb")]
-    upper = [e.name for e in suggest_free_vst("CAVERN REVERB")]
+    lower = [e.name for e in suggest_free_vst("cavern reverb").entries]
+    upper = [e.name for e in suggest_free_vst("CAVERN REVERB").entries]
     assert lower == upper
 
 
 def test_suggest_free_vst_entries_carry_license_and_account_flags():
-    results = suggest_free_vst("tape saturation")
-    assert results
-    for e in results:
+    result = suggest_free_vst("tape saturation")
+    assert result.entries
+    for e in result.entries:
         assert isinstance(e.account_required, bool)
         assert e.license
         assert e.url
@@ -188,8 +194,8 @@ def test_suggest_free_vst_entries_carry_license_and_account_flags():
 
 def test_suggest_free_vst_matches_over_category_too():
     # "instrument" as a literal need-token should surface instrument-category entries.
-    results = suggest_free_vst("instrument", limit=10)
-    assert any(e.category == "instrument" for e in results)
+    result = suggest_free_vst("instrument", limit=10)
+    assert any(e.category == "instrument" for e in result.entries)
 
 
 def test_suggest_free_vst_never_calls_the_network(monkeypatch):
@@ -202,13 +208,13 @@ def test_suggest_free_vst_never_calls_the_network(monkeypatch):
 
     monkeypatch.setattr(socket, "socket", _boom)
     catalog = load_vst_catalog()  # loaded BEFORE the patch -- pure list, no I/O from here on
-    results = suggest_free_vst("cavern reverb", catalog=catalog)
-    assert results
+    result = suggest_free_vst("cavern reverb", catalog=catalog)
+    assert result.entries
 
 
 def test_suggest_free_vst_result_contains_urls_never_a_download_action():
-    results = suggest_free_vst("cavern reverb")
-    for e in results:
+    result = suggest_free_vst("cavern reverb")
+    for e in result.entries:
         assert e.url
         # The contract is data-only: no field on VstEntry represents an install/download
         # action, only descriptive/recommend fields.
@@ -257,6 +263,34 @@ def test_clear_analysis_cache_next_call_recomputes(tmp_path):
     assert fs.read_json("hash1", "recon", meta=meta) is None
 
 
+def test_clear_analysis_cache_never_touches_model_checkpoints(tmp_path, monkeypatch):
+    """The Critical review finding: clear_analysis_cache must never delete downloaded model
+    weights under checkpoints/ (model_registry.checkpoint_dir()), which lives under the SAME
+    cache root as the analysis artifacts this tool is meant to wipe. Env-override the cache
+    root so CacheFS() and checkpoint_dir() resolve to the identical root, exactly as they do
+    in production."""
+    from orpheus_mcp.analysis import model_registry
+
+    monkeypatch.setenv(CFG.CACHE_DIR_ENV, str(tmp_path))
+    fs = CacheFS()
+    fs.write_json("hash1", "recon", {"a": 1}, meta={"schema_version": 1})
+
+    ckpt_dir = model_registry.checkpoint_dir("some-model")
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    weights = ckpt_dir / "weights.bin"
+    payload = b"x" * 10_000_000  # stands in for a real ~10 GB checkpoint payload
+    weights.write_bytes(payload)
+
+    result = clear_analysis_cache(cache=fs)
+
+    # Only the analysis hash entry counted/cleared -- checkpoints/ is neither.
+    assert result.entries_cleared == 1
+    assert result.bytes_freed < len(payload)
+    assert fs.read_json("hash1", "recon", meta={"schema_version": 1}) is None
+    assert weights.is_file()
+    assert weights.read_bytes() == payload
+
+
 # --------------------------------------------------------------------------- #
 # Section 4: MCP tool registration contract
 # --------------------------------------------------------------------------- #
@@ -287,7 +321,7 @@ async def test_clear_analysis_cache_tool_registered_destructive(mcp_client):
 async def test_suggest_free_vst_tool_via_client(mcp_client):
     async with mcp_client as c:
         result = await c.call_tool("suggest_free_vst", {"need": "cavern reverb"})
-    names = [e.name for e in result.data]
+    names = [e.name for e in result.data.entries]
     assert "Valhalla Supermassive" in names
 
 

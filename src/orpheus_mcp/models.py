@@ -687,6 +687,17 @@ class VstEntry(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class VstSuggestions(BaseModel):
+    """``suggest_free_vst``'s return shape: the ranked catalog matches (``entries``, possibly
+    empty) plus an honest ``notes`` channel — empty whenever at least one entry matched,
+    populated with one explanatory note when NOTHING in ``data/vst_catalog.json`` matched
+    ``need`` at all, so the caller gets an actionable reason instead of a bare empty list it
+    has to interpret itself."""
+
+    entries: list[VstEntry] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
 class CacheClearResult(BaseModel):
     """``clear_analysis_cache``'s result: how much the §9 analysis cache
     (``~/.orpheus_cache``) held before it was wiped. ``bytes_freed`` is the total on-disk

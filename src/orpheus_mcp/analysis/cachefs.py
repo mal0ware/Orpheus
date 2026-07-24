@@ -366,6 +366,18 @@ def _rmtree_retry(path: Path) -> None:
 # CacheFS — the on-disk artifact store
 # --------------------------------------------------------------------------- #
 
+_RESERVED_TOP_LEVEL = frozenset({"checkpoints"})
+"""Top-level cache-root subdirectories §9's ``clear``/``evict_lru`` (and anything built on
+:meth:`CacheFS.entry_dirs`) must NEVER touch. ``checkpoints/`` is where
+``model_registry.checkpoint_dir()`` stores downloaded model weights (frequently ~10 GB) —
+an install-time TOOL artifact that happens to live under the same cache root as §9's
+analysis artifacts, not one of them. ``clear_analysis_cache``/LRU eviction govern ANALYSIS
+artifacts only; a model checkpoint is never "stale" the way a cached recon/timeline/chords
+artifact is, and re-downloading ~10 GB because a user asked to free a few MB of analysis
+cache would be a silent, expensive surprise. NOTE: ``renders/`` (§7.1) is deliberately NOT in
+this set — render outputs are analysis-side artifacts §9's LRU already treats as ordinary,
+evictable/clearable entries, and must stay that way."""
+
 
 class CacheFS:
     """The §9 cache filesystem, rooted at ``<root>/<pcm-sha256>/``.
@@ -375,6 +387,9 @@ class CacheFS:
     <start_ms>-<end_ms>/`` for separated-stem regions (``stem_dir``). LRU eviction operates
     on whole pcm-hash directories, keyed by that directory's mtime; pinned hashes are
     skipped entirely (in-flight-pipeline protection — an in-process set, not persisted).
+    ``checkpoints/`` (``model_registry.checkpoint_dir()``'s downloaded model weights) is
+    NEVER a candidate for ``clear``/``evict_lru``/``size_bytes`` — see
+    :data:`_RESERVED_TOP_LEVEL` and :meth:`entry_dirs`.
     """
 
     def __init__(self, root: Path | None = None) -> None:
@@ -466,21 +481,40 @@ class CacheFS:
     # -- size + eviction -------------------------------------------------------- #
 
     def size_bytes(self) -> int:
-        """Total on-disk size of every cached pcm-hash directory (excludes the memo)."""
-        return sum(_dir_size(d) for d in self._entry_dirs())
+        """Total on-disk size of every cached pcm-hash directory (excludes the memo AND
+        ``checkpoints/`` — see :data:`_RESERVED_TOP_LEVEL`)."""
+        return sum(_dir_size(d) for d in self.entry_dirs())
 
-    def _entry_dirs(self) -> list[Path]:
+    def entry_dirs(self) -> list[Path]:
+        """Every top-level directory under the cache root that §9's clear/LRU are allowed to
+        touch — every entry EXCEPT :data:`_RESERVED_TOP_LEVEL` (currently just
+        ``checkpoints/``). This is the single source of truth: ``size_bytes``, ``evict_lru``,
+        and ``clear`` all filter through this method, and
+        ``tools.reference.clear_analysis_cache`` counts ``entries_cleared`` from it too, so
+        the "what counts as a clearable/evictable entry" definition never drifts between the
+        two call sites."""
         if not self.root.is_dir():
             return []
-        return [d for d in self.root.iterdir() if d.is_dir()]
+        return [
+            d
+            for d in self.root.iterdir()
+            if d.is_dir() and d.name not in _RESERVED_TOP_LEVEL
+        ]
+
+    def entry_count(self) -> int:
+        """``len(self.entry_dirs())`` — the count ``clear_analysis_cache``'s
+        ``entries_cleared`` reports, measured BEFORE ``clear()`` runs."""
+        return len(self.entry_dirs())
 
     def evict_lru(self) -> int:
         """Evict whole pcm-hash directories, oldest-mtime first, until under
         ``CFG.CACHE_SIZE_CAP_GB`` — pinned hashes are never touched (and may leave the
-        cache over cap if pinned data alone exceeds it). Returns bytes freed."""
+        cache over cap if pinned data alone exceeds it); ``checkpoints/`` is never a
+        candidate either (excluded by :meth:`entry_dirs`, see :data:`_RESERVED_TOP_LEVEL`).
+        Returns bytes freed."""
         cap_bytes = int(CFG.CACHE_SIZE_CAP_GB * (1024**3))
         entries = [
-            (d.stat().st_mtime, d) for d in self._entry_dirs() if d.name not in self._pinned
+            (d.stat().st_mtime, d) for d in self.entry_dirs() if d.name not in self._pinned
         ]
         total = self.size_bytes()
         if total <= cap_bytes:
@@ -496,8 +530,10 @@ class CacheFS:
         return freed
 
     def clear(self) -> None:
-        """Wipe every cached artifact AND the file-bytes memo — a full reset."""
-        for d in self._entry_dirs():
+        """Wipe every cached ANALYSIS artifact AND the file-bytes memo — a full reset of §9's
+        cache. Deliberately does NOT touch ``checkpoints/`` (see :data:`_RESERVED_TOP_LEVEL`):
+        model weights under there are install-time tool artifacts, not analysis cache."""
+        for d in self.entry_dirs():
             _rmtree_retry(d)
         memo = self.root / "hash_memo.json"
         with contextlib.suppress(FileNotFoundError):
