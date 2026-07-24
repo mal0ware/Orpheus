@@ -17,17 +17,27 @@ from scripts.pick_sed_head import (
     ROLE_CLASS_MAP,
     TIE_BREAK_HEAD,
     FixtureSetStale,
+    ScoreReport,
     activity_frames_from_mono,
+    append_pin_run_d_section,
+    build_honest_caveat,
+    build_vocab_note,
+    describe_tie,
     frame_counts,
     frame_f1,
+    main,
     mapped_roles,
     pick_winner,
     predicted_frames,
     rms_dbfs,
     verify_manifest_integrity,
+    write_registry_head,
 )
 
+from orpheus_mcp.analysis.model_registry import RegistryError
 from orpheus_mcp.models import Timeline
+
+_REAL_PIN_REPORT = Path("docs/pins/2026-07-model-pins.md")
 
 # --------------------------------------------------------------------------- #
 # frame_counts / f1_from_counts / frame_f1
@@ -242,3 +252,233 @@ def test_verify_manifest_integrity_raises_on_corrupt_set_hash(tmp_path):
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(FixtureSetStale, match="fixture_set_hash"):
         verify_manifest_integrity(tmp_path)
+
+
+# --------------------------------------------------------------------------- #
+# describe_tie -- any tie among the top scorers pick_winner resolved, named (§ item 3)
+# --------------------------------------------------------------------------- #
+
+
+def test_describe_tie_no_tie_is_empty():
+    f1 = {"DecisionLevelMax": 0.50, "DecisionLevelAvg": 0.62, "DecisionLevelAtt": 0.55}
+    assert describe_tie(f1, pick_winner(f1)) == ""
+
+
+def test_describe_tie_three_way_names_all_three():
+    f1 = dict.fromkeys(CANDIDATE_HEADS, 0.70)
+    winner = pick_winner(f1)
+    note = describe_tie(f1, winner)
+    assert "three-way tie" in note
+    for head in CANDIDATE_HEADS:
+        assert f"`{head}`" in note
+    assert f"`{TIE_BREAK_HEAD}`" in note
+    assert "§15.6 breaks to" in note
+
+
+def test_describe_tie_two_way_including_att_names_both_and_breaks_to_att():
+    f1 = {"DecisionLevelMax": 0.40, "DecisionLevelAvg": 0.61, "DecisionLevelAtt": 0.61}
+    winner = pick_winner(f1)
+    assert winner == "DecisionLevelAtt"
+    note = describe_tie(f1, winner)
+    assert "two-way tie" in note
+    assert "`DecisionLevelAvg`" in note
+    assert "`DecisionLevelAtt`" in note
+    assert "`DecisionLevelMax`" not in note
+    assert "§15.6 breaks to `DecisionLevelAtt`" in note
+
+
+def test_describe_tie_two_way_without_att_names_both_and_falls_back():
+    f1 = {"DecisionLevelMax": 0.61, "DecisionLevelAvg": 0.61}
+    winner = pick_winner(f1)
+    assert winner == "DecisionLevelMax"
+    note = describe_tie(f1, winner)
+    assert "two-way tie" in note
+    assert "`DecisionLevelMax`" in note
+    assert "`DecisionLevelAvg`" in note
+    assert "was never scored" in note
+    assert "`DecisionLevelMax`" in note.split("breaking to")[1]
+
+
+def test_describe_tie_single_candidate_is_empty():
+    assert describe_tie({"DecisionLevelMax": 0.5}, "DecisionLevelMax") == ""
+
+
+# --------------------------------------------------------------------------- #
+# build_vocab_note -- derived IN CODE from the registry, "Drum machine" called out (item 1)
+# --------------------------------------------------------------------------- #
+
+
+def _write_registry(tmp_path: Path, entries: list[dict]) -> Path:
+    path = tmp_path / "model_registry.json"
+    path.write_text(json.dumps(entries), encoding="utf-8")
+    return path
+
+
+def test_build_vocab_note_against_real_registry_mentions_drum_machine():
+    # No registry_path override -- exercises the real, shipped data/model_registry.json,
+    # which the previous commit (24f8b7c) already fixed to carry "Drum machine" everywhere
+    # "Drum kit" appears.
+    note = build_vocab_note()
+    assert '"Drum machine"' in note
+    assert "4stem-a/bsroformer" in note
+    assert "MISSING" not in note
+
+
+def test_build_vocab_note_flags_a_missing_drum_machine_entry(tmp_path):
+    entries = [
+        {"id": "a/one", "tagger_classes": ["Drum kit", "Drum machine"]},
+        {"id": "b/two", "tagger_classes": ["Drum kit"]},  # missing Drum machine
+        {"id": "c/three", "tagger_classes": ["Piano"]},  # not drum-family at all
+    ]
+    path = _write_registry(tmp_path, entries)
+    note = build_vocab_note(registry_path=path)
+    assert "a/one" in note and "b/two" in note
+    assert "c/three" not in note
+    assert "MISSING from `b/two`" in note
+
+
+def test_build_vocab_note_no_drum_family_entries_is_empty(tmp_path):
+    entries = [{"id": "x/y", "tagger_classes": ["Piano"]}]
+    path = _write_registry(tmp_path, entries)
+    assert build_vocab_note(registry_path=path) == ""
+
+
+# --------------------------------------------------------------------------- #
+# build_honest_caveat -- derived from actual scores, fires only when overall F1 < 0.1
+# --------------------------------------------------------------------------- #
+
+
+def _report(**overrides) -> ScoreReport:
+    base = dict(
+        f1_table={h: {"bass": 0.0, "chords": 0.0, "drums": 0.071} for h in CANDIDATE_HEADS},
+        counts={h: {"__overall__": [18, 0, 1282]} for h in CANDIDATE_HEADS},
+        overall_f1=dict.fromkeys(CANDIDATE_HEADS, 0.027),
+        winner="DecisionLevelAtt",
+        n_fixtures=24,
+        roles_scored=["bass", "chords", "drums"],
+        heads_byte_identical=True,
+    )
+    base.update(overrides)
+    return ScoreReport(**base)
+
+
+def test_build_honest_caveat_fires_below_threshold_and_names_zero_roles():
+    report = _report()
+    caveat = build_honest_caveat(report)
+    assert "Honest caveat" in caveat
+    assert "`bass`" in caveat and "`chords`" in caveat
+    assert "`drums` only 0.071" in caveat
+    assert "CFG.TIMELINE_ACTIVITY_THRESHOLD" in caveat
+    assert "scripts/calibrate_gates.py" in caveat
+    assert "byte-identical activations" in caveat  # heads_byte_identical=True
+
+
+def test_build_honest_caveat_silent_above_threshold():
+    report = _report(overall_f1=dict.fromkeys(CANDIDATE_HEADS, 0.55))
+    assert build_honest_caveat(report) == ""
+
+
+def test_build_honest_caveat_empty_scores_is_empty():
+    assert build_honest_caveat(ScoreReport()) == ""
+
+
+def test_build_honest_caveat_non_identical_heads_uses_different_clause():
+    report = _report(heads_byte_identical=False)
+    caveat = build_honest_caveat(report)
+    assert "distinct scores" in caveat
+    assert "byte-identical activations" not in caveat
+
+
+# --------------------------------------------------------------------------- #
+# append_pin_run_d_section -- idempotent round-trip against a COPY of the real pin report
+# (item 1's required verification: no GPU, recorded scores, all four blocks survive).
+# --------------------------------------------------------------------------- #
+
+
+def test_append_pin_run_d_section_reproduces_all_four_content_blocks(tmp_path):
+    pin_copy = tmp_path / "2026-07-model-pins.md"
+    pin_copy.write_text(_REAL_PIN_REPORT.read_text(encoding="utf-8"), encoding="utf-8")
+
+    report = _report()
+    vocab_note = build_vocab_note()
+    fixture_hash = "f941582f7b246bf718cebace52a383f82d81761eb611a541b0153dea6a713289"
+
+    append_pin_run_d_section(
+        report, fixture_hash, vocab_note=vocab_note, pin_report_path=pin_copy
+    )
+    text = pin_copy.read_text(encoding="utf-8")
+
+    # Block 1: table.
+    assert "DecisionLevelMax" in text and "0.071" in text and "18/0/1282" in text
+    # Block 2: scope-limit paragraph (conditional -- present because heads_byte_identical).
+    assert "Known scope limit" in text
+    # Block 3: vocab note (Drum machine called out).
+    assert '"Drum machine"' in text
+    # Block 4: honest caveat (overall F1 0.027 < 0.1 threshold).
+    assert "Honest caveat" in text
+    # Pin run (a) (the other section already in the file) must survive untouched.
+    assert "## Pin run (a): separation + dereverb engines" in text
+    assert "4stem-a/bsroformer" in text
+
+    # Idempotent: re-appending replaces, never duplicates, the (d) section.
+    append_pin_run_d_section(
+        report, fixture_hash, vocab_note=vocab_note, pin_report_path=pin_copy
+    )
+    text_again = pin_copy.read_text(encoding="utf-8")
+    assert text_again.count("## Pin run (d): SED head selection") == 1
+    assert text_again.count("Honest caveat") == 1
+    assert text_again.count('"Drum machine"') == text.count('"Drum machine"')
+
+
+def test_append_pin_run_d_section_omits_scope_limit_when_heads_not_identical(tmp_path):
+    pin_copy = tmp_path / "pins.md"
+    report = _report(heads_byte_identical=False)
+    append_pin_run_d_section(report, "deadbeef" * 8, pin_report_path=pin_copy)
+    text = pin_copy.read_text(encoding="utf-8")
+    assert "Known scope limit" not in text
+
+
+# --------------------------------------------------------------------------- #
+# write_registry_head -- synthetic registry (item 4)
+# --------------------------------------------------------------------------- #
+
+
+def test_write_registry_head_replaces_not_duplicates(tmp_path):
+    entries = [
+        {"id": "other/entry", "head": "keep-me"},
+        {"id": "tagger/panns-sed", "head": "DecisionLevelMax"},
+    ]
+    path = _write_registry(tmp_path, entries)
+    write_registry_head("DecisionLevelAtt", registry_path=path)
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert len(raw) == 2  # no new entry appended
+    tagger_entries = [e for e in raw if e["id"] == "tagger/panns-sed"]
+    assert len(tagger_entries) == 1  # not duplicated
+    assert tagger_entries[0]["head"] == "DecisionLevelAtt"
+    assert raw[0]["head"] == "keep-me"  # untouched sibling entry
+
+
+def test_write_registry_head_missing_tagger_id_raises(tmp_path):
+    path = _write_registry(tmp_path, [{"id": "other/entry", "head": "x"}])
+    with pytest.raises(RegistryError, match="tagger/panns-sed"):
+        write_registry_head("DecisionLevelAtt", registry_path=path)
+
+
+# --------------------------------------------------------------------------- #
+# main()'s BLOCKED path -- exit code 2, "BLOCKED:" printed (item 4)
+# --------------------------------------------------------------------------- #
+
+
+def test_main_blocked_path_exits_2_and_prints_blocked(tmp_path, monkeypatch, capsys):
+    def _raise(_fixtures_dir):
+        raise FixtureSetStale("synthetic staleness for the test")
+
+    monkeypatch.setattr("scripts.pick_sed_head.verify_manifest_integrity", _raise)
+
+    code = main(["--fixtures-dir", str(tmp_path)])
+
+    assert code == 2
+    out = capsys.readouterr().out
+    assert "BLOCKED:" in out
+    assert "synthetic staleness for the test" in out

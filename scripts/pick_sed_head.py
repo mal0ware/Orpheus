@@ -148,6 +148,42 @@ def pick_winner(
     return tie_break if tie_break in tied else tied[0]
 
 
+_TIE_COUNT_WORDS = {2: "two", 3: "three", 4: "four"}
+
+
+def describe_tie(
+    f1_by_head: dict[str, float],
+    winner: str,
+    *,
+    candidates: Sequence[str] = CANDIDATE_HEADS,
+    tie_break: str = TIE_BREAK_HEAD,
+) -> str:
+    """Name -- not silently resolve -- ANY tie among the top-scoring heads ``pick_winner``
+    had to break (a 2-way tie included), mirroring its exact tie-detection logic so the two
+    functions never disagree about what counts as "tied". Returns ``""`` when there was a
+    single clear best head (nothing to annotate).
+    """
+    available = [h for h in candidates if h in f1_by_head]
+    if len(available) < 2:
+        return ""
+    best = max(f1_by_head[h] for h in available)
+    tied = [h for h in available if f1_by_head[h] == best]
+    if len(tied) < 2:
+        return ""
+
+    names = "/".join(f"`{h}`" for h in tied)
+    count_word = _TIE_COUNT_WORDS.get(len(tied), str(len(tied)))
+    if tie_break in tied:
+        return (
+            f"({count_word}-way tie on overall F1 among {names} -- "
+            f"§15.6 breaks to `{tie_break}`)"
+        )
+    return (
+        f"({count_word}-way tie on overall F1 among {names} -- `{tie_break}` was never "
+        f"scored, breaking to `{winner}` (first tied head in candidate order))"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Truth-activity frames from a stem's audio (CI-safe math; a real Pcm at call time)
 # --------------------------------------------------------------------------- #
@@ -286,7 +322,14 @@ def _fixture_dirs(manifest: dict, fixtures_dir: Path) -> list[Path]:
 class ScoreReport:
     """``f1_table``/``counts`` are keyed ``head -> (role | "__overall__") -> value`` —
     ``"__overall__"`` is the micro-pooled F1/counts across every scored role and fixture,
-    the number ``pick_winner`` actually decides on."""
+    the number ``pick_winner`` actually decides on.
+
+    ``heads_byte_identical`` is set by the scoring layer (``score_fixture_set``): True when
+    every scored head produced byte-identical frame counts (TP/FP/FN) for every role and
+    overall -- the observable proxy for "every head ran the same activations" (the known
+    ``panns-inference`` scope limit, §15.6). The pin-report writer uses this flag, not a
+    hand-typed assumption, to decide whether the "Known scope limit" paragraph applies.
+    """
 
     f1_table: dict[str, dict[str, float]] = field(default_factory=dict)
     counts: dict[str, dict[str, list[int]]] = field(default_factory=dict)
@@ -294,6 +337,7 @@ class ScoreReport:
     winner: str = ""
     n_fixtures: int = 0
     roles_scored: list[str] = field(default_factory=list)
+    heads_byte_identical: bool = False
 
 
 def score_fixture_set(
@@ -352,6 +396,9 @@ def score_fixture_set(
     }
     overall_f1 = {head: f1_table[head].get("__overall__", 0.0) for head in heads}
     winner = pick_winner(overall_f1, candidates=heads)
+    heads_byte_identical = len(heads) > 1 and all(
+        counts[h] == counts[heads[0]] for h in heads[1:]
+    )
 
     return ScoreReport(
         f1_table=f1_table,
@@ -360,6 +407,7 @@ def score_fixture_set(
         winner=winner,
         n_fixtures=n_fixtures,
         roles_scored=sorted(roles_seen),
+        heads_byte_identical=heads_byte_identical,
     )
 
 
@@ -399,6 +447,117 @@ def write_registry_head(winner: str, *, registry_path: Path | None = None) -> No
     path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
 
 
+_DRUM_FAMILY_CLASS = "Drum kit"
+_DRUM_MACHINE_CLASS = "Drum machine"
+
+
+def build_vocab_note(*, registry_path: Path | None = None) -> str:
+    """Derive the drums-family ``tagger_classes`` vocabulary note straight from
+    ``data/model_registry.json`` -- never hand-copied -- so a re-run of this script always
+    regenerates a semantically equivalent paragraph instead of an unreproducible one a human
+    had to type in by hand. Names every entry whose ``tagger_classes`` includes ``"Drum
+    kit"`` and explicitly states whether ``"Drum machine"`` is present alongside it: this
+    fixture forge's sample-rendered drum kit reads to PANNs as ``"Drum machine"`` far more
+    strongly than ``"Drum kit"``/``"Drum"`` (Task 2.1 desktop evidence,
+    ``test_panns_tagger_detects_drums_on_ci_sparse``), so an entry missing it would leave the
+    ``drums`` column above undercounting the class actually doing the detecting.
+
+    Returns ``""`` if the registry has no drums-family entries at all (nothing to say).
+    """
+    from orpheus_mcp.analysis import model_registry
+
+    path = registry_path if registry_path is not None else model_registry.registry_path()
+    raw = json.loads(path.read_text(encoding="utf-8"))
+
+    drum_family = [
+        item for item in raw if _DRUM_FAMILY_CLASS in item.get("tagger_classes", [])
+    ]
+    if not drum_family:
+        return ""
+
+    ids = ", ".join(f"`{item['id']}`" for item in drum_family)
+    without_machine = [
+        item["id"] for item in drum_family if _DRUM_MACHINE_CLASS not in item["tagger_classes"]
+    ]
+
+    if without_machine:
+        missing = ", ".join(f"`{i}`" for i in without_machine)
+        machine_note = (
+            f'`"{_DRUM_MACHINE_CLASS}"` is MISSING from {missing} -- a registry vocabulary '
+            "gap: this fixture forge's sample-rendered drum kit reads to PANNs as "
+            f'`"{_DRUM_MACHINE_CLASS}"` far more strongly than `"Drum kit"`/`"Drum"`, so the '
+            "`drums` column above undercounts the class actually doing the detecting for "
+            "these entries."
+        )
+    else:
+        machine_note = (
+            f'All of them list `"{_DRUM_MACHINE_CLASS}"` alongside `"{_DRUM_FAMILY_CLASS}"` '
+            "-- this fixture forge's sample-rendered drum kit reads to PANNs as "
+            f'`"{_DRUM_MACHINE_CLASS}"` far more strongly than `"Drum kit"`/`"Drum"` (Task '
+            "2.1 desktop evidence, `test_panns_tagger_detects_drums_on_ci_sparse`), so "
+            "without this class the `drums` column above would be dropping the one AudioSet "
+            "label doing the actual detecting."
+        )
+
+    return (
+        f"Registry vocabulary (drums-family `tagger_classes`, {len(drum_family)} entries "
+        f'list `"{_DRUM_FAMILY_CLASS}"`): {ids}. {machine_note}'
+    )
+
+
+def build_honest_caveat(report: ScoreReport, *, f1_threshold: float = 0.1) -> str:
+    """The low-F1/domain-shift caveat (§15.6), computed from ``report``'s actual scores --
+    never hand-typed after the fact. Fires only when every candidate head's overall F1 is
+    below ``f1_threshold`` (0.1 by default): a passing run with real signal needs no such
+    disclaimer. Returns ``""`` otherwise.
+    """
+    if not report.overall_f1:
+        return ""
+    if max(report.overall_f1.values()) >= f1_threshold:
+        return ""
+
+    winner_roles = report.f1_table.get(report.winner, {})
+    zero_roles = sorted(r for r in report.roles_scored if winner_roles.get(r, 1.0) == 0.0)
+    nonzero_roles = sorted(r for r in report.roles_scored if r not in zero_roles)
+
+    zero_desc = (
+        ", ".join(f"`{r}`" for r in zero_roles) + " read 0.000 F1 (0 true positives)"
+        if zero_roles
+        else "no scored role read 0.000 F1"
+    )
+    nonzero_desc = (
+        " and " + ", ".join(f"`{r}` only {winner_roles[r]:.3f}" for r in nonzero_roles)
+        if nonzero_roles
+        else ""
+    )
+    fp_total = sum(
+        report.counts.get(h, {}).get("__overall__", [0, 0, 0])[1] for h in report.overall_f1
+    )
+
+    if report.heads_byte_identical:
+        tie_clause = (
+            "all candidate heads see byte-identical activations in this run (the known "
+            "`panns-inference` scope limit noted above), so the tie -- and the winner -- "
+            "would hold regardless of where the threshold sits."
+        )
+    else:
+        tie_clause = (
+            "the candidate heads produced distinct scores in this run, so this calibration "
+            "finding does not by itself explain the head-selection outcome above."
+        )
+
+    return (
+        f"Honest caveat on the absolute numbers: {zero_desc}{nonzero_desc} -- `fp` is "
+        f"{fp_total} across every head/role, i.e. the tagger essentially never crosses "
+        f"`CFG.TIMELINE_ACTIVITY_THRESHOLD` ({CFG.TIMELINE_ACTIVITY_THRESHOLD:.2f}) on this "
+        "fixture material. That is a recall/threshold-calibration finding about this "
+        "fixture material at the current threshold, not a Task 2.2 defect -- re-tuning "
+        "`TIMELINE_ACTIVITY_THRESHOLD` against this same truth data is "
+        "`scripts/calibrate_gates.py`'s job (§16), out of this task's scope. It does not "
+        f"change the head-selection outcome above: {tie_clause}"
+    )
+
+
 def _strip_section(text: str, header: str) -> str:
     """Drop a previously-written ``header`` markdown section (through the next ``## ``
     heading or EOF) so re-running this script never accumulates duplicate sections."""
@@ -422,6 +581,13 @@ def append_pin_run_d_section(
     vocab_note: str = "",
     pin_report_path: Path = _PIN_REPORT,
 ) -> None:
+    """Idempotently (write-replace, never accumulate) append the "Pin run (d)" section:
+    table + scope-limit + vocab + caveat. ``vocab_note`` is the caller's job to derive (see
+    ``build_vocab_note`` -- it needs a registry path, which this function doesn't take); the
+    scope-limit paragraph and the honest caveat are both derived here, straight from
+    ``report``, so they can never silently go missing the way ``vocab_note`` itself used to
+    when a caller forgot to pass it.
+    """
     base = (
         pin_report_path.read_text(encoding="utf-8")
         if pin_report_path.is_file()
@@ -429,11 +595,8 @@ def append_pin_run_d_section(
     )
     base = _strip_section(base, _PIN_RUN_D_HEADER)
 
-    tie = len({report.overall_f1[h] for h in CANDIDATE_HEADS if h in report.overall_f1}) == 1
-    winner_note = (
-        f"**Winner: `{report.winner}`**"
-        + (" (three-way tie on overall F1 -- §15.6 breaks to `DecisionLevelAtt`)" if tie else "")
-    )
+    tie_note = describe_tie(report.overall_f1, report.winner, candidates=CANDIDATE_HEADS)
+    winner_note = f"**Winner: `{report.winner}`**" + (f" {tie_note}" if tie_note else "")
 
     lines = [
         _PIN_RUN_D_HEADER,
@@ -444,12 +607,18 @@ def append_pin_run_d_section(
         "across every 1 s frame of every scored fixture) per role and overall; truth-activity "
         "is `stem RMS > -50 dBFS` per 1 s frame (matching the Timeline hop). Only roles with a "
         f"registry `tagger_classes` mapping are scored: {', '.join(report.roles_scored)}.",
-        "",
-        "Known scope limit: the installed `panns-inference` package loads only the "
-        "`Cnn14_DecisionLevelMax` architecture regardless of the `head` string passed to "
-        "`PannsTagger` (the Avg/Att checkpoints are not part of that PyPI distribution) -- all "
-        "three candidate heads therefore run the identical weights/forward pass in this run, "
-        "producing a genuine three-way tie rather than a fabricated split decision.",
+    ]
+    if report.heads_byte_identical:
+        lines += [
+            "",
+            "Known scope limit: the installed `panns-inference` package loads only the "
+            "`Cnn14_DecisionLevelMax` architecture regardless of the `head` string passed to "
+            "`PannsTagger` (the Avg/Att checkpoints are not part of that PyPI distribution) -- "
+            "all candidate heads therefore run the identical weights/forward pass in this run, "
+            "which is why their per-head frame counts came back byte-identical rather than a "
+            "fabricated split decision.",
+        ]
+    lines += [
         "",
         format_table(report),
         "",
@@ -457,6 +626,9 @@ def append_pin_run_d_section(
     ]
     if vocab_note:
         lines += ["", vocab_note]
+    caveat_note = build_honest_caveat(report)
+    if caveat_note:
+        lines += ["", caveat_note]
     lines.append("")
 
     pin_report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -496,7 +668,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.dry_run:
         write_registry_head(report.winner)
-        append_pin_run_d_section(report, manifest["fixture_set_hash"])
+        vocab_note = build_vocab_note()
+        append_pin_run_d_section(report, manifest["fixture_set_hash"], vocab_note=vocab_note)
         print(
             f"Wrote head={report.winner!r} to the registry and appended pin run (d) to "
             f"{_PIN_REPORT}."
