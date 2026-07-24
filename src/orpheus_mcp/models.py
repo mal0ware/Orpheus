@@ -664,3 +664,35 @@ class AnswerEnvelope(BaseModel):
     budget_capped: bool = False
     capped_by_missing_extra: str | None = None
     notes: list[str] = Field(default_factory=list)
+
+
+class VstEntry(BaseModel):
+    """One row of the §15.4 curated free-VST catalog (``data/vst_catalog.json``, §8.1's
+    instruments + effects tables transcribed verbatim). ``category`` is ``"instrument"`` or
+    ``"effect"``. ``account_required`` flags a plugin whose free download sits behind an
+    account/email/Patreon wall (the catalog's exceptions, called out per-row in §8.1) —
+    ``url`` and ``license`` are always populated regardless. ``intents`` is the keyword set
+    ``suggest_free_vst`` matches a ``need`` string against (free-text terms describing what
+    the plugin is for — NOT the §15.3 rule-table intent names, a different vocabulary).
+    ``notes`` carries the row's flagged nuance (account-gate reason, legacy-line pin,
+    license caveat, ...) verbatim from the spec."""
+
+    name: str
+    vendor: str
+    category: Literal["instrument", "effect"]
+    license: str
+    account_required: bool
+    url: str
+    intents: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class CacheClearResult(BaseModel):
+    """``clear_analysis_cache``'s result: how much the §9 analysis cache
+    (``~/.orpheus_cache``) held before it was wiped. ``bytes_freed`` is the total on-disk
+    size of every cached pcm-hash directory (``CacheFS.size_bytes()``, measured BEFORE
+    ``CacheFS.clear()`` runs); ``entries_cleared`` is the number of top-level pcm-hash
+    directories removed. Both read ``0`` on an already-empty cache — not an error."""
+
+    bytes_freed: int
+    entries_cleared: int

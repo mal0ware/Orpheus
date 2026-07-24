@@ -4,6 +4,107 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-07-24 — Reference Analysis Engine BUILT (Phases 0–12, branch `feat/reference-analysis`)
+
+The whole engine designed in the 2026-07-22 spec is now implemented, on `feat/reference-analysis`,
+against `docs/plans/2026-07-23-reference-analysis.md` (SDD-tracked task-by-task in the gitignored
+`.superpowers/sdd/progress-refanalysis.md`). Twelve phases: **Phase 0** — packaging (conflict-
+partitioned `[analysis]`/`[separation]` extras), `CacheFS` (decoded-PCM-hash keying, per-artifact
+`meta.json` sidecars, LRU + pinning), the model registry with all 13 registry slots hash-pinned,
+vendored MSST SCNet (GPU-verified), 24 committed audio fixtures (75.7 MB, `ci_sparse`/`ci_vocal`),
+and both isolated envs (audio-separator's own uv env, D9; basic-pitch's ≤3.11 env). **Phase 1** —
+`recon.py` (T1: LUFS, tempo/beat-grid/downbeat/meter + grid confidence, tuning offset, key +
+alternates, sections, 8-band sketch) + `recon_reference`. **Phase 2** — `timeline.py` (PANNs SED),
+`instrument_timeline` + the §3.1 exposure/absent pre-gate rules. **Phase 3** — the always-available
+CPU chord baseline lane (`harmony.py`: template+Viterbi recognizer, extensions, bass-informed
+slash/inversion, music21 theory) + `get_chords`. **Phase 4** — both separation engines
+(audio-separator subprocess adapter + vendored MSST), §5 verification gates 1–3 (mix consistency,
+bleed, silence honesty), `separate_region`. **Phase 5** — gate 4 (cross-model agreement) + the §6
+R1–R6 escalation ladder, `verify_stem`, and full empirical calibration
+(`data/calibrated_thresholds.json`, agreement fitted 0.997/J=0.76). **Phase 6** — `descriptors.py`
+(§7 `SoundCharacter`: spectral/dynamics/harmonics/stereo/time-fx/pitch) + `characterize`.
+**Phase 7** — the `render_track_region` bridge verb (§15.2), Lua data-chunk-aware silence scan.
+**Phase 8** — the lyrics pipeline (VAD-gated faster-whisper ASR + whisperX alignment + line/section
+assembly) + `transcribe_lyrics`/`locate_lyric` (§14.2's phonetic/masked-profanity fuzzy quote
+resolver). **Phase 9** — the §13 chord MODEL lane (vendored BTC-ISMIR19; music-x-lab as a
+no-engine skeleton, D12) engaging at T3. **Phase 10** — the 14-rule §15.3 descriptor→intent engine
+(`data/intent_rules.json` + `analysis/intents.py`) + `compare_character`. **Phase 11** — the FX
+apply verbs (`add_fx_by_name`/`set_fx_param`/`get_fx_params`) + ReaPlugs/JSFX param maps, and a
+closed-loop convergence test that drives characterize→compare→apply→render→re-compare against the
+fake bridge with a BLIND corrective Q. **Phase 12** — the §9 `analyze_reference` orchestrator (12.1:
+answer envelope, question-class routing, the D15 T3→T4 tier-ceiling bump for `sound_at`/
+`compare_track`) and, this task (12.2), the last build task: `data/vst_catalog.json` (§8.1's
+instruments + effects tables transcribed, 26 entries — Valhalla's Supermassive/FreqEcho/
+SpaceModulator and Voxengo SPAN/Youlean Loudness Meter split into per-plugin rows so intent
+matching doesn't blur distinct effects together), `suggest_free_vst` (pure keyword lookup, zero
+network calls, recommend-only), and `clear_analysis_cache` (wraps `CacheFS.clear`,
+`destructiveHint`).
+
+**Pins recorded:** engines (pin a, Phase 0 — all 13 registry slots hash-pinned; owned-mp3 timing
+re-run still human-deferred, see below); the SED head (pin d, Phase 2 — resolved as an honest tie:
+upstream `panns-inference` only ships `Cnn14_DecisionLevelMax` regardless of the head string
+requested, so `DecisionLevelAtt` is recorded as that same engine, a documented scope limit, not a
+fabricated distinction); calibration (Phase 5.3 — agreement gate fitted 0.997/J=0.76, five §16
+constants live at their fallback values with provenance recorded, and the absent-fire guard TRIPPED
+exactly as designed, refusing a fitted value that would have suppressed 24% of frames). Chord
+ear-check (pin b) and lyrics ear-check (pin c) are **not** pinned — they need a human ear on owned
+audio and are carried into the deferred checklist below.
+
+**The 15 Deviations** (full table: `docs/plans/2026-07-23-reference-analysis.md`'s Deviations Log,
+D1–D15; all deliberate, all reasoned there) — condensed: D1 reordered the spec's four pin
+prerequisites to match when their slice deliverables actually exist. D2 split "gated stems" into
+gates 1–3 (Phase 4, no second-model dependency) vs. the agreement gate + ladder (Phase 5). D3 gave
+the tagger and the intent rule engine explicit module homes (`timeline.py`, `intents.py`) the spec's
+module list never named. D4 renders test fixtures headlessly (MIDI → `sfizz_render` CLI + CC0
+samples) instead of through a live REAPER, for CI-safety. D5 places FX-loop iteration/plateau
+enforcement on Claude, not Orpheus (no session state to count against) — the two guard constants are
+exported in tool docstrings, never silently enforced server-side. D6 lets the Phase-0 pin run swap a
+404'd/broken registry slot for its documented alternate as a data change. D7 moves calibrated
+thresholds into `data/calibrated_thresholds.json`, loaded as config overrides with a hash that busts
+stale gate caches on re-calibration. D8 makes `ci_vocal`'s vocal lane deterministic Windows-SAPI TTS
+reading known lines, so the lyrics accuracy bar is machine-checkable on any box. D9 (exec-discovered)
+moved audio-separator into its own isolated env — every release transitively caps `fastmcp<3.4`,
+incompatible with the MCP server's own floor. D10 (exec-discovered) split `BeatGrid.confidence`
+(grid alignment) from an additive `meter_confidence` (3-vs-4 margin ratio) — one field was
+overloaded for two signals. D11 (exec-discovered) scoped the ≥90% majmin baseline bar to
+synthesized progressions and the fixture's chords STEM, not the dense full mix (~0.20, template
+matching's honest ceiling there — the model lane's job). D12 (exec-discovered) recorded that
+audio-separator cannot actually load BS-RoFormer ep17 (a false spec claim); it's marked
+`engine_status:"no-engine"` and the 4-stem rank order became SCNet-XL (MSST) > htdemucs-ft
+(audio-separator). D13 (exec-discovered) gave multi-target registry entries per-stem
+`tagger_classes_by_target`, closing a bleed-gate blind spot where a union class list let vocal
+energy read as clean on a drums stem. D14 (exec-discovered) shipped `verify_stem`'s contract as the
+flat `GateSet` model instead of the spec's nested shape, for one shared shape across every §9 gate
+surface. D15 (exec-discovered) has `_class_ceiling` permit a T3→T4 climb for `sound_at`/
+`compare_track` — a literal `min(QUESTION_TIERS, max_tier)` would make the R3-complement escalation
+rung the plan itself carries forward permanently unreachable.
+
+**Carried, closed here:** Task 11.2's carry — §15.3 rule 1 (presence boost, ReaEQ bell) has no
+encoded Q/bandwidth policy in `data/intent_rules.json`'s `apply` block. No data change: the Q Claude
+sets on the actual `ReaEQ` band when applying the rule is Claude-side judgment, same as every
+un-mapped third-party-plugin instruction — the rule table fixes the trigger, the shape, and the
+center frequency; bandwidth is not part of the closed-form contract.
+
+**Deferred to a human** (full detail in `.superpowers/sdd/progress-refanalysis.md`'s Deferred
+section — gitignored, summarized here since nothing else records it): re-running the Phase-0 engine
+pins against an OWNED mp3 with an actual ear-check on the resulting stems (timings/downloads are
+already automated; only the listening is pending), plus an owned-audio spot-listen on the `ci_sparse`
+fixture; the full desktop calibration run + a 6-song owned-audio ear panel to re-fit the §16 fallback
+constants outside the fixture domain; live-REAPER render + FX smoke — specifically the ReaComp/
+ReaXcomp param-ORDER warning carried since Task 11.1 (mapped as threshold/ratio/attack/release,
+unverified against the real plugin), the `render_track_region` WAV-format blob, `I_FXEN` master-bypass
+behavior, and real float-WAV header layout through the silence scan; the chord (pin b) and lyrics
+(pin c) hand-check certifications against owned songs; and hardening `fetch-models`'s audio-separator
+config-sidecar warm-up (Task 4.1's Important#1 carry — it currently fetches sidecars at first
+separation, a cold-box §1.1 violation until pre-staged at install).
+
+**Gate this session (Task 12.2 — the catalog/cache-admin/docs task closing Phase 12):**
+`pytest -q -m "not desktop and not gpu"` → **684 passed, 2 skipped, 14 deselected** (was 655/2/14 at
+Task 12.1; +29 for `data/vst_catalog.json` + `suggest_free_vst` + `clear_analysis_cache`);
+`scripts/run_lua_tests.py` → **123 passed, 0 failed** (unchanged — this task touched no Lua); `ruff
+check` clean; `mypy src` clean. Every build task in the plan is now complete; what remains is the
+deferred-human list above plus the live end-to-end demo (12.3).
+
 ## 2026-07-22 — Reference Analysis Engine spec (docs-only session, off-site)
 
 Hotel session, no code by design (home PC has local-only work in flight). Produced the full

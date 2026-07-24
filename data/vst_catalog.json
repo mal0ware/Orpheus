@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "name": "Surge XT",
+      "vendor": "Surge Synth Team",
+      "category": "instrument",
+      "license": "GPL3",
+      "account_required": false,
+      "url": "https://surge-synthesizer.github.io/",
+      "intents": [
+        "synth", "subtractive synth", "wavetable synth", "fm synth", "polysynth",
+        "lead", "bass synth", "pad", "flagship oss synth"
+      ],
+      "notes": ["flagship OSS synth — subtractive/wavetable/FM, enormous range"]
+    },
+    {
+      "name": "Vital",
+      "vendor": "Vital Audio",
+      "category": "instrument",
+      "license": "freemium / GPL fork",
+      "account_required": true,
+      "url": "https://vital.audio/",
+      "intents": [
+        "wavetable synth", "modern synth", "edm lead", "bass synth", "spectral warp"
+      ],
+      "notes": [
+        "modern wavetable standard — the free tier needs a vital.audio account",
+        "Vitalium (the OSS fork, via DISTRHO-Ports) needs no account"
+      ]
+    },
+    {
+      "name": "Dexed",
+      "vendor": "Digital Suburban",
+      "category": "instrument",
+      "license": "GPL3",
+      "account_required": false,
+      "url": "https://asb2m10.github.io/dexed/",
+      "intents": ["fm synth", "dx7", "electric piano", "fm bass", "bell"],
+      "notes": ["DX7-class FM, loads original patch banks"]
+    },
+    {
+      "name": "Odin 2",
+      "vendor": "TheWaveWarden",
+      "category": "instrument",
+      "license": "GPL3",
+      "account_required": false,
+      "url": "https://thewavewarden.com/odin2",
+      "intents": ["polysynth", "subtractive synth", "fm synth", "wavetable synth"],
+      "notes": ["24-voice polysynth"]
+    },
+    {
+      "name": "OB-Xd",
+      "vendor": "reales (legacy 2.x line)",
+      "category": "instrument",
+      "license": "GPL3 (legacy line)",
+      "account_required": false,
+      "url": "https://github.com/reales/OB-Xd",
+      "intents": ["analog synth", "polysynth", "vintage synth", "pad", "brass synth"],
+      "notes": [
+        "classic analog-poly character — catalog pins the legacy 2.x line (GPL3, reales/OB-Xd)",
+        "current discoDSP 3.x is freemium with commercial-use restrictions"
+      ]
+    },
+    {
+      "name": "sforzando + VSCO2 Community Edition",
+      "vendor": "Plogue (sforzando) / Versilian Studios (VSCO2)",
+      "category": "instrument",
+      "license": "free / CC0",
+      "account_required": false,
+      "url": "https://www.plogue.com/products/sforzando.html",
+      "intents": [
+        "sfz player", "orchestral library", "concert band", "strings", "brass",
+        "woodwinds", "sample library"
+      ],
+      "notes": ["free SFZ player + CC0 orchestral library — the concert-band answer on the synthesis side"]
+    },
+    {
+      "name": "Decent Sampler",
+      "vendor": "David Hilowitz",
+      "category": "instrument",
+      "license": "freeware",
+      "account_required": true,
+      "url": "https://www.decentsamples.com/product/decent-sampler-plugin/",
+      "intents": ["sampler", "sample library", "pianobook", "piano", "free sample player"],
+      "notes": [
+        "free sampler with a large free-library ecosystem via Pianobook libraries",
+        "email-gated download"
+      ]
+    },
+    {
+      "name": "MT Power Drum Kit 2",
+      "vendor": "MT-PowerDrumKit",
+      "category": "instrument",
+      "license": "freeware",
+      "account_required": false,
+      "url": "https://www.powerdrumkit.com/",
+      "intents": ["acoustic drums", "drum kit", "drums"],
+      "notes": ["workhorse free acoustic drums"]
+    },
+    {
+      "name": "Neural Amp Modeler (NAM)",
+      "vendor": "Steven Atkinson / NAM community",
+      "category": "instrument",
+      "license": "MIT",
+      "account_required": false,
+      "url": "https://www.neuralampmodeler.com/",
+      "intents": [
+        "guitar amp", "amp sim", "guitar tone", "neural amp modeling", "re-amp", "tone3000"
+      ],
+      "notes": [
+        "OSS neural guitar-amp modeling — MIT",
+        "thousands of free community captures at TONE3000 (ToneHunt's successor), no account needed"
+      ]
+    },
+    {
+      "name": "Splice",
+      "vendor": "Splice",
+      "category": "instrument",
+      "license": "freeware (account)",
+      "account_required": true,
+      "url": "https://splice.com/instrument",
+      "intents": ["sample library", "orchestral", "cinematic", "labs", "free instrument"],
+      "notes": [
+        "Splice INSTRUMENT (free tier) absorbed the former Spitfire LABS catalog (LABS discontinued late 2025)",
+        "Splice account required"
+      ]
+    },
+    {
+      "name": "Airwindows Consolidated",
+      "vendor": "Airwindows (Chris Johnson)",
+      "category": "effect",
+      "license": "MIT (sources; Consolidated binaries GPL3 via JUCE)",
+      "account_required": false,
+      "url": "https://www.airwindows.com/",
+      "intents": [
+        "saturation", "tape", "console emulation", "character", "utility fx",
+        "even-harmonic saturation", "odd-harmonic saturation"
+      ],
+      "notes": ["hundreds of processors, one plugin"]
+    },
+    {
+      "name": "Valhalla Supermassive",
+      "vendor": "Valhalla DSP",
+      "category": "effect",
+      "license": "freeware",
+      "account_required": false,
+      "url": "https://valhalladsp.com/shop/reverb/valhalla-supermassive/",
+      "intents": [
+        "reverb", "cavern reverb", "huge reverb", "ambient reverb", "wet/dry reverb",
+        "decay", "predelay"
+      ],
+      "notes": ["legendary free-tier huge reverb"]
+    },
+    {
+      "name": "Valhalla FreqEcho",
+      "vendor": "Valhalla DSP",
+      "category": "effect",
+      "license": "freeware",
+      "account_required": false,
+      "url": "https://valhalladsp.com/shop/delay/valhalla-freqecho/",
+      "intents": ["delay", "echo", "frequency-shift echo", "pitch-shift delay"],
+      "notes": ["legendary free-tier frequency-shift echo"]
+    },
+    {
+      "name": "Valhalla SpaceModulator",
+      "vendor": "Valhalla DSP",
+      "category": "effect",
+      "license": "freeware",
+      "account_required": false,
+      "url": "https://valhalladsp.com/shop/modulation/valhalla-spacemodulator/",
+      "intents": ["chorus", "flange", "modulation", "phaser", "widen"],
+      "notes": ["legendary free-tier flange/modulation"]
+    },
+    {
+      "name": "TDR Nova",
+      "vendor": "Tokyo Dawn Records / Tokyo Dawn Labs",
+      "category": "effect",
+      "license": "freeware",
+      "account_required": false,
+      "url": "https://www.tokyodawn.net/tdr-nova/",
+      "intents": ["dynamic eq", "de-harsh", "surgical eq", "presence boost", "mud cut"],
+      "notes": ["dynamic EQ (surgical + de-harsh intents)"]
+    },
+    {
+      "name": "TDR Kotelnikov",
+      "vendor": "Tokyo Dawn Records / Tokyo Dawn Labs",
+      "category": "effect",
+      "license": "freeware",
+      "account_required": false,
+      "url": "https://www.tokyodawn.net/tdr-kotelnikov/",
+      "intents": ["mastering compressor", "bus compressor", "glue compression", "compression"],
+      "notes": ["mastering-grade compressor"]
+    },
+    {
+      "name": "TDR VOS SlickEQ",
+      "vendor": "Tokyo Dawn Records / Tokyo Dawn Labs",
+      "category": "effect",
+      "license": "freeware",
+      "account_required": false,
+      "url": "https://www.tokyodawn.net/tdr-vos-slickeq/",
+      "intents": ["tone shaping eq", "saturation eq", "warmth shelf", "air shelf"],
+      "notes": ["tone-shaping EQ w/ saturation stages"]
+    },
+    {
+      "name": "Melda MFreeFXBundle",
+      "vendor": "MeldaProduction",
+      "category": "effect",
+      "license": "freeware tier",
+      "account_required": false,
+      "url": "https://www.meldaproduction.com/MFreeFXBundle",
+      "intents": ["chorus", "tremolo", "autopan", "modulation", "utility fx"],
+      "notes": ["30+ utility FX (chorus, tremolo, autopan, ...)"]
+    },
+    {
+      "name": "Xfer OTT",
+      "vendor": "Xfer Records",
+      "category": "effect",
+      "license": "freeware",
+      "account_required": false,
+      "url": "https://xferrecords.com/freeware/",
+      "intents": ["multiband compression", "upward compression", "ott sound", "compression"],
+      "notes": ["the modern multiband-upward-comp sound"]
+    },
+    {
+      "name": "CHOW Tape Model",
+      "vendor": "Jatin Chowdhury / ChowDSP",
+      "category": "effect",
+      "license": "GPL",
+      "account_required": false,
+      "url": "https://chowdsp.com/products.html",
+      "intents": ["tape saturation", "wow flutter", "tape emulation", "saturation"],
+      "notes": ["physical-model tape saturation/wow/flutter (+ the ChowDSP suite)"]
+    },
+    {
+      "name": "Dragonfly Reverbs",
+      "vendor": "Michael Willis",
+      "category": "effect",
+      "license": "GPL",
+      "account_required": false,
+      "url": "https://michaelwillis.github.io/dragonfly-reverb/",
+      "intents": ["reverb", "hall reverb", "room reverb", "plate reverb"],
+      "notes": ["OSS hall/room/plate reverb family"]
+    },
+    {
+      "name": "LSP plugin suite",
+      "vendor": "Linux Studio Plugins Project",
+      "category": "effect",
+      "license": "LGPL",
+      "account_required": false,
+      "url": "https://lsp-plug.in/",
+      "intents": ["surgical eq", "dynamics", "utility fx", "large fx collection"],
+      "notes": ["large OSS FX collection (surgical tools)"]
+    },
+    {
+      "name": "Analog Obsession",
+      "vendor": "Analog Obsession",
+      "category": "effect",
+      "license": "donationware",
+      "account_required": true,
+      "url": "https://www.patreon.com/AnalogObsession",
+      "intents": ["console emulation", "compressor emulation", "eq emulation", "analog character"],
+      "notes": ["distributed via Patreon posts (free Patreon account)"]
+    },
+    {
+      "name": "Voxengo SPAN",
+      "vendor": "Voxengo",
+      "category": "effect",
+      "license": "freeware",
+      "account_required": false,
+      "url": "https://www.voxengo.com/product/span/",
+      "intents": ["spectrum analyzer", "metering", "visualize spectrum"],
+      "notes": ["analysis/metering — useful to show the user what Orpheus measured"]
+    },
+    {
+      "name": "Youlean Loudness Meter",
+      "vendor": "Youlean",
+      "category": "effect",
+      "license": "freeware",
+      "account_required": false,
+      "url": "https://youlean.co/youlean-loudness-meter/",
+      "intents": ["loudness metering", "lufs", "mastering reference", "metering"],
+      "notes": ["analysis/metering — useful to show the user what Orpheus measured"]
+    },
+    {
+      "name": "Polyverse Wider",
+      "vendor": "Polyverse Music",
+      "category": "effect",
+      "license": "freeware",
+      "account_required": true,
+      "url": "https://polyversemusic.com/products/wider/",
+      "intents": ["widen", "mono-safe widening", "stereo width"],
+      "notes": ["mono-safe widening — name+email registration for download"]
+    }
+  ]
+}

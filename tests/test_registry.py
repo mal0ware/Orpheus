@@ -74,6 +74,9 @@ IMPLEMENTED = {
     "transcribe_lyrics",
     "locate_lyric",
     "analyze_reference",
+    # Task 12.2 — §15.4 curated free-VST catalog lookup + §9 cache admin
+    "suggest_free_vst",
+    "clear_analysis_cache",
     # mix (Task 11.1 — §8 step 3 FX apply verbs)
     "add_fx_by_name",
     "set_fx_param",
