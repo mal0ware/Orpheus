@@ -216,6 +216,54 @@ class ChordsLane(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Separation + verification primitives (§5/§9) — the typed contract separation.py
+# (engines, ``separate_region``) produces and verify.py (Task 4.2, gates) fills in.
+# --------------------------------------------------------------------------- #
+
+
+class GateResult(BaseModel):
+    """One §5 verification gate outcome. ``verdict`` is ``"na"`` when the gate does not
+    apply to this stem (single-target has no mix-consistency, a wall-to-wall pad has no
+    silent window to score, ...); ``value`` is the measured number (dB residual, bleed
+    ratio, ...) or ``None`` when N/A. The gate *logic* lands in Task 4.2's ``verify.py`` —
+    this is the shared typed shape both tasks address."""
+
+    verdict: Literal["pass", "fail", "na"]
+    value: float | None
+
+
+class GateSet(BaseModel):
+    """The four §5 gates for a stem plus the composed ``overall`` verdict (§5 decision
+    rule: ``fail`` if any applicable gate fails, ``unverifiable`` iff every gate is N/A,
+    else ``pass``)."""
+
+    mix_consistency: GateResult
+    bleed: GateResult
+    silence_honesty: GateResult
+    agreement: GateResult
+    overall: Literal["pass", "fail", "unverifiable"]
+
+
+class StemResult(BaseModel):
+    """One separated stem, region-cropped and length-aligned to the input (§3.1d/§5). The
+    engine adapters (Task 4.1) produce everything except ``gates`` — the §5 gate results
+    are stamped by ``separate_region``'s Task 4.2 tool wrapper. ``region_trimmed`` is the
+    EXACT region the stem covers after the ±context-pad crop was trimmed back and clamped
+    to ``[0, duration]`` (a window past EOF clamps and this field says so). ``notes`` carries
+    the §15.5 VRAM-degradation / mono-policy reason strings for tool meta (a fallback to a
+    lower-VRAM or CPU model, or dual-mono fed to a stereo-only engine, is surfaced here, never
+    hidden)."""
+
+    stem_path: str
+    model_id: str
+    target: str
+    region_trimmed: Window
+    sample_rate: int
+    gates: GateSet | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
 # Analysis outputs
 # --------------------------------------------------------------------------- #
 

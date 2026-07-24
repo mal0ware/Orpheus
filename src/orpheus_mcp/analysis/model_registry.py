@@ -72,6 +72,17 @@ class ModelEntry(BaseModel):
     license: str
     rank: int
     tagger_classes: list[str]  # empty => bleed/exposure gates N/A for this entry (§4)
+    # The exact ``--model_filename`` audio-separator's own registry expects for this
+    # checkpoint (Task 4.1 / D9): our pinned checkpoint files are byte-identical to what
+    # audio-separator would download for these entries (same upstream URLs), so pointing its
+    # CLI's ``--model_file_dir`` at our ``checkpoint_dir(id)`` and passing this filename makes
+    # it use OUR verified weights (it only fetches its small architecture-config sidecar).
+    # ``None`` => audio-separator's registry has no compatible entry for this checkpoint (e.g.
+    # ZFTurbo's 4-stem BS-RoFormer ep_17, the MelBand vocal / becruily guitar community
+    # checkpoints, LarsNet): ``AudioSeparatorEngine`` refuses those with an honest error rather
+    # than silently substituting a different model. Only meaningful on ``audio-separator`` engine
+    # entries; irrelevant (and always None) for msst/panns/btc/... engines.
+    audio_separator_model: str | None = None
 
     @model_validator(mode="after")
     def _url_hash_shapes_agree(self) -> ModelEntry:

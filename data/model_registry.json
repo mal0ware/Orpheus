@@ -55,6 +55,7 @@
   },
   {
     "id": "4stem-c/htdemucs-ft",
+    "audio_separator_model": "htdemucs_ft.yaml",
     "task": "multi-stem",
     "targets": [
       "vocals",
@@ -111,6 +112,7 @@
   },
   {
     "id": "6stem/bsroformer-sw",
+    "audio_separator_model": "BS-Roformer-SW.ckpt",
     "task": "multi-stem",
     "targets": [
       "vocals",
@@ -144,6 +146,7 @@
   },
   {
     "id": "6stem-fallback/htdemucs-6s",
+    "audio_separator_model": "htdemucs_6s.yaml",
     "task": "multi-stem",
     "targets": [
       "vocals",
@@ -197,6 +200,7 @@
   },
   {
     "id": "drumsep",
+    "audio_separator_model": "MDX23C-DrumSep-aufr33-jarredou.ckpt",
     "task": "drumkit-split",
     "targets": [
       "kick",
@@ -253,6 +257,7 @@
   },
   {
     "id": "dereverb/anvuew",
+    "audio_separator_model": "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt",
     "task": "dereverb",
     "targets": [
       "vocals"
