@@ -238,6 +238,19 @@ def test_gate_agreement_identical_stems_pass_r_near_one():
     assert result.verdict == "pass"
 
 
+def test_gate_agreement_true_stereo_input_downmixes_and_passes():
+    """(n, 2) stereo input exercises the mean-axis downmix path directly: a stereo stem
+    compared against its own mono downmix must correlate ~1.0 (same signal content)."""
+    mono = _sine(8000, 220.0, sr=8000)
+    stereo = np.concatenate([mono, mono], axis=1)
+    assert stereo.shape == (8000, 2)
+
+    result = gate_agreement(stereo, mono, sr=8000)
+
+    assert result.value == pytest.approx(1.0, abs=1e-6)
+    assert result.verdict == "pass"
+
+
 def test_gate_agreement_noise_vs_sine_fails():
     rng = np.random.default_rng(0)
     noise = rng.standard_normal((8000, 1))
