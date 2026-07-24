@@ -55,6 +55,8 @@ IMPLEMENTED = {
     "build_section",
     "arrange_song",
     "place_lyric_markers",
+    # reference (Task 1.3 — T1 recon)
+    "recon_reference",
 }
 
 
@@ -138,3 +140,16 @@ def test_arrange_in_full_profile():
 
     mcp = FastMCP(name="t")
     assert "arrange" in register_tools(mcp, profile="full")
+
+
+def test_reference_in_default_and_full_not_explain():
+    from fastmcp import FastMCP
+
+    from orpheus_mcp.registry import register_tools
+
+    m_default = FastMCP(name="t")
+    assert "reference" in register_tools(m_default, profile="default")
+    m_full = FastMCP(name="t")
+    assert "reference" in register_tools(m_full, profile="full")
+    m_explain = FastMCP(name="t")
+    assert "reference" not in register_tools(m_explain, profile="explain")

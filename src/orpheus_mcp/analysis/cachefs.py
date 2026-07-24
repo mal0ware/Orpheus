@@ -190,6 +190,18 @@ def _ffmpeg_version() -> str:
     return "unknown"
 
 
+def decoder_for(path: str) -> str:
+    """The ``decoder`` tag ``decode(path)`` will report, WITHOUT decoding — deterministic
+    from the extension alone (native formats -> ``"soundfile"``, ffmpeg-only formats ->
+    ``"ffmpeg <version>"``), so a cache-artifact meta dict can be built (and probed for a
+    HIT) before ever paying for a decode (§9 T0: cache lookups cost ms after the first
+    decode, and building meta must not itself force one)."""
+    ext = Path(path).suffix.lower()
+    if ext in _FFMPEG_EXTS:
+        return f"ffmpeg {_ffmpeg_version()}"
+    return "soundfile"
+
+
 # --------------------------------------------------------------------------- #
 # Canonical PCM hash + file-bytes memo
 # --------------------------------------------------------------------------- #

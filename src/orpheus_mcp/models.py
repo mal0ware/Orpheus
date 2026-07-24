@@ -12,7 +12,7 @@ human-readable list of reasons.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -109,6 +109,46 @@ class Window(BaseModel):
 
     start_s: float
     end_s: float
+
+
+class BeatGrid(BaseModel):
+    """Beat/downbeat/meter estimate produced by ``analysis/recon.py`` (T1). ``confidence``
+    is the mean beat-onset alignment score, normalized [0, 1]; below
+    ``CFG.BEAT_GRID_CONFIDENCE_MIN`` downstream consumers switch to a fixed grid — the flag
+    rides on this field, this module never switches itself (``kind`` is always ``"beat"``
+    coming out of recon)."""
+
+    times_s: list[float]
+    downbeats_s: list[float]
+    meter: tuple[int, int]
+    confidence: float
+    kind: Literal["beat", "fixed"]
+
+
+class KeyEstimate(BaseModel):
+    """One Krumhansl-Schmuckler key reading — ``Recon.key`` is the best correlation,
+    ``Recon.key_alternates`` the next two."""
+
+    root: str
+    mode: str
+    confidence: float
+
+
+class Recon(BaseModel):
+    """The T1 recon artifact (§9 ``recon.json``): decode + LUFS + tempo/beat grid + tuning +
+    key + structure + a coarse band-energy sketch. Cached by ``recon_reference``."""
+
+    schema_version: int = 1
+    duration_s: float
+    sample_rate: int
+    lufs_integrated: float | None
+    tempo_bpm: float
+    grid: BeatGrid
+    tuning_offset_cents: float
+    key: KeyEstimate
+    key_alternates: list[KeyEstimate]
+    sections: list[Window]
+    band_energy_db: dict[str, float]
 
 
 # --------------------------------------------------------------------------- #
