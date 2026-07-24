@@ -11,12 +11,14 @@ on a module-level helper is easiest to see from the same process, not through th
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 import soundfile as sf
 from fastmcp import Client, FastMCP
+from fastmcp.exceptions import ToolError
 
 from orpheus_mcp.analysis import cachefs, model_registry
 from orpheus_mcp.analysis.cachefs import CacheFS, decode
@@ -627,6 +629,34 @@ def test_transcribe_lyrics_caches_under_lyrics_lines_sections_kinds(tmp_path, _p
     assert (art_dir / "sections.json").is_file()
 
 
+def test_transcribe_lyrics_cache_busts_on_asr_model_id_change(
+    tmp_path, _plenty_of_vram, monkeypatch
+):
+    """Fix wave 1 (Important, 2d): a cached transcript written under ``asr_model_id="model-x"``
+    must MISS (not silently serve stale content) when a later call's meta carries a DIFFERENT
+    id -- the belt-and-suspenders bust ``_lyrics_meta``'s docstring calls out. Call-counted:
+    the second call re-invokes the ASR (and re-separates), proving the recompute path was
+    genuinely taken, not just that the returned content happens to differ."""
+    audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+    engine = StubEngine(["vocals"])
+    asr = StubAsr(language="zz", words=list(_SCRIPTED_WORDS))
+
+    monkeypatch.setattr(reference_tools, "_asr_model_id", lambda: "model-x")
+    first = transcribe_lyrics(
+        str(audio), cache=fs, asr=asr, tagger=_mixed_vocal_tagger(), engine=engine
+    )
+    assert asr.calls == 1
+    assert first.status == "ok"
+
+    monkeypatch.setattr(reference_tools, "_asr_model_id", lambda: "model-y")
+    second = transcribe_lyrics(
+        str(audio), cache=fs, asr=asr, tagger=_mixed_vocal_tagger(), engine=engine
+    )
+    assert asr.calls == 2  # cache MISS on the asr_model_id change -> genuinely recomputed
+    assert second.status == "ok"  # same scripted ASR output, but a fresh compute, not a HIT
+
+
 def test_transcribe_lyrics_propagates_separation_error(tmp_path, _plenty_of_vram):
     audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
     fs = CacheFS(tmp_path / "cache")
@@ -754,6 +784,46 @@ async def test_transcribe_lyrics_tool_registered_when_faster_whisper_available()
         tools = {t.name: t for t in await client.list_tools()}
     assert "transcribe_lyrics" in tools
     assert tools["transcribe_lyrics"].annotations.readOnlyHint is True
+
+
+async def test_transcribe_lyrics_tool_surfaces_lyrics_asr_env_missing_as_typed_error(
+    tmp_path, monkeypatch
+):
+    """Fix wave 1 (Minor, part 3): end-to-end proof that a genuine faster-whisper absence AT
+    ASR-LOAD TIME (not registration time -- the tool IS registered here, since faster_whisper
+    really is importable in this env, per the ``importorskip`` below) surfaces through the
+    ``transcribe_lyrics`` MCP tool RESULT as a typed ``fastmcp.exceptions.ToolError`` carrying
+    ``LyricsAsrEnvMissing``'s own message -- never a raw, unhandled traceback escaping the call
+    (the §9 ``capped_by_missing_extra`` pattern). Hides faster_whisper via a ``sys.modules``
+    sentinel -- the reliable way to force ``from faster_whisper import WhisperModel`` to raise
+    ``ImportError`` regardless of what's actually installed, applied at CALL time rather than
+    the registration-time ``find_spec`` probes this file already uses elsewhere."""
+    pytest.importorskip("faster_whisper")
+    pytest.importorskip("panns_inference")
+    pytest.importorskip("torch")
+
+    audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
+    monkeypatch.setenv(CFG.CACHE_DIR_ENV, str(tmp_path / "orpheus_cache"))
+
+    # Bypass the real separation/tagger ladder (heavy models, desktop-only) -- the subject
+    # under test is the ASR-load failure surfacing through the tool, not the ladder itself.
+    def _fake_ladder(file, pcm, fs, *, tagger, engine, max_seconds):
+        return pcm, False  # "vocal stem" == the loud raw mix; build_lyrics's VAD gate stays live
+
+    monkeypatch.setattr(reference_tools, "_vocal_stem_via_ladder", _fake_ladder)
+
+    # Register FIRST, while faster_whisper is genuinely present (a ``sys.modules`` sentinel
+    # also fools the registration-time ``find_spec`` probe -- ``importlib.util.find_spec``
+    # returns ``None`` for a name mapped to ``None`` in ``sys.modules`` -- so the tool must be
+    # registered before the sentinel goes in, or it never gets registered at all).
+    mcp = FastMCP(name="t")
+    register_tools(mcp, profile="default")
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", None)  # force ImportError on load
+
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="faster-whisper is not installed"):
+            await client.call_tool("transcribe_lyrics", {"file": str(audio)})
 
 
 async def test_transcribe_lyrics_not_registered_without_faster_whisper(monkeypatch):

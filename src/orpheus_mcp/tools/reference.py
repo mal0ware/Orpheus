@@ -672,7 +672,6 @@ _LYRICS_KIND = "lyrics"
 _LINES_KIND = "lines"
 _SECTIONS_KIND = "sections"
 _LYRICS_SCHEMA_VERSION = 1
-_LYRICS_TASK = "lyrics-asr"
 _VOCALS_TARGET = "vocals"
 
 
@@ -680,7 +679,11 @@ def _asr_model_id() -> str:
     """The rank-1 ``lyrics-asr``/``fasterwhisper`` registry entry's id, or ``"unknown"`` if
     the registry ships none — this is CHEAP (registry JSON read, no import of faster_whisper
     itself) so it can be part of the cache meta on every call, including a HIT (§9: meta must
-    be buildable before paying for a decode)."""
+    be buildable before paying for a decode). ``_LYRICS_TASK`` is imported from
+    ``analysis.lyrics`` (fix wave 1: dedup) rather than redefined here — that module owns the
+    task-id constant, and a redefinition here could silently drift out of sync with it."""
+    from orpheus_mcp.analysis.lyrics import _LYRICS_TASK
+
     entries = [
         e
         for e in model_registry.entries_for_task(_LYRICS_TASK, allow_unpinned=True)

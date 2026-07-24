@@ -307,12 +307,17 @@ class LocateResult(BaseModel):
     honesty rule: a no-vocal file must never look like an ordinary empty match list).
     ``low_confidence`` is set when the best candidate scored below
     ``CFG.LYRIC_MATCH_MIN_SCORE`` — ``matches`` then holds the top-3 candidates instead of the
-    (empty) passing set, and callers should ask the user rather than guess."""
+    (empty) passing set, and callers should ask the user rather than guess. ``notes`` carries
+    honesty strings about the scoring itself — e.g. a non-English transcript disables the
+    phonetic-equivalence leg of token matching (§14.2 fix wave 1: accented Latin tokens could
+    otherwise collide under the English-only phonetic reduction), so matching degrades to plain
+    edit distance and that degradation is stated here, not silently applied."""
 
     schema_version: int = 1
     status: Literal["ok", "no_vocals"]
     matches: list[LocateMatch] = Field(default_factory=list)
     low_confidence: bool = False
+    notes: list[str] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #

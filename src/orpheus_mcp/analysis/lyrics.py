@@ -596,9 +596,14 @@ def _norm_token(word: str) -> str:
 # Lawrence Philips Double Metaphone algorithm (that runs to hundreds of lines). Good enough to
 # equate the common ASR-mishear / misremembered-lyric class the section 14.2 scorer targets
 # ("son" vs "sun", "their" vs "there") by collapsing to a consonant skeleton with vowels dropped
-# (except a single initial-vowel marker) -- classical Metaphone's core trick. A language outside
-# this reduction's assumptions simply never phonetic-matches, degrading to plain edit distance
-# (the non-English note: stated in the result meta by the caller, not enforced here).
+# (except a single initial-vowel marker) -- classical Metaphone's core trick. CORRECTED (fix
+# wave 1): a non-English token does NOT reliably "simply never phonetic-match" on its own --
+# accented Latin tokens can still collide under this reduction (e.g. "café"/"résumé" both drop
+# their accents via ``isalpha``-filtering and can land on the same consonant skeleton), so the
+# non-English degradation is ENFORCED by the caller (``locate_lyric`` gates the phonetic leg on
+# ``lyrics.language`` being English, threading a ``phonetic`` flag down through
+# ``_tokens_match``/``_token_edit_distance``/``_slide_candidates``) rather than assumed to fall
+# out for free -- and the caller states the degradation in ``LocateResult.notes``.
 _DIGRAPHS: list[tuple[str, str]] = [
     ("SCH", "SK"), ("PH", "F"), ("GH", "K"), ("CK", "K"), ("SH", "X"), ("CH", "X"),
     ("TH", "0"), ("WH", "W"), ("QU", "K"), ("KN", "N"), ("GN", "N"), ("WR", "R"), ("PS", "S"),
@@ -639,10 +644,13 @@ def _masked_prefix_match(a: str, b: str) -> bool:
     return bool(prefix) and other.startswith(prefix)
 
 
-def _tokens_match(raw_a: str, raw_b: str) -> bool:
-    """Per-token section 14.2 match: exact (normalized) OR masked-profanity-prefix OR
-    double-metaphone-equal (English phonetics; a non-English token simply never phonetic-
-    matches anything, degrading this predicate to plain equality for that token)."""
+def _tokens_match(raw_a: str, raw_b: str, *, phonetic: bool = True) -> bool:
+    """Per-token section 14.2 match: exact (normalized) OR masked-profanity-prefix OR, when
+    ``phonetic`` is True, double-metaphone-equal (English phonetics ONLY). ``phonetic=False``
+    (fix wave 1: set by ``locate_lyric`` whenever ``lyrics.language`` isn't English) disables
+    the phonetic leg entirely -- the reduction is English-only and does NOT reliably degrade to
+    inequality on its own for non-English tokens (accented Latin tokens can still collide under
+    it, e.g. "café"/"résumé"), so the caller must gate it rather than rely on a natural miss."""
     a, b = _norm_token(raw_a), _norm_token(raw_b)
     if not a or not b:
         return a == b
@@ -650,19 +658,23 @@ def _tokens_match(raw_a: str, raw_b: str) -> bool:
         return True
     if _masked_prefix_match(a, b):
         return True
+    if not phonetic:
+        return False
     ca, cb = _phonetic_code(a), _phonetic_code(b)
     return bool(ca) and ca == cb
 
 
-def _token_edit_distance(a: list[str], b: list[str]) -> int:
+def _token_edit_distance(a: list[str], b: list[str], *, phonetic: bool = True) -> int:
     """Levenshtein distance over TOKEN sequences (insert/delete/substitute, unit cost),
-    substitution cost 0 when ``_tokens_match`` -- the section 14.2 window score's numerator."""
+    substitution cost 0 when ``_tokens_match`` -- the section 14.2 window score's numerator.
+    ``phonetic`` threads straight through to ``_tokens_match`` (fix wave 1: the English-only
+    gate)."""
     n, m = len(a), len(b)
     prev = list(range(m + 1))
     for i in range(1, n + 1):
         cur = [i] + [0] * m
         for j in range(1, m + 1):
-            sub_cost = 0 if _tokens_match(a[i - 1], b[j - 1]) else 1
+            sub_cost = 0 if _tokens_match(a[i - 1], b[j - 1], phonetic=phonetic) else 1
             cur[j] = min(
                 prev[j] + 1,  # delete from a
                 cur[j - 1] + 1,  # insert into a
@@ -679,10 +691,14 @@ class _Candidate:
     score: float
 
 
-def _slide_candidates(words: list[LyricWord], quote_tokens: list[str]) -> list[_Candidate]:
+def _slide_candidates(
+    words: list[LyricWord], quote_tokens: list[str], *, phonetic: bool = True
+) -> list[_Candidate]:
     """Slide every window length in ``[len(quote) - SLOP, len(quote) + SLOP]`` (min 1) over the
     FLAT word stream (never per-line -- a quote may span a line boundary, section 14.2) and
-    score each via ``1 - token_edit_distance / max(len(quote), len(window))``."""
+    score each via ``1 - token_edit_distance / max(len(quote), len(window))``. ``phonetic``
+    threads through to ``_token_edit_distance`` (fix wave 1: ``locate_lyric`` disables it for a
+    non-English transcript)."""
     qlen = len(quote_tokens)
     if qlen == 0 or not words:
         return []
@@ -694,7 +710,7 @@ def _slide_candidates(words: list[LyricWord], quote_tokens: list[str]) -> list[_
     for length in lengths:
         for start in range(0, len(words) - length + 1):
             window = word_texts[start : start + length]
-            dist = _token_edit_distance(quote_tokens, window)
+            dist = _token_edit_distance(quote_tokens, window, phonetic=phonetic)
             score = 1.0 - dist / max(qlen, length)
             candidates.append(_Candidate(start, start + length, score))
     return candidates
@@ -740,6 +756,17 @@ def _to_match(words: list[LyricWord], sections: list[LyricSection], c: _Candidat
     )
 
 
+def _phonetic_enabled(language: str | None) -> bool:
+    """Fix wave 1 (Critical review finding): the ~40-LOC ``_phonetic_code`` reduction is
+    ENGLISH-only and accented/non-English tokens can still collide under it (e.g.
+    "café"/"résumé" both drop their diacritics and can land on the same consonant skeleton) --
+    it does NOT reliably degrade to inequality on its own. So the phonetic leg of
+    ``_tokens_match`` is explicitly gated here on the transcript's detected language being
+    English ("en" or an "en-*" regional tag); ``language is None`` (undetectable) counts as
+    non-English -- the honest default when the ASR couldn't even tell us."""
+    return language is not None and (language == "en" or language.startswith("en-"))
+
+
 def locate_lyric(
     lyrics: LyricsResult, quote: str, occurrence: int | None = None
 ) -> LocateResult:
@@ -758,14 +785,28 @@ def locate_lyric(
     (section 14.2: Claude asks the user instead of guessing). ``occurrence`` is always the
     1-based temporal rank WITHIN the returned set -- the one definition that covers both the
     normal and the low-confidence path. ``occurrence`` (the parameter) filters the final set
-    down to a single requested occurrence when given."""
+    down to a single requested occurrence when given.
+
+    Fix wave 1 (Critical): the phonetic-equivalence leg of token matching is gated on
+    ``lyrics.language`` being English (:func:`_phonetic_enabled`) -- a non-English transcript
+    degrades to plain edit distance ONLY, and that degradation is stated in
+    ``LocateResult.notes``, never silently applied or silently assumed."""
     if lyrics.status == "no_vocals":
         return LocateResult(status="no_vocals", matches=[], low_confidence=False)
 
+    phonetic = _phonetic_enabled(lyrics.language)
+    notes: list[str] = (
+        []
+        if phonetic
+        else ["non-English transcript: phonetic matching disabled (edit-distance only)"]
+    )
+
     quote_tokens = [t for t in (_norm_token(tok) for tok in quote.split()) if t]
-    candidates = _merge_candidates(_slide_candidates(lyrics.words, quote_tokens))
+    candidates = _merge_candidates(
+        _slide_candidates(lyrics.words, quote_tokens, phonetic=phonetic)
+    )
     if not candidates:
-        return LocateResult(status="ok", matches=[], low_confidence=False)
+        return LocateResult(status="ok", matches=[], low_confidence=False, notes=notes)
 
     best_score = max(c.score for c in candidates)
     low_confidence = best_score < CFG.LYRIC_MATCH_MIN_SCORE
@@ -783,4 +824,4 @@ def locate_lyric(
     if occurrence is not None:
         matches = [m for m in matches if m.occurrence == occurrence]
 
-    return LocateResult(status="ok", matches=matches, low_confidence=low_confidence)
+    return LocateResult(status="ok", matches=matches, low_confidence=low_confidence, notes=notes)

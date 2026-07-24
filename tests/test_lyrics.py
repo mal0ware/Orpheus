@@ -378,7 +378,9 @@ def test_locate_lyric_exact_quote_scores_1_0_with_right_timestamps():
 def test_locate_lyric_misquote_still_top_match_via_metaphone():
     """'the son also rises' (misheard/misremembered) vs the ACTUAL transcript 'the sun also
     rises' — 'son'/'sun' collapse to the same phonetic code, so the mismatch costs nothing
-    and the match still scores (and ranks) as the top result."""
+    and the match still scores (and ranks) as the top result. English path (fix wave 1): the
+    phonetic leg stays ENABLED for an English transcript, so this must be unaffected by the
+    gate — and no degradation note is added."""
     lyrics = _transcript(("the sun also rises over the hill", 0.0))
 
     result = locate_lyric(lyrics, "the son also rises")
@@ -388,6 +390,117 @@ def test_locate_lyric_misquote_still_top_match_via_metaphone():
     best = result.matches[0]
     assert best.score == pytest.approx(1.0)
     assert best.matched_text == "the sun also rises"
+    assert result.notes == []  # English transcript -> phonetic leg enabled, nothing to disclose
+
+
+# --------------------------------------------------------------------------- #
+# Fix wave 1 (Critical): non-English transcripts must degrade to edit-distance-only matching
+# -- the phonetic leg is gated on ``lyrics.language`` being English, since the ~40-LOC
+# metaphone-class reduction is English-only and accented tokens can still collide under it
+# (the reviewer's "café"/"résumé" class of probe -- concretely reproduced below with
+# "café"/"coiffé", a real accented collision under this reduction: both reduce to "KFÉ").
+# --------------------------------------------------------------------------- #
+
+
+def test_locate_lyric_non_english_transcript_disables_phonetic_matching_with_note():
+    """A French ("fr") transcript containing "coiffé" ("styled/done", of hair) queried with
+    "café" (a coffee shop/coffee) -- semantically unrelated words that collapse to the SAME
+    phonetic code ("KFÉ") under the English-only reduction. Gated OFF (this fix): no candidate
+    scores at or above ``CFG.LYRIC_MATCH_MIN_SCORE``, and the degradation note is present."""
+    lyrics = _transcript(("elle est coiffé aujourd'hui", 0.0))
+    lyrics = lyrics.model_copy(update={"language": "fr"})
+
+    result = locate_lyric(lyrics, "café")
+
+    assert result.status == "ok"
+    assert all(m.score < CFG.LYRIC_MATCH_MIN_SCORE for m in result.matches)  # no passing match
+    assert result.notes == [
+        "non-English transcript: phonetic matching disabled (edit-distance only)"
+    ]
+
+
+def test_locate_lyric_non_english_probe_WOULD_phonetic_match_if_ungated():
+    """Sanity check proving the probe above is real: the SAME "café"/"coiffé" pair, tagged
+    English (phonetic leg enabled), DOES score a perfect match -- confirming the fix in the
+    prior test is load-bearing, not a vacuously-true assertion."""
+    lyrics = _transcript(("elle est coiffé aujourd'hui", 0.0))  # language="en" via _transcript
+
+    result = locate_lyric(lyrics, "café")
+
+    assert result.low_confidence is False
+    assert result.matches
+    assert result.matches[0].score == pytest.approx(1.0)
+    assert result.notes == []
+
+
+def test_locate_lyric_none_language_counts_as_non_english():
+    """``lyrics.language is None`` (undetectable) must ALSO gate off the phonetic leg -- the
+    honest default when the ASR couldn't even tell us a language, not a silent fall-through to
+    English behavior."""
+    lyrics = _transcript(("elle est coiffé aujourd'hui", 0.0))
+    lyrics = lyrics.model_copy(update={"language": None})
+
+    result = locate_lyric(lyrics, "café")
+
+    assert all(m.score < CFG.LYRIC_MATCH_MIN_SCORE for m in result.matches)
+    assert result.notes == [
+        "non-English transcript: phonetic matching disabled (edit-distance only)"
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Fix wave 1 (Important, 2b/2c): discriminating negative cases for ``_tokens_match`` -- proving
+# the phonetic and masked-prefix legs actually REJECT non-matches, not just accept matches.
+# --------------------------------------------------------------------------- #
+
+
+def test_tokens_match_phonetically_distinct_words_do_not_match():
+    """'night' and 'table' share no phonetic or lexical relationship whatsoever -- a sanity
+    floor proving ``_tokens_match``'s phonetic leg doesn't just always return True."""
+    from orpheus_mcp.analysis.lyrics import _tokens_match
+
+    assert _tokens_match("night", "table") is False
+
+
+def test_tokens_match_masked_prefix_rejects_non_sharing_token():
+    """'f***' must NOT match a token that doesn't share its visible prefix -- 'sun' doesn't
+    start with 'f', so the masked-profanity rule must not fire."""
+    from orpheus_mcp.analysis.lyrics import _tokens_match
+
+    assert _tokens_match("f***", "sun") is False
+
+
+# --------------------------------------------------------------------------- #
+# Fix wave 1 (Important, 2a): chain-overlap NMS regression -- three back-to-back repeats of the
+# same 4-word line with near-zero gaps between them. Adjacent sliding windows (± SLOP) overlap
+# in word-index space ACROSS block boundaries (window "A" and window "B" share indices, "B" and
+# "C" share indices) even though "A" and "C" never directly overlap. A transitive interval merge
+# (grow an envelope through every pairwise overlap) would chain-collapse all three into ONE
+# cluster -- this is the exact bug ``_merge_candidates``'s docstring documents and NMS (best-
+# score-first, compare only against KEPT candidates) avoids; this test would FAIL under that
+# transitive-merge behavior (1 collapsed match instead of 3).
+# --------------------------------------------------------------------------- #
+
+
+def test_locate_lyric_chain_overlap_repeats_returns_three_distinct_occurrences():
+    words: list[LyricWord] = []
+    t = 0.0
+    for _ in range(3):
+        block = _line_words("sing it out loud", t)
+        words += block
+        t = block[-1].end_s  # near-zero gap into the next repeat -- chain-overlap territory
+    lyrics = LyricsResult(
+        status="ok", language="en", aligned=True, words=words, lines=[], sections=[]
+    )
+
+    result = locate_lyric(lyrics, "sing it out loud")
+
+    assert result.low_confidence is False
+    assert len(result.matches) == 3
+    assert all(m.score == pytest.approx(1.0) for m in result.matches)
+    # each occurrence is a genuinely distinct span, not one collapsed cluster
+    starts = sorted(m.start_s for m in result.matches)
+    assert starts[0] < starts[1] < starts[2]
 
 
 def test_locate_lyric_repeated_chorus_all_occurrences_temporal_order_independent_of_score():
