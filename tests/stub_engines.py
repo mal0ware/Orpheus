@@ -17,6 +17,7 @@ import numpy as np
 import soundfile as sf
 
 from orpheus_mcp.analysis.cachefs import Pcm
+from orpheus_mcp.models import GateResult, GateSet, StemResult
 
 if TYPE_CHECKING:
     from orpheus_mcp.analysis.model_registry import ModelEntry
@@ -128,3 +129,96 @@ class StubEngine:
     @property
     def last_call(self) -> dict[str, float | int | str]:
         return self.calls[-1]
+
+
+# --------------------------------------------------------------------------- #
+# Ladder (Task 5.2) test seams: an engine factory that remembers its engines (so
+# separate() calls can be counted across rungs) and a scripted GateSet source (so a
+# test drives FAILING/PASSING gates per rung deterministically without a real model).
+# --------------------------------------------------------------------------- #
+
+
+class EngineHub:
+    """A ``climb`` engine factory (``Callable[[ModelEntry], SeparatorEngine]``) that hands
+    out one identity ``StubEngine`` per registry entry id and remembers them, so a ladder
+    test can read back the total number of ``separate()`` calls (``total_calls``) — the
+    "no re-run of R1/R2 on resume" and "completed ladder never re-climbs" assertions."""
+
+    def __init__(self, *, requires_stereo: bool = False) -> None:
+        self.engines: dict[str, StubEngine] = {}
+        self._requires_stereo = requires_stereo
+
+    def __call__(self, entry: ModelEntry) -> StubEngine:
+        eng = self.engines.get(entry.id)
+        if eng is None:
+            eng = StubEngine(list(entry.targets), requires_stereo=self._requires_stereo)
+            self.engines[entry.id] = eng
+        return eng
+
+    @property
+    def total_calls(self) -> int:
+        return sum(len(e.calls) for e in self.engines.values())
+
+    def calls_for(self, model_id: str) -> int:
+        eng = self.engines.get(model_id)
+        return len(eng.calls) if eng is not None else 0
+
+
+def gateset(
+    overall: str = "pass", *, fail_gate: str = "bleed", value: float = 0.42
+) -> GateSet:
+    """Build a :class:`GateSet` with a chosen ``overall`` verdict for scripted ladder tests.
+
+    ``overall="fail"`` marks ``fail_gate`` failing with ``value`` (so the ladder's transition
+    log can read ``<rung>: <gate>=<value>``); ``"unverifiable"`` makes every gate N/A;
+    ``"pass"`` passes all applicable gates (agreement stays N/A, matching the single-take case).
+    """
+    fields = ["mix_consistency", "bleed", "silence_honesty", "agreement"]
+    verdicts: dict[str, str] = {
+        "mix_consistency": "pass",
+        "bleed": "pass",
+        "silence_honesty": "pass",
+        "agreement": "na",
+    }
+    if overall == "fail":
+        verdicts[fail_gate] = "fail"
+    elif overall == "unverifiable":
+        verdicts = {f: "na" for f in fields}
+
+    def _res(field: str) -> GateResult:
+        v = verdicts[field]
+        if v == "fail":
+            return GateResult(verdict="fail", value=value)
+        if v == "pass":
+            return GateResult(verdict="pass", value=0.0)
+        return GateResult(verdict="na", value=None)
+
+    return GateSet(
+        mix_consistency=_res("mix_consistency"),
+        bleed=_res("bleed"),
+        silence_honesty=_res("silence_honesty"),
+        agreement=_res("agreement"),
+        overall=overall,  # type: ignore[arg-type]
+    )
+
+
+class ScriptedGates:
+    """A deterministic ``verify`` seam for ladder tests: returns pre-scripted GateSets in
+    order, one per call, and records every call ``(stem targets, target, other_stem_path)``
+    so a test can assert what the ladder verified and in what sequence. A string item is
+    expanded via :func:`gateset`; a :class:`GateSet` item is returned verbatim. When the
+    queue empties it keeps returning an all-pass GateSet."""
+
+    def __init__(self, script: Sequence[str | GateSet]) -> None:
+        self._queue: list[str | GateSet] = list(script)
+        self.calls: list[tuple[frozenset[str], str, str | None]] = []
+
+    def __call__(
+        self,
+        stems: dict[str, StemResult],
+        target: str,
+        other_stem_path: str | None = None,
+    ) -> GateSet:
+        self.calls.append((frozenset(stems), target, other_stem_path))
+        item = self._queue.pop(0) if self._queue else "pass"
+        return item if isinstance(item, GateSet) else gateset(item)
