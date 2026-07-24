@@ -273,7 +273,10 @@ async def test_instrument_timeline_not_registered_without_panns_or_torch(monkeyp
     monkeypatch.setattr(ilu, "find_spec", fake_find_spec)
 
     mcp = FastMCP(name="t")
-    reference_tools.register(mcp)  # must NOT raise -- librosa is still present
+    # must NOT raise -- librosa is still present; the honesty warning is part of the
+    # contract, so assert it here (also keeps pytest's summary warning-free).
+    with pytest.warns(UserWarning, match="instrument_timeline not registered"):
+        reference_tools.register(mcp)
 
     async with Client(mcp) as client:
         tools = {t.name for t in await client.list_tools()}
