@@ -42,7 +42,7 @@ Thumbs.db
 *.flac
 !tests/fixtures/**/*.wav
 !tests/fixtures/**/*.mp3
-!tests/fixtures/**/*.flac
+!tests/fixtures/audio/**/*.flac
 
 # Cached style fingerprints are committed (small JSON); raw reference audio is not.
 data/reference_audio/

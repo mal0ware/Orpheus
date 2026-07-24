@@ -443,11 +443,12 @@ def grid_frames(bpm: int) -> int:
 # --------------------------------------------------------------------------- #
 def _sapi_line_to_wav(text: str, dest: Path) -> None:
     """Speak one line to a WAV via PowerShell System.Speech (Windows-only)."""
+    escaped_text = text.replace("'", "''")
     ps = (
         "Add-Type -AssemblyName System.Speech; "
         "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
         f"$s.SetOutputToWaveFile('{dest}'); "
-        f"$s.Speak('{text}'); $s.Dispose()"
+        f"$s.Speak('{escaped_text}'); $s.Dispose()"
     )
     subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],

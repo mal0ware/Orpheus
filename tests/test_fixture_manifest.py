@@ -101,6 +101,16 @@ def test_ci_sparse_has_no_vocal_lane() -> None:
     assert "lyrics" not in truth
 
 
+def test_every_genre_recipe_keeps_maj7_and_slash_invariant() -> None:
+    """Plan §13 acceptance-bar material: each genre must exercise maj7 + slash chords."""
+    from scripts.make_fixtures import GENRES
+
+    for genre in GENRES:
+        prog = genre.progression
+        assert "maj7" in prog.lower(), f"{genre.name}: no maj7 chord in {prog!r}"
+        assert "/" in prog, f"{genre.name}: no slash chord in {prog!r}"
+
+
 @pytest.mark.desktop
 def test_ci_sparse_rerender_is_deterministic(tmp_path: Path) -> None:
     """Re-render ci_sparse's instrument stems and compare to the committed manifest hashes."""
