@@ -264,6 +264,42 @@ def test_one_beat_segment_never_upgrades():
     assert out.segments[0].extensions == []
 
 
+def test_maj7_with_9th_and_flat7_residual_composes_add9_not_double_seven():
+    """Task 9.1 review fix: a maj7-quality segment with a genuine 9th present AND residual
+    energy at the flat/dominant-7 pitch class (the kind of harmonic bleed real audio produces)
+    must never grow a redundant/contradictory "7" extension on top of its own maj7 seventh —
+    this is exactly how the review's live-captured "Gmaj77add9"-style garbled labels were
+    produced. Only the genuine 9th becomes an extension."""
+    chroma = np.zeros((4, 12))
+    for pc in (7, 11, 2, 6):  # G maj7 triad tones: G, B, D, F#
+        chroma[:, pc] = 1.0
+    chroma[:, 9] = 1.0  # add9 (A) -- genuinely present
+    chroma[:, 5] = 1.0  # flat-7 residual (F) -- must NOT become a "7" extension
+    seg = _segment("G", "maj7", 0.0, 2.0, start_beat=0, end_beat=4)
+    lane = ChordsLane(grid="beat", segments=[seg])
+    grid = _beat_grid([0.0, 0.5, 1.0, 1.5], [0.0])
+
+    out = refine_extensions(lane, chroma, grid)
+    assert out.segments[0].extensions == ["add9"]
+    assert out.segments[0].label == "Gmaj7add9"
+
+
+def test_maj7_strong_major_seventh_residual_never_appends_maj7_extension():
+    """A plain maj7 triad (its own major-7th tone is a chord tone, not a residual) must never
+    grow a spurious "maj7" extension on top of the base quality's own suffix — locking the
+    "interval already in triad" skip that keeps "Gmaj7" from ever becoming "Gmaj7maj7"."""
+    chroma = np.zeros((4, 12))
+    for pc in (7, 11, 2, 6):  # G maj7 triad tones: G, B, D, F#
+        chroma[:, pc] = 1.0
+    seg = _segment("G", "maj7", 0.0, 2.0, start_beat=0, end_beat=4)
+    lane = ChordsLane(grid="beat", segments=[seg])
+    grid = _beat_grid([0.0, 0.5, 1.0, 1.5], [0.0])
+
+    out = refine_extensions(lane, chroma, grid)
+    assert out.segments[0].extensions == []
+    assert out.segments[0].label == "Gmaj7"
+
+
 # --------------------------------------------------------------------------- #
 # §13.2 bass-informed slash detection
 # --------------------------------------------------------------------------- #

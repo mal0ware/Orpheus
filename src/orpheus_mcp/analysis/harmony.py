@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
+from orpheus_mcp.analysis import model_registry
 from orpheus_mcp.analysis.cachefs import Pcm
 from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.models import BeatGrid, ChordSegment, ChordsLane, Recon
@@ -73,6 +74,24 @@ _EXTENSION_CANDIDATES: tuple[tuple[int, str], ...] = (
     (9, "6"),
     (6, "#11"),
 )
+
+# The two semitone intervals a "seventh" occupies (b7 / maj7). A base quality whose OWN
+# ``_QUALITY_INTERVALS`` already contains one of these (maj7, min7, "7" — and any future
+# quality built the same way, e.g. a minmaj7-class) already has a seventh: a "7"/"maj7"
+# EXTENSION on top of it is redundant (same tone, already a chord tone — caught by the
+# "interval already in triad" skip below) or CONTRADICTORY (the other seventh — not caught by
+# that skip, since it's a different interval, which is exactly how "Gmaj77#11"-style garbled
+# labels were produced). Both candidates are therefore excluded outright for such a segment.
+_SEVENTH_INTERVALS = frozenset({10, 11})
+
+# Deterministic label order for ``_compose_label``'s extension suffix, keyed by extension name
+# ("6" and its seventh-present rewrite "13" share a slot; "b5" — BTC's hdim7 alteration, never
+# produced by ``refine_extensions`` — sorts last since it has no §13.3 candidate slot).
+_EXTENSION_SORT_ORDER: dict[str, int] = {
+    name: i for i, (_, name) in enumerate(_EXTENSION_CANDIDATES)
+}
+_EXTENSION_SORT_ORDER["13"] = _EXTENSION_SORT_ORDER["6"]
+_EXTENSION_SORT_ORDER["b5"] = len(_EXTENSION_CANDIDATES)
 
 # Krumhansl-Kessler profiles (tonic-first), for the §13.4 local-key windows.
 _KS_MAJOR = np.array(
@@ -236,12 +255,22 @@ def _fixed_window_chroma(pcm: Pcm, tuning_cents: float) -> tuple[np.ndarray, np.
 
 
 def _compose_label(root: str, quality: str, extensions: list[str], bass: str | None) -> str:
+    """Compose the base label + a sorted, filtered extension suffix + bass. A "7"/"maj7"
+    extension is dropped whenever ``quality`` already encodes a seventh (its own
+    ``_QUALITY_INTERVALS`` contains one of ``_SEVENTH_INTERVALS``) — redundant or contradictory,
+    never spelled — so this can never emit a garbled label like "Gmaj77#11" regardless of what
+    the caller passes in (defense in depth: ``refine_extensions`` already excludes these
+    candidates at the source, §13.3)."""
     if quality == "N":
         return "N"
     label = root + _QUALITY_SUFFIX[quality]
-    for ext in extensions:
-        if ext == "pedal":  # a bass annotation, not part of the chord spelling
-            continue
+    already_seventh = bool(set(_QUALITY_INTERVALS.get(quality, ())) & _SEVENTH_INTERVALS)
+    remaining = [
+        ext for ext in extensions
+        if ext != "pedal" and not (already_seventh and ext in ("7", "maj7"))
+    ]
+    default_order = len(_EXTENSION_SORT_ORDER)
+    for ext in sorted(remaining, key=lambda e: _EXTENSION_SORT_ORDER.get(e, default_order)):
         label += ext
     if bass:
         label += "/" + bass
@@ -353,15 +382,24 @@ def refine_extensions(lane: ChordsLane, chroma: np.ndarray, grid: BeatGrid) -> C
             out.append(seg.model_copy())
             continue
 
+        # §13.3 fix (Task 9.1 review): a base quality that already encodes a seventh (maj7/
+        # min7/7 — any quality whose own template contains a _SEVENTH_INTERVALS tone) must
+        # never gain a "7"/"maj7" EXTENSION. The chord-tone interval is already skipped by the
+        # check above; the OTHER seventh interval is not (it's a different pitch class), and
+        # appending it produced garbled, contradictory labels like "Gmaj77#11" — see
+        # ``_compose_label``'s docstring for the defense-in-depth mirror of this exclusion.
+        already_seventh = bool(triad_intervals & _SEVENTH_INTERVALS)
         exts: list[str] = []
         for interval, name in _EXTENSION_CANDIDATES:
             if interval in triad_intervals:
+                continue
+            if already_seventh and name in ("7", "maj7"):
                 continue
             pc = (root_idx + interval) % 12
             present = seg_chroma[:, pc] > ratio * np.clip(per_beat_triad, _EPS, None)
             if float(np.mean(present)) >= CFG.CHORD_STABILITY_RATIO:
                 exts.append(name)
-        if "6" in exts and ("7" in exts or "maj7" in exts):
+        if "6" in exts and (already_seventh or "7" in exts or "maj7" in exts):
             exts[exts.index("6")] = "13"
 
         out.append(
@@ -691,15 +729,18 @@ class BtcChordModel:
     (``chord/btc-large-voca``). Loads the hash-pinned checkpoint once at construction; ``predict``
     resamples ``pcm`` to BTC's native 22050 Hz mono, extracts the log-magnitude CQT features, runs
     the self-attention stack, and maps the 170-class output into ``ChordSegment``s (NO bass, §13.1).
-    Runs on CUDA when available, CPU otherwise (``device`` override for tests)."""
+    Runs on CUDA when available, CPU otherwise (``device`` override for tests). Both the checkpoint
+    load and the forward pass run under ``model_registry.GPU_SEMAPHORE`` (§15.5: serialize ALL GPU
+    work) — the same contract every other GPU engine (separation, lyrics ASR, PANNs) honors."""
 
     def __init__(self, checkpoint_path: str | Path, *, device: str | None = None) -> None:
         from orpheus_mcp._vendor.btc import inference as btc_inference
 
         self._inference = btc_inference
-        self._model, self._mean, self._std, self._device = btc_inference.load_btc(
-            checkpoint_path, device=device
-        )
+        with model_registry.GPU_SEMAPHORE:  # §15.5: serialize ALL GPU model loads
+            self._model, self._mean, self._std, self._device = btc_inference.load_btc(
+                checkpoint_path, device=device
+            )
         self._vocab = btc_inference.idx_to_voca()
 
     def predict(self, pcm: Pcm) -> list[ChordSegment]:
@@ -710,9 +751,10 @@ class BtcChordModel:
         if pcm.sample_rate != target_sr:
             mono = librosa.resample(mono, orig_sr=pcm.sample_rate, target_sr=target_sr)
         features = self._inference.audio_to_features(mono)
-        idx, prob = self._inference.predict_frames(
-            self._model, self._mean, self._std, features, self._device
-        )
+        with model_registry.GPU_SEMAPHORE:  # §15.5: serialize ALL GPU inference
+            idx, prob = self._inference.predict_frames(
+                self._model, self._mean, self._std, features, self._device
+            )
         return _segments_from_btc(
             idx, prob, self._inference.FEATURE_PER_SECOND, self._vocab
         )
@@ -776,10 +818,10 @@ def chord_lane_model(
     under a decaying chord can't blank the lane).
 
     With a rank-2 model present, each re-written span is cross-checked: when rank-2's dominant
-    reading disagrees with rank-1's, the rank-1 label is KEPT but its confidence is scaled by 0.7
-    and ``produced_by`` becomes ``"<producer>+disputed"`` (the disagreement is surfaced, never
-    silently resolved). ``models`` is rank-ordered (``models[0]`` rank-1); an empty list returns
-    ``lane`` unchanged."""
+    reading disagrees with rank-1's, the rank-1 label is KEPT but its confidence is scaled by
+    ``CFG.CHORD_DISPUTED_CONFIDENCE_FACTOR`` and ``produced_by`` becomes ``"<producer>+disputed"``
+    (the disagreement is surfaced, never silently resolved). ``models`` is rank-ordered
+    (``models[0]`` rank-1); an empty list returns ``lane`` unchanged."""
     if not models:
         return lane
 
@@ -799,7 +841,7 @@ def chord_lane_model(
             dom2 = _dominant_model_segment(secondary, seg.start_s, seg.end_s)
             if dom2 is not None and dom2.quality != "N" and not _same_chord(dom, dom2):
                 produced_by = f"{dom.produced_by}+disputed"
-                confidence *= 0.7
+                confidence *= CFG.CHORD_DISPUTED_CONFIDENCE_FACTOR
 
         out.append(
             seg.model_copy(

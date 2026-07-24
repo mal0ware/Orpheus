@@ -99,6 +99,8 @@ class AnalysisConfig:
     # --- §14.2 locate_lyric resolver (Task 8.2, plan-added) ---
     LYRIC_MATCH_WINDOW_SLOP: int = 2                # slide window len = quote len ± this
     LYRIC_MATCH_TOP_N: int = 3                      # low-confidence fallback candidate count
+    # --- §13 chord MODEL lane (Task 9.1, plan-added) ---
+    CHORD_DISPUTED_CONFIDENCE_FACTOR: float = 0.7   # rank-1/rank-2 disagreement confidence discount
 
 
 # --------------------------------------------------------------------------- #
