@@ -225,7 +225,7 @@ def _spectral_descriptors(mono: np.ndarray, sr: int) -> dict[str, float | None]:
     out["centroid_hz"] = (
         float((freqs * power).sum() / total_power) if total_power > _EPS else None
     )
-    out["rolloff_hz"] = _rolloff_hz(power, freqs)
+    out["rolloff_hz"] = _rolloff_hz(power, freqs, CFG.ROLLOFF_FRACTION)
     out["tilt_db_per_oct"] = _spectral_tilt(mono, sr)
 
     for lo, hi in zip(_SKETCH_EDGES_HZ, _SKETCH_EDGES_HZ[1:], strict=False):
@@ -239,7 +239,7 @@ def _spectral_descriptors(mono: np.ndarray, sr: int) -> dict[str, float | None]:
     return out
 
 
-def _rolloff_hz(power: np.ndarray, freqs: np.ndarray, roll: float = 0.85) -> float | None:
+def _rolloff_hz(power: np.ndarray, freqs: np.ndarray, roll: float) -> float | None:
     total = float(power.sum())
     if total <= _EPS:
         return None
@@ -354,9 +354,10 @@ def _integrated_lufs(samples: np.ndarray, sr: int) -> float | None:
 
 
 def _short_term_lufs_max(samples: np.ndarray, sr: int, window_s: float = 3.0) -> float | None:
-    """Max short-term (3 s) loudness: integrated loudness over sliding 3 s windows (1 s hop).
-    Falls back to the whole-signal integrated value when the source is shorter than one
-    window."""
+    """Max short-term loudness: integrated loudness over sliding windows, EBU R128's 3 s
+    short-term window (kept inline — it's the standard's definition, not a tunable) at
+    ``CFG.LUFS_SHORT_TERM_HOP_S`` hop. Falls back to the whole-signal integrated value when the
+    source is shorter than one window."""
     import pyloudnorm
 
     data = samples.astype(np.float64)
@@ -365,7 +366,7 @@ def _short_term_lufs_max(samples: np.ndarray, sr: int, window_s: float = 3.0) ->
     if n < win:
         return _integrated_lufs(samples, sr)
     meter = pyloudnorm.Meter(sr)
-    hop = max(1, int(sr))
+    hop = max(1, int(CFG.LUFS_SHORT_TERM_HOP_S * sr))
     best = -math.inf
     for start in range(0, n - win + 1, hop):
         try:
@@ -394,7 +395,7 @@ def _attack_percentiles(mono: np.ndarray, sr: int) -> tuple[float | None, float 
         return None, None
     if len(mono) < 2048:
         return None, None
-    hop = 512
+    hop = CFG.ATTACK_HOP_SAMPLES
     onset_env = librosa.onset.onset_strength(y=mono, sr=sr, hop_length=hop)
     onsets = librosa.onset.onset_detect(
         onset_envelope=onset_env, sr=sr, hop_length=hop, units="frames"
@@ -403,7 +404,7 @@ def _attack_percentiles(mono: np.ndarray, sr: int) -> tuple[float | None, float 
         return None, None
     attacks: list[float] = []
     for o in onsets:
-        end = min(o + 20, len(onset_env))
+        end = min(o + CFG.ATTACK_PEAK_SEARCH_FRAMES, len(onset_env))
         if end <= o + 1:
             continue
         peak_rel = int(np.argmax(onset_env[o:end]))
@@ -538,7 +539,10 @@ def _estimate_f0(seg: np.ndarray, sr: int) -> float | None:
         return None
     try:
         f0 = librosa.yin(
-            seg.astype(np.float32), fmin=50.0, fmax=min(2000.0, sr / 2.0 - 1.0), sr=sr
+            seg.astype(np.float32),
+            fmin=CFG.PITCH_FMIN_HZ,
+            fmax=min(CFG.PITCH_FMAX_HZ, sr / 2.0 - 1.0),
+            sr=sr,
         )
     except Exception:  # noqa: BLE001 - yin can raise on degenerate/too-short input
         return None
@@ -572,9 +576,9 @@ def _stereo_descriptors(samples: np.ndarray, sr: int) -> dict[str, float | None]
         corr = float(np.corrcoef(left, right)[0, 1])
 
     return {
-        "width_low": band_width(0.0, 250.0),
-        "width_mid": band_width(250.0, 4000.0),
-        "width_high": band_width(4000.0, sr / 2.0),
+        "width_low": band_width(0.0, CFG.STEREO_BAND_LOW_HZ),
+        "width_mid": band_width(CFG.STEREO_BAND_LOW_HZ, CFG.STEREO_BAND_HIGH_HZ),
+        "width_high": band_width(CFG.STEREO_BAND_HIGH_HZ, sr / 2.0),
         "corr": corr,
     }
 
@@ -717,7 +721,9 @@ def _pitch_modulation(mono: np.ndarray, sr: int) -> tuple[float | None, float | 
     if len(mono) < 4096:
         return None, None
     try:
-        f0 = librosa.yin(mono, fmin=50.0, fmax=min(2000.0, sr / 2.0 - 1.0), sr=sr)
+        f0 = librosa.yin(
+            mono, fmin=CFG.PITCH_FMIN_HZ, fmax=min(CFG.PITCH_FMAX_HZ, sr / 2.0 - 1.0), sr=sr
+        )
     except Exception:  # noqa: BLE001
         return None, None
     f0 = f0[np.isfinite(f0)]
@@ -746,14 +752,19 @@ def _reverb(
     """§7 reverb split: a vocal stem WITH an injected dereverb engine gets a wet−dry
     measurement (``reverb_approx=False``); everything else gets the decay-slope heuristic
     (``reverb_approx=True``)."""
-    if meta.stem_type == "vocals" and dereverb is not None:
-        measured = _reverb_wet_dry(mono, sr, dereverb)
-        if measured is not None:
-            return measured
-        notes.append(
-            "dereverb path unavailable (no registry entry or engine failure) — reverb fell "
-            "back to the decay-slope heuristic (reverb_approx=True)."
-        )
+    if meta.stem_type == "vocals":
+        if dereverb is not None:
+            measured = _reverb_wet_dry(mono, sr, dereverb)
+            if measured is not None:
+                return measured
+            notes.append(
+                "dereverb path unavailable (no registry entry or engine failure) — reverb fell "
+                "back to the decay-slope heuristic (reverb_approx=True)."
+            )
+        else:
+            notes.append(
+                "reverb: decay heuristic (no dereverb engine — install [separation])"
+            )
     return _reverb_heuristic(mono, sr)
 
 
@@ -788,7 +799,7 @@ def _reverb_wet_dry(
     res_rms = math.sqrt(float(np.mean(residual**2)))
     wet_dry = res_rms / dry_rms if dry_rms > _EPS else None
 
-    early_late = _early_late_ratio(residual, sr)
+    early_late = _early_late_ratio(residual, sr, CFG.REVERB_EARLY_LATE_SPLIT_S)
     rt60_class = _rt60_class(residual, sr)
     return {
         "reverb_wet_dry": wet_dry,
@@ -824,17 +835,17 @@ def _rt60_class(sig: np.ndarray, sr: int) -> str | None:
         return None
     x = np.arange(tail.size) * hop / sr
     slope = float(np.polyfit(x, tail, 1)[0])  # dB per second
-    if slope >= -1.0:
+    if slope >= CFG.RT60_SLOPE_GATE_DB_PER_S:
         return None  # essentially no decay (steady tone / noise)
     rt60_s = 60.0 / abs(slope)
-    if rt60_s < 0.4:
+    if rt60_s < CFG.RT60_SHORT_MAX_S:
         return "short"
-    if rt60_s < 1.2:
+    if rt60_s < CFG.RT60_MEDIUM_MAX_S:
         return "medium"
     return "long"
 
 
-def _early_late_ratio(residual: np.ndarray, sr: int, split_s: float = 0.08) -> float | None:
+def _early_late_ratio(residual: np.ndarray, sr: int, split_s: float) -> float | None:
     split = int(split_s * sr)
     if residual.size <= split:
         return None
@@ -864,7 +875,9 @@ def _pitch_descriptors(mono: np.ndarray, sr: int) -> dict[str, float | str | Non
     if len(mono) < 4096:
         return out
     try:
-        f0 = librosa.yin(mono, fmin=50.0, fmax=min(2000.0, sr / 2.0 - 1.0), sr=sr)
+        f0 = librosa.yin(
+            mono, fmin=CFG.PITCH_FMIN_HZ, fmax=min(CFG.PITCH_FMAX_HZ, sr / 2.0 - 1.0), sr=sr
+        )
     except Exception:  # noqa: BLE001
         return out
     finite = f0[np.isfinite(f0)]

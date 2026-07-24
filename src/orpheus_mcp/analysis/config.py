@@ -75,6 +75,18 @@ class AnalysisConfig:
     SPECTRAL_TILT_HI_HZ: float = 16000.0
     SPECTRAL_TILT_BANDS: int = 14
     DESCRIPTOR_STFT_N: int = 2048                   # STFT size for per-frame band-dynamics
+    ROLLOFF_FRACTION: float = 0.85                  # §7 spectral rolloff energy fraction
+    STEREO_BAND_LOW_HZ: float = 250.0               # §7 stereo width low/mid crossover
+    STEREO_BAND_HIGH_HZ: float = 4000.0             # §7 stereo width mid/high crossover
+    REVERB_EARLY_LATE_SPLIT_S: float = 0.08         # §7 early/late reflection split
+    RT60_SHORT_MAX_S: float = 0.4                   # §7 RT60 short/medium bucket boundary
+    RT60_MEDIUM_MAX_S: float = 1.2                  # §7 RT60 medium/long bucket boundary
+    RT60_SLOPE_GATE_DB_PER_S: float = -1.0          # §7 "no measurable decay" slope gate
+    PITCH_FMIN_HZ: float = 50.0                     # §7 yin pitch-track search floor
+    PITCH_FMAX_HZ: float = 2000.0                   # §7 yin pitch-track search ceiling
+    ATTACK_PEAK_SEARCH_FRAMES: int = 20             # §7 attack-time peak search window (frames)
+    ATTACK_HOP_SAMPLES: int = 512                   # §7 attack-time onset-strength hop
+    LUFS_SHORT_TERM_HOP_S: float = 1.0              # §7 short-term LUFS sliding-window hop
 
 
 # --------------------------------------------------------------------------- #

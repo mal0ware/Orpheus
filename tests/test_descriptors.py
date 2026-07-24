@@ -194,6 +194,55 @@ def test_vocal_reverb_uses_dereverb_when_available():
     assert drums.time_fx["reverb_approx"] is True
 
 
+def test_vocal_reverb_no_engine_notes_fallback():
+    """A vocals source with no dereverb engine injected (``dereverb=None``) still falls back to
+    the decay-slope heuristic (``reverb_approx=True``) but, unlike a non-vocals source, MUST
+    say why in ``notes`` — mirroring the engine-failure sub-path's wording (review finding)."""
+    sig = _sine_at_dbfs_rms(-20.0, dur=1.0)
+    ch = compute_character(mono_source(sig, stem_type="vocals"), dereverb=None)
+    assert ch.time_fx["reverb_approx"] is True
+    assert any("no dereverb engine" in n for n in ch.notes), ch.notes
+
+
+# --------------------------------------------------------------------------- #
+# CFG-hoisted descriptor tunables (review finding, §16) — the DSP call sites must read the
+# live CFG singleton, not a frozen default captured at function-definition time.
+# --------------------------------------------------------------------------- #
+
+
+def test_descriptor_cfg_constants_exist():
+    from orpheus_mcp.analysis.config import CFG
+
+    for name in (
+        "ROLLOFF_FRACTION",
+        "STEREO_BAND_LOW_HZ",
+        "STEREO_BAND_HIGH_HZ",
+        "REVERB_EARLY_LATE_SPLIT_S",
+        "RT60_SHORT_MAX_S",
+        "RT60_MEDIUM_MAX_S",
+        "RT60_SLOPE_GATE_DB_PER_S",
+        "PITCH_FMIN_HZ",
+        "PITCH_FMAX_HZ",
+        "ATTACK_PEAK_SEARCH_FRAMES",
+        "ATTACK_HOP_SAMPLES",
+        "LUFS_SHORT_TERM_HOP_S",
+    ):
+        assert hasattr(CFG, name), f"AnalysisConfig missing hoisted tunable {name!r}"
+
+
+def test_rolloff_reads_live_cfg(monkeypatch):
+    from orpheus_mcp.analysis.config import CFG
+
+    sig = _tilted_noise(-6.0)
+    baseline = compute_character(mono_source(sig)).spectral["rolloff_hz"]
+
+    monkeypatch.setattr(CFG, "ROLLOFF_FRACTION", 0.10)
+    lowered = compute_character(mono_source(sig)).spectral["rolloff_hz"]
+
+    assert baseline is not None and lowered is not None
+    assert lowered < baseline, "a lower rolloff fraction must read back a lower rolloff_hz"
+
+
 # --------------------------------------------------------------------------- #
 # resolve_source integration duties (§6 R3 complement, §7 channel honesty)
 # --------------------------------------------------------------------------- #
