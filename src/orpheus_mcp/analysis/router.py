@@ -35,21 +35,24 @@ capped first run can never freeze a low-quality answer forever.
 from __future__ import annotations
 
 import re
+import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 import soundfile as sf
 
 from orpheus_mcp.analysis import cachefs as _cachefs
+from orpheus_mcp.analysis import model_registry
+from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.analysis.model_registry import classes_for_target
-from orpheus_mcp.analysis.separation import separate_region
+from orpheus_mcp.analysis.separation import SeparationError, SeparatorEnvMissing, separate_region
 from orpheus_mcp.analysis.timeline import crop_timeline, most_exposed_window, target_absent
 from orpheus_mcp.analysis.verify import ensemble_avg_wave
-from orpheus_mcp.models import GateSet, StemResult, Window
+from orpheus_mcp.models import AnswerEnvelope, GateSet, Recon, StemHandle, StemResult, Window
 
 if TYPE_CHECKING:
     from orpheus_mcp.analysis.cachefs import CacheFS, Pcm
@@ -58,7 +61,14 @@ if TYPE_CHECKING:
     from orpheus_mcp.analysis.timeline import TaggerEngine
     from orpheus_mcp.models import Timeline
 
-__all__ = ["TIER_ORDER", "QUESTION_TIERS", "LadderOutcome", "climb"]
+__all__ = [
+    "TIER_ORDER",
+    "QUESTION_TIERS",
+    "LadderOutcome",
+    "climb",
+    "analyze_reference",
+    "QUESTION_CLASSES",
+]
 
 # §3.1 cost tiers, in ascending order — the budget guard compares a rung's tier against the
 # caller's ``max_tier`` by index into this list.
@@ -410,7 +420,7 @@ def climb(
     *,
     registry: Resolver,
     engines: EngineFactory,
-    tagger: TaggerEngine,
+    tagger: TaggerEngine | None,
     timeline: Timeline,
     max_tier: str,
     max_seconds: float,
@@ -433,6 +443,8 @@ def climb(
 
     candidates = list(registry(target))
     if verify is None:
+        if tagger is None:
+            raise ValueError("climb needs a `tagger` when no `verify` seam is injected.")
         verify = _production_verifier(pcm, tagger, timeline)
 
     # The target's own rank-1 entry (``None`` for a checkpoint-less target) — the seam through
@@ -593,3 +605,512 @@ def climb(
     if st.best is not None:
         return _complete(st.best.stems, st.best.rung, st.best.source)
     return _complete(None, resume_from or "rank1", "")
+
+
+# --------------------------------------------------------------------------- #
+# analyze_reference — the §9 orchestrator (Task 12.1)
+#
+# The convenience entry that applies the §3.1 routing table and packages the §9 answer
+# envelope. It composes the *cache-plumbing tool functions* (``tools.reference``: recon /
+# timeline / chords / characterize / lyrics) plus this module's own :func:`climb` — imported
+# LAZILY inside the function so ``analysis/router.py`` carries no import-time dependency on the
+# tools layer and, crucially, NONE on the REAPER bridge (§3 module boundary: ``compare_track``
+# delivers the reference side only and merely NAMES the render/characterize/compare follow-up
+# calls; it never reaches for the bridge). ``analyze_reference`` is therefore the single place
+# where a routing decision is made, every stage's cache hit/miss and the §6 ladder log are
+# collected, and every degradation is named (``capped_by_missing_extra`` / ``budget_capped``).
+# --------------------------------------------------------------------------- #
+
+# The locked §9 question-class vocabulary (router + envelope + tests share it). ``None`` focus
+# ⇒ ``"recon"``; anything outside this set is a validation error.
+QUESTION_CLASSES = tuple(QUESTION_TIERS.keys())
+
+# Which §3.1 cost tier a finished ladder rung actually COST — so ``tier_reached`` reports the
+# honest tier, not the question's ceiling. Pre-flight verdicts (absent/exposed) are T2
+# bookkeeping; rank-1 is the single T3 separation; every escalation rung is T4; R6 is T5.
+_RUNG_TO_TIER = {
+    "absent": "T2",
+    "exposed": "T2",
+    "rank1": "T3",
+    "R1": "T4",
+    "R2": "T4",
+    "R3": "T4",
+    "R4": "T4",
+    "R5": "T4",
+    "R6": "T5",
+}
+
+
+class _RecordingCache:
+    """A transparent :class:`CacheFS` proxy that records every ``read_json`` as a
+    ``(kind, hit)`` pair, so the orchestrator can put each stage's cache hit/miss on the
+    envelope (§9: "every stage's cache hits/misses ride the envelope") without any tool
+    function needing to report it. Every other method/attribute delegates to the wrapped
+    instance, so the real cache root, stem layout, and pinning are untouched."""
+
+    def __init__(self, inner: CacheFS) -> None:
+        self._inner = inner
+        self.reads: list[tuple[str, bool]] = []
+
+    def read_json(self, pcm_hash: str, kind: str, meta: dict) -> dict | None:
+        obj = self._inner.read_json(pcm_hash, kind, meta)
+        self.reads.append((kind, obj is not None))
+        return obj
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def _tier_i(tier: str) -> int:
+    return TIER_ORDER.index(tier)
+
+
+def _class_ceiling(question_class: str) -> str:
+    """The tier ceiling the routing table permits a class to REACH. This is
+    ``QUESTION_TIERS[class]`` for every class except ``sound_at``/``compare_track``, which the
+    spec (§3.1: "T3 (+T4 only on gate failure)") allows to escalate one tier into the §6 ladder's
+    T4 rungs — ``QUESTION_TIERS`` records their T3 *nominal/entry* tier, and this adds the
+    gate-failure escalation allowance so the ladder can actually climb. ``tier_reached`` still
+    reports the HONEST tier the ladder stopped at (T3 when rank-1 passed, T4 only if it climbed)."""
+    if question_class in ("sound_at", "compare_track"):
+        return "T4"
+    return QUESTION_TIERS[question_class]
+
+
+def _cap_tier(question_class: str, max_tier: str | None) -> str:
+    """min(class ceiling, max_tier) by TIER_ORDER index (§3.1 routing table)."""
+    ceiling = _class_ceiling(question_class)
+    if max_tier is None:
+        return ceiling
+    if max_tier not in TIER_ORDER:
+        raise ValueError(f"max_tier must be one of {TIER_ORDER}, got {max_tier!r}")
+    return ceiling if _tier_i(ceiling) <= _tier_i(max_tier) else max_tier
+
+
+def _recon_summary(recon: Recon) -> dict[str, Any]:
+    """The compact T1 fact bundle present on every envelope (§9 ``recon_summary``)."""
+    g = recon.grid
+    return {
+        "duration_s": recon.duration_s,
+        "tempo_bpm": recon.tempo_bpm,
+        "key": recon.key.root,
+        "mode": recon.key.mode,
+        "key_confidence": recon.key.confidence,
+        "lufs_integrated": recon.lufs_integrated,
+        "tuning_offset_cents": recon.tuning_offset_cents,
+        "meter": list(g.meter),
+        "grid_kind": g.kind,
+        "grid_confidence": g.confidence,
+        "n_sections": len(recon.sections),
+    }
+
+
+def _bar_seconds(recon: Recon) -> tuple[float, str]:
+    """The §14.2/§13.4 bar length for the ``lyric_navigate`` "+8 bars" window: the measured
+    recon downbeat spacing on a confident beat grid, or ``CFG.FIXED_GRID_BARS_TO_SECONDS`` per
+    bar when the grid is fixed (``grid.kind == "fixed"`` — or a low-confidence / too-few-
+    downbeats beat grid that downstream consumers treat as fixed, §13.4 rubato fallback).
+    Returns ``(seconds_per_bar, mode)``."""
+    g = recon.grid
+    fixed = (
+        g.kind == "fixed"
+        or g.confidence < CFG.BEAT_GRID_CONFIDENCE_MIN
+        or len(g.downbeats_s) < 2
+    )
+    if not fixed:
+        diffs = [b - a for a, b in zip(g.downbeats_s, g.downbeats_s[1:], strict=False) if b > a]
+        if diffs:
+            return statistics.median(diffs), "beat"
+    return CFG.FIXED_GRID_BARS_TO_SECONDS, "fixed"
+
+
+def _mean_activation(tl: Timeline, win: Window) -> dict[str, float]:
+    """Per-class mean activation of ``tl`` over ``win`` (§3.1 timeline diff for lyric_navigate)."""
+    cropped = crop_timeline(tl, win)
+    if not cropped.frames:
+        return {cls: 0.0 for cls in cropped.classes}
+    arr = np.asarray(cropped.frames, dtype=np.float64)
+    means = arr.mean(axis=0)
+    return {cls: float(m) for cls, m in zip(cropped.classes, means, strict=True)}
+
+
+def _stem_handle(sr: StemResult) -> StemHandle:
+    """A :class:`StemHandle` for ``characterize`` built from a ladder-produced stem — the R3
+    ``complement=True`` note rides through ``notes`` so ``resolve_source`` stamps
+    ``SourceMeta.complement`` and the envelope's descriptor carries it end-to-end (§6/§7)."""
+    return StemHandle(
+        stem_path=sr.stem_path,
+        stem_type=sr.target,
+        produced_by=sr.model_id,
+        region=sr.region_trimmed,
+        notes=list(sr.notes),
+    )
+
+
+def analyze_reference(
+    file: str,
+    question_focus: str | None = None,
+    region: Window | None = None,
+    max_tier: str | None = None,
+    max_seconds: float | None = None,
+    target: str | None = None,
+    quote: str | None = None,
+    occurrence: int | None = None,
+    *,
+    cache: CacheFS | None = None,
+    tagger: TaggerEngine | None = None,
+    engine: SeparatorEngine | None = None,
+    asr: Any | None = None,
+    verify: Verifier | None = None,
+    resolver: Resolver | None = None,
+    timeline: Timeline | None = None,
+    transcribe: Callable[[Path, Path], list[Any]] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> AnswerEnvelope:
+    """§9 orchestrator. Route ``question_focus`` (``None`` ⇒ ``"recon"``) through the §3.1
+    tier table, run stages up to ``min(QUESTION_TIERS[class], max_tier)``, populate ONLY the
+    artifact groups that class needs, and return the §9 :class:`AnswerEnvelope`.
+
+    Locked behavior: an unknown ``question_focus`` raises ``ValueError``; a missing extra at the
+    needed tier degrades to the highest available tier with ``capped_by_missing_extra`` named;
+    ``max_seconds`` expiring mid-ladder rides as ``budget_capped``; every stage's cache hit/miss
+    and the §6 ladder log ride the envelope. Two locked closures (see the module note):
+    ``lyric_navigate`` answers with the timeline diff of ``[match.end_s, +8 bars]`` vs the
+    preceding window; ``compare_track`` delivers the REFERENCE side only and NAMES the
+    render/characterize/compare follow-up calls (``analysis/`` stays bridge-free).
+
+    All keyword-only params after ``cache`` are hermetic-test injection seams (stub tagger/
+    engine/asr, a scripted ``verify``/``resolver``/``timeline``, a stubbed ``transcribe``
+    subprocess, a fake ``clock``); production callers leave them ``None``."""
+    from orpheus_mcp.tools import reference as _ref
+
+    question_class = question_focus if question_focus is not None else "recon"
+    if question_class not in QUESTION_TIERS:
+        raise ValueError(
+            f"question_focus must be one of {list(QUESTION_TIERS)} (or None ⇒ 'recon'), "
+            f"got {question_focus!r}"
+        )
+    tier_cap = _cap_tier(question_class, max_tier)
+    budget = max_seconds if max_seconds is not None else CFG.DEFAULT_MAX_SECONDS
+
+    inner = cache if cache is not None else _ref.CacheFS()
+    rec = _RecordingCache(inner)
+    notes: list[str] = []
+    artifacts: dict[str, Any] = {}
+    gates: dict[str, GateSet] = {}
+    ladder_log: list[str] = []
+    capped_by_missing_extra: str | None = None
+    budget_capped = False
+
+    # T1 recon — present on every envelope. Cast the recording proxy to CacheFS for the tool
+    # signatures (it delegates transparently); this is the one intentional structural-duck cast.
+    fs: CacheFS = rec  # type: ignore[assignment]
+    recon = _ref.recon_reference(file, cache=fs)
+    tier_reached = "T1"
+
+    def _bump(tier: str) -> None:
+        nonlocal tier_reached
+        if _tier_i(tier) > _tier_i(tier_reached):
+            tier_reached = tier
+
+    def _get_timeline() -> Timeline:
+        if timeline is not None:
+            return timeline
+        return _ref.instrument_timeline(file, cache=fs, tagger=tagger)
+
+    def _finish() -> AnswerEnvelope:
+        for kind, hit in rec.reads:
+            notes.append(f"cache: {kind} {'HIT' if hit else 'MISS'}")
+        return AnswerEnvelope(
+            question_class=question_class,
+            tier_reached=tier_reached,
+            recon_summary=_recon_summary(recon),
+            artifacts=artifacts,
+            gates=gates,
+            ladder_log=ladder_log,
+            budget_capped=budget_capped,
+            capped_by_missing_extra=capped_by_missing_extra,
+            notes=notes,
+        )
+
+    # ------------------------------------------------------------------ #
+    # T1: recon — the answer IS the recon summary; no artifact groups.
+    # ------------------------------------------------------------------ #
+    if question_class == "recon":
+        return _finish()
+
+    # ------------------------------------------------------------------ #
+    # T2: timeline / chords — populate their one artifact group only.
+    # ------------------------------------------------------------------ #
+    if question_class == "timeline":
+        try:
+            tl = _get_timeline()
+        except (_ref.ReferenceEnvMissing, ImportError) as exc:
+            capped_by_missing_extra = "analysis"
+            notes.append(f"instrument timeline unavailable ([analysis] extra): {exc}")
+            return _finish()
+        artifacts["timeline"] = tl.model_dump(mode="json")
+        _bump("T2")
+        return _finish()
+
+    if question_class == "chords":
+        lane = _ref.get_chords(file, region, cache=fs)
+        artifacts["chords"] = lane.model_dump(mode="json")
+        _bump("T2")
+        return _finish()
+
+    # ------------------------------------------------------------------ #
+    # lyric_navigate: cached lyric index → [match.end_s, +8 bars] window →
+    # timeline diff vs the preceding window (§14.2). T1–T2, no separation.
+    # ------------------------------------------------------------------ #
+    if question_class == "lyric_navigate":
+        if not quote:
+            raise ValueError("question_focus='lyric_navigate' requires a lyric `quote`.")
+        located = _ref.locate_lyric(
+            file, quote, occurrence, cache=fs, asr=asr, tagger=tagger, engine=engine
+        )
+        if located.status == "no_vocals" or not located.matches:
+            notes.append("no lyric match for the quote — nothing to navigate from.")
+            return _finish()
+        match = located.matches[0]
+        bar_s, grid_mode = _bar_seconds(recon)
+        width = 8.0 * bar_s
+        dur = recon.duration_s
+        r_start = max(0.0, min(match.end_s, dur))
+        r_end = max(r_start, min(match.end_s + width, dur))
+        p_start = max(0.0, r_start - width)
+        p_end = r_start
+        region_win = Window(start_s=r_start, end_s=r_end)
+        preceding_win = Window(start_s=p_start, end_s=p_end)
+        tl = _get_timeline()
+        after = _mean_activation(tl, region_win)
+        before = _mean_activation(tl, preceding_win)
+        diff = {cls: round(after[cls] - before.get(cls, 0.0), 6) for cls in after}
+        rising = sorted((c for c, d in diff.items() if d > 1e-6), key=lambda c: -diff[c])
+        artifacts["timeline"] = tl.model_dump(mode="json")
+        artifacts["region"] = region_win.model_dump(mode="json")
+        artifacts["preceding_region"] = preceding_win.model_dump(mode="json")
+        artifacts["lyric_match"] = match.model_dump(mode="json")
+        artifacts["bar_seconds"] = bar_s
+        artifacts["grid_mode"] = grid_mode
+        artifacts["activation_diff"] = diff
+        artifacts["rising"] = rising
+        _bump("T2")
+        notes.append(
+            f"lyric window [{r_start:.3f},{r_end:.3f}] s = match.end_s + 8 bars "
+            f"({grid_mode} grid, {bar_s:.3f} s/bar)"
+        )
+        return _finish()
+
+    # ------------------------------------------------------------------ #
+    # sound_at / compare_track / notes: the §6 separation ladder path.
+    # ------------------------------------------------------------------ #
+    if target is None:
+        if question_class in ("sound_at", "compare_track"):
+            raise ValueError(f"question_focus={question_class!r} requires a `target`.")
+        target = ""  # notes: whole-mix transcription (no per-instrument attribution, §9 T5)
+
+    pcm = _ref.cachefs.decode(file)
+
+    # Resolve the T2 tagger up front (a missing [analysis] extra degrades to the tier we have).
+    # It builds the timeline AND — when no ``verify`` seam is injected — the §6 production
+    # verifier inside ``climb``, so both share ONE tagger instance rather than loading two. Only
+    # resolved when actually needed (a hermetic test that injects both a ``timeline`` and a
+    # ``verify`` seam never constructs a real tagger).
+    tagger_engine: TaggerEngine | None = tagger
+    if tagger_engine is None and (verify is None or timeline is None):
+        try:
+            tagger_engine = _ref._resolve_tagger(None)
+        except (_ref.ReferenceEnvMissing, ImportError) as exc:
+            capped_by_missing_extra = "analysis"
+            notes.append(f"tagger unavailable ([analysis] extra): {exc}")
+            return _finish()
+
+    # Build the ladder timeline (T2) — needed for absent/exposure pre-gates and the verifier.
+    try:
+        tl = timeline if timeline is not None else _ref.instrument_timeline(
+            file, cache=fs, tagger=tagger_engine
+        )
+        _bump("T2")
+    except (_ref.ReferenceEnvMissing, ImportError) as exc:
+        capped_by_missing_extra = "analysis"
+        notes.append(f"instrument timeline unavailable ([analysis] extra): {exc}")
+        return _finish()
+
+    free = model_registry.free_vram_gb()
+    the_resolver: Resolver = (
+        resolver if resolver is not None else _ref._separator_registry_resolver(free)
+    )
+    engines = _ref._engine_factory(engine)
+
+    # The ladder climbs up to ``tier_cap`` (already min(class ceiling, max_tier)); rank-1 is T3,
+    # every escalation rung T4, R6 T5. For "notes" the ladder may reach R6's source-selection
+    # (T5); the actual basic-pitch transcription is the T5 step run AFTER the ladder, below.
+    outcome: LadderOutcome | None = None
+    if target:
+        try:
+            outcome = climb(
+                pcm,
+                target,
+                region,
+                registry=the_resolver,
+                engines=engines,
+                tagger=tagger_engine,
+                timeline=tl,
+                max_tier=tier_cap,
+                max_seconds=budget,
+                cache=fs,
+                clock=clock,
+                verify=verify,
+            )
+        except (SeparatorEnvMissing, SeparationError) as exc:
+            capped_by_missing_extra = "separation"
+            notes.append(f"separation unavailable ([separation] extra): {exc}")
+            return _finish()
+
+        ladder_log = list(outcome.log)
+        budget_capped = outcome.budget_capped
+        _bump(_RUNG_TO_TIER.get(outcome.rung, tier_reached))
+
+        if outcome.rung == "absent":
+            notes.append(f"target not detected in this song ({target}). {outcome.source}")
+            return _finish()
+
+    # notes (T5): transcribe the best available source (§6 R6 selection). Runs only when the
+    # tier ceiling actually allows T5 — otherwise we deliver the stems we have and say so.
+    if question_class == "notes":
+        if _tier_i(tier_cap) < _tier_i("T5"):
+            notes.append(f"notes require T5; capped at {tier_cap} — delivering stems only.")
+            _package_stem(outcome, artifacts, gates, notes)
+            return _finish()
+        events, src_desc = _run_transcription(
+            file, region, pcm, tl, target, outcome, the_resolver, fs, transcribe
+        )
+        artifacts["notes"] = [
+            {
+                "start_time_s": e.start_time_s,
+                "end_time_s": e.end_time_s,
+                "pitch_midi": e.pitch_midi,
+                "velocity": e.velocity,
+                "pitch_bend": e.pitch_bend,
+            }
+            for e in events
+        ]
+        notes.append(f"transcribe source: {src_desc}")
+        _bump("T5")
+        return _finish()
+
+    # sound_at / compare_track. §3.1b: when the ladder's pre-flight found the target EXPOSED in
+    # the raw mix (rung "exposed"), skip separation and characterize that mix window directly —
+    # a T2 answer that still delivers descriptors (the spec's "characterize the mix region
+    # directly"). Otherwise package the separated reference stem + gates + descriptors.
+    if outcome is not None and outcome.stems is None and outcome.rung == "exposed":
+        cands = list(the_resolver(target))
+        tclasses = classes_for_target(cands[0], target) if cands else []
+        win = most_exposed_window(tl, tclasses) if tclasses else None
+        if win is not None:
+            character = _ref.characterize(file, region=win, cache=fs)
+            artifacts["descriptors"] = [character.model_dump(mode="json")]
+            artifacts["exposed_window"] = win.model_dump(mode="json")
+            notes.append(
+                f"§3.1b: '{target}' is exposed in the raw mix over "
+                f"[{win.start_s:.3f},{win.end_s:.3f}] s — characterized the mix window "
+                f"directly, no separation needed (no per-stem gates apply)."
+            )
+        else:
+            notes.append(f"answered at rung exposed: {outcome.source} (no stem to describe).")
+    else:
+        _package_stem_and_descriptors(outcome, target, notes, artifacts, gates, fs, _ref)
+
+    if question_class == "compare_track":
+        notes.append(
+            "compare_track delivers the REFERENCE side only. Next, Claude composes the "
+            "project side: render_track_region(<your track>, region) → characterize(<render>) "
+            "→ compare_character(reference_descriptor, render_descriptor). analysis/ makes no "
+            "REAPER-bridge calls by design (§3 module boundary)."
+        )
+
+    return _finish()
+
+
+def _package_stem(
+    outcome: LadderOutcome | None,
+    artifacts: dict[str, Any],
+    gates: dict[str, GateSet],
+    notes: list[str],
+) -> None:
+    """Put the ladder's delivered stem + its gates on the envelope (no descriptors)."""
+    if outcome is None or outcome.stems is None:
+        notes.append("no separated stem available at the reached tier.")
+        return
+    artifacts["stems"] = {t: sr.model_dump(mode="json") for t, sr in outcome.stems.items()}
+    for t, sr in outcome.stems.items():
+        if sr.gates is not None:
+            gates[t] = sr.gates
+
+
+def _package_stem_and_descriptors(
+    outcome: LadderOutcome | None,
+    target: str,
+    notes: list[str],
+    artifacts: dict[str, Any],
+    gates: dict[str, GateSet],
+    fs: CacheFS,
+    _ref: Any,
+) -> None:
+    """§9 ``sound_at``/``compare_track`` packaging: the target stem, its §5 gates, and its §7
+    descriptors (via ``characterize`` — carrying the R3 ``complement=True`` flag end-to-end)."""
+    _package_stem(outcome, artifacts, gates, notes)
+    if outcome is None or outcome.stems is None or target not in outcome.stems:
+        if outcome is not None and outcome.stems is None:
+            notes.append(
+                f"answered at rung {outcome.rung}: {outcome.source} (no stem to describe)."
+            )
+        return
+    handle = _stem_handle(outcome.stems[target])
+    character = _ref.characterize(handle, cache=fs)
+    artifacts["descriptors"] = [character.model_dump(mode="json")]
+
+
+def _run_transcription(
+    file: str,
+    region: Window | None,
+    pcm: Pcm,
+    tl: Timeline,
+    target: str,
+    outcome: LadderOutcome | None,
+    the_resolver: Resolver,
+    fs: CacheFS,
+    transcribe: Callable[[Path, Path], list[Any]] | None,
+) -> tuple[list[Any], str]:
+    """§6 R6 / §9 T5: pick the transcription source (a gate-passed stem if the ladder produced
+    one, else the target's most-exposed raw window, else the whole/region mix) and run
+    basic-pitch (subprocess, isolated env) over it. ``transcribe`` is the injection seam; the
+    production default is the isolated ``transcribe_cli.transcribe``."""
+    if transcribe is None:
+        from orpheus_mcp.analysis.transcribe_cli import transcribe as _transcribe
+
+        transcribe = _transcribe
+
+    out_dir = Path(fs.artifact_dir(pcm.pcm_hash)) / "transcribe"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if outcome is not None and outcome.stems is not None and target in outcome.stems:
+        src_stem = outcome.stems[target]
+        return transcribe(Path(src_stem.stem_path), out_dir), (
+            f"{outcome.rung} stem ({src_stem.model_id})"
+        )
+
+    # No usable stem — transcribe the target's most-exposed raw window (or the requested
+    # region, or the whole mix), written out as a temp wav.
+    win: Window | None = None
+    if target:
+        cands = list(the_resolver(target))
+        tclasses = classes_for_target(cands[0], target) if cands else []
+        win = most_exposed_window(tl, tclasses) if tclasses else None
+    if win is None:
+        win = region if region is not None else Window(start_s=0.0, end_s=pcm.duration_s)
+    crop = _crop_audio(pcm, win)
+    src_wav = out_dir / "source.wav"
+    sf.write(str(src_wav), crop, pcm.sample_rate, subtype="PCM_16")
+    return transcribe(src_wav, out_dir), f"most-exposed raw window {_window_desc(win, region)}"

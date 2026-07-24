@@ -624,3 +624,43 @@ class EditPlan(BaseModel):
         default_factory=list,
         description="Honest limits — low detection confidence, taste-based choices, etc.",
     )
+
+
+# --------------------------------------------------------------------------- #
+# §9 answer envelope — the ``analyze_reference`` orchestrator's return shape (Task 12.1).
+# The one tool-result that ties the whole reference-analysis engine together: it routes a
+# question class to its §3.1 tier ceiling, runs only the stages that class needs, and packages
+# WHATEVER it could produce (with every degradation named) into one honest bundle.
+# --------------------------------------------------------------------------- #
+
+
+class AnswerEnvelope(BaseModel):
+    """The §9 answer envelope produced by ``analyze_reference``. ``question_class`` is the
+    resolved (validated) question class (``None`` focus ⇒ ``"recon"``). ``tier_reached`` is the
+    HIGHEST §3.1 cost tier actually run (``"T1"``..``"T5"``) — capped by the class ceiling,
+    ``max_tier``, the budget, and any missing extra, and honestly lower than the ceiling when a
+    stage was skipped/degraded. ``recon_summary`` is the compact T1 fact bundle (tempo/key/grid/
+    loudness) present on every envelope.
+
+    ``artifacts`` holds ONLY the groups the question class needed (§9 packaging note): a
+    ``"recon"`` envelope has none; ``"timeline"``/``"chords"`` populate their one key;
+    ``"sound_at"``/``"compare_track"`` populate ``stems`` + ``descriptors``; ``"lyric_navigate"``
+    populates ``timeline`` + the region/activation-diff of the §14.2 window; ``"notes"`` populates
+    ``notes`` (the T5 note-event stream). ``gates`` maps each delivered stem's target to its §5
+    :class:`GateSet`. ``ladder_log`` is the §6 escalation transition record (empty when no ladder
+    ran). ``budget_capped`` is ``True`` when ``max_seconds`` expired mid-ladder;
+    ``capped_by_missing_extra`` names the extra (``"separation"``/``"analysis"``) whose absence
+    forced an answer at a lower tier (§9 degrade-with-a-name rule); ``notes`` carries the
+    cache-hit/miss log, the follow-up-call plan (``compare_track``), and every other honesty
+    string."""
+
+    schema_version: int = 1
+    question_class: str
+    tier_reached: str
+    recon_summary: dict[str, Any] = Field(default_factory=dict)
+    artifacts: dict[str, Any] = Field(default_factory=dict)
+    gates: dict[str, GateSet] = Field(default_factory=dict)
+    ladder_log: list[str] = Field(default_factory=list)
+    budget_capped: bool = False
+    capped_by_missing_extra: str | None = None
+    notes: list[str] = Field(default_factory=list)

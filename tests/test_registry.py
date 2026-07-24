@@ -63,7 +63,7 @@ IMPLEMENTED = {
     # reference (Task 1.3 — T1 recon; Task 2.1 — T2 instrument timeline; Task 3.2 — §13
     # chords; Task 4.2 — §5 verification gates 1-3 + separate_region; Task 5.3 — verify_stem;
     # Task 6.1 — §7 SoundCharacter descriptors + characterize; Task 8.2 — §14.2
-    # transcribe_lyrics + locate_lyric)
+    # transcribe_lyrics + locate_lyric; Task 12.1 — §9 analyze_reference orchestrator)
     "recon_reference",
     "instrument_timeline",
     "get_chords",
@@ -73,6 +73,7 @@ IMPLEMENTED = {
     "compare_character",
     "transcribe_lyrics",
     "locate_lyric",
+    "analyze_reference",
     # mix (Task 11.1 — §8 step 3 FX apply verbs)
     "add_fx_by_name",
     "set_fx_param",

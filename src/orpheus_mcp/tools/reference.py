@@ -21,9 +21,11 @@ from fastmcp import FastMCP
 from orpheus_mcp.analysis import cachefs, model_registry
 from orpheus_mcp.analysis.cachefs import CacheFS, Pcm
 from orpheus_mcp.analysis.config import CFG
+from orpheus_mcp.analysis.router import analyze_reference
 from orpheus_mcp.analysis.separation import SeparationError
 from orpheus_mcp.analysis.separation import separate_region as _run_separation_core
 from orpheus_mcp.models import (
+    AnswerEnvelope,
     CharacterDiff,
     ChordsLane,
     GateResult,
@@ -57,6 +59,7 @@ __all__ = [
     "compare_character",
     "transcribe_lyrics",
     "locate_lyric",
+    "analyze_reference",
     "register",
 ]
 
@@ -1181,6 +1184,46 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
         the local analysis cache (``~/.orpheus_cache``) on a MISS.
         """
         return locate_lyric(file, quote, occurrence)
+
+    @mcp.tool(name="analyze_reference", annotations=_RO)
+    def analyze_reference_tool(
+        file: str,
+        question_focus: str | None = None,
+        region: Window | None = None,
+        max_tier: str | None = None,
+        max_seconds: float | None = None,
+        target: str | None = None,
+        quote: str | None = None,
+        occurrence: int | None = None,
+    ) -> AnswerEnvelope:
+        """§9 orchestrator — route a question about ``file`` to its §3.1 cost tier, run only the
+        stages that class needs, and return the answer envelope (``question_class``,
+        ``tier_reached``, ``recon_summary``, the needed ``artifacts`` groups, per-stem ``gates``,
+        the §6 ``ladder_log``, and honesty flags ``budget_capped`` / ``capped_by_missing_extra``
+        / ``notes``).
+
+        ``question_focus`` (``None`` ⇒ ``"recon"``) is one of: ``recon`` (T1: key/tempo/grid/
+        loudness), ``timeline`` / ``chords`` (T2), ``sound_at`` / ``compare_track`` (T3, needs a
+        ``target`` instrument; +T4 only on §5 gate failure), ``lyric_navigate`` (needs a
+        ``quote`` — answers with the instrument-activation diff of the ``[match.end_s, +8 bars]``
+        window vs the preceding one), or ``notes`` (T5 polyphonic transcription — needs
+        ``max_tier="T5"``). ``region`` scopes the question to a span; ``max_tier`` / ``max_seconds``
+        cap cost. ``compare_track`` returns the REFERENCE side only and names the render/
+        characterize/compare follow-up calls in ``notes`` (no REAPER-bridge calls here). A tier a
+        missing extra can't reach degrades to the highest available tier with the extra named,
+        never a hard error. Does not modify the input file or any REAPER project
+        (``readOnlyHint``) — it does write to the local analysis cache (``~/.orpheus_cache``).
+        """
+        return analyze_reference(
+            file,
+            question_focus,
+            region,
+            max_tier,
+            max_seconds,
+            target,
+            quote,
+            occurrence,
+        )
 
     _panns_available = (
         importlib.util.find_spec("panns_inference") is not None
