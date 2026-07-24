@@ -5,13 +5,17 @@ The recognizer core is a pure function of a ``(beats, 12)`` chroma matrix, so th
 slash / theory cases feed constructed chroma and constructed lanes straight in (no librosa).
 The ``>= 90%`` majmin bar (the §12 slice-3 acceptance bar) runs on a *synthesized* clean
 progression per the brief ("synthesized C-Am-F-G ... asserted numerically"): the committed
-``ci_sparse`` render is deliberately messy voicings and is exercised only as a non-crash
-smoke case (its C/E span reads as D — oracle top-5 chord recall ~0.70 — so the render
-cannot reach the bar with template matching; see ``.superpowers/sdd/task-3.1-report.md``).
+``ci_sparse`` FULL-MIX render is deliberately messy voicings and is exercised only as a
+non-crash smoke case (its C/E span reads as D — oracle top-5 chord recall ~0.70 — so the
+dense render cannot reach the bar with template matching; see
+``.superpowers/sdd/task-3.1-report.md``). The bar is additionally enforced (D11) on
+``ci_sparse``'s isolated chords STEM — beat-gridded from the mix's recon — which is not
+chroma-smeared and reaches the bar honestly.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -201,6 +205,30 @@ def test_ci_sparse_render_produces_a_sane_lane():
     assert len(lane.segments) >= 1
     assert any(s.quality != "N" for s in lane.segments)
     assert all(s.produced_by == "baseline" for s in lane.segments)
+
+
+def test_ci_sparse_chords_stem_beat_level_majmin_at_least_90pct():
+    """The honest fixture form of the §13/§12 slice-3 bar: the rendered ci_sparse FULL MIX
+    is dense-render chroma-smeared (the baseline scores ~0.20 there; oracle template ceiling
+    ~0.70 — see ``.superpowers/sdd/task-3.1-report.md``), but the fixture's isolated chords
+    STEM carries the harmonic content the bar is meant to certify. Run the baseline lane on
+    the stem's chroma with the beat grid from the MIX's recon (real usage — a router aligns
+    every lane onto one recon grid), then score beat-level majmin accuracy against
+    ``truth.json``'s progression (Gmaj7,C/E,D,Em7 @ 116 bpm, 2 bars/chord = 8 bars total)
+    expanded onto that grid."""
+    truth = json.loads((FIXTURES / "ci_sparse" / "truth.json").read_text())
+    symbols = truth["progression"].split(",")
+    bpm = float(truth["bpm"])
+    beats_per_chord = 2 * 4  # 2 bars/chord, 4/4
+    dur = len(symbols) * beats_per_chord * 60.0 / bpm
+
+    mix_pcm = decode(str(FIXTURES / "ci_sparse" / "mix.flac"))
+    recon = run_recon(mix_pcm)
+    chords_pcm = decode(str(FIXTURES / "ci_sparse" / "stems" / "chords.flac"))
+    lane = chord_lane_baseline(chords_pcm, recon)
+
+    accuracy = _score_majmin(lane, symbols, list(recon.grid.times_s), dur)
+    assert accuracy >= 0.90, f"stem majmin accuracy {accuracy:.3f} below the 0.90 bar"
 
 
 # --------------------------------------------------------------------------- #
