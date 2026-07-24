@@ -7,12 +7,16 @@ real model weights, matching the Task 4.1 CI-safe convention.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
 from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.analysis.model_registry import ModelEntry, classes_for_target
 from orpheus_mcp.analysis.verify import (
+    ensemble_avg_wave,
+    gate_agreement,
     gate_bleed,
     gate_mix_consistency,
     gate_silence_honesty,
@@ -218,6 +222,110 @@ def test_gate_silence_honesty_empty_target_idx_is_na():
 
 
 # --------------------------------------------------------------------------- #
+# Gate 4 — cross-model agreement (§5.4, Task 5.1): log-mel (128 bands, hop 1024) Pearson
+# r over flattened frames between two engines' takes on the same target; pass iff
+# r >= CFG.GATE_AGREEMENT_PASS (0.90 default).
+# --------------------------------------------------------------------------- #
+
+
+def test_gate_agreement_identical_stems_pass_r_near_one():
+    stem = _sine(8000, 220.0, sr=8000)
+
+    result = gate_agreement(stem, stem.copy(), sr=8000)
+
+    assert result.value is not None
+    assert result.value == pytest.approx(1.0, abs=1e-6)
+    assert result.verdict == "pass"
+
+
+def test_gate_agreement_noise_vs_sine_fails():
+    rng = np.random.default_rng(0)
+    noise = rng.standard_normal((8000, 1))
+    sine = _sine(8000, 220.0, sr=8000)
+
+    result = gate_agreement(noise, sine, sr=8000)
+
+    assert result.value is not None
+    assert result.value < CFG.GATE_AGREEMENT_PASS
+    assert result.verdict == "fail"
+
+
+def test_gate_agreement_one_silent_one_active_fails_zero_not_nan():
+    # Pearson r is undefined (0/0) when one side has zero variance -- must read as an
+    # explicit "fail" at value 0.0, never NaN and never a crash.
+    silent = np.zeros((8000, 1))
+    active = _sine(8000, 220.0, sr=8000)
+
+    result = gate_agreement(silent, active, sr=8000)
+
+    assert result.value is not None
+    assert math.isfinite(result.value)
+    assert result.value == 0.0
+    assert result.verdict == "fail"
+
+
+def test_gate_agreement_both_silent_is_na():
+    silent_a = np.zeros((8000, 1))
+    silent_b = np.zeros((8000, 1))
+
+    result = gate_agreement(silent_a, silent_b, sr=8000)
+
+    assert result.verdict == "na"
+    assert result.value is None
+
+
+def test_gate_agreement_length_mismatch_aligns_to_shorter_before_scoring():
+    stem_a = _sine(8000, 220.0, sr=8000)
+    # stem_b repeats stem_a's content then appends unrelated noise past stem_a's length --
+    # aligning to the shorter length before mel extraction must crop the noise tail out
+    # entirely, leaving a near-perfect agreement despite the raw length mismatch.
+    rng = np.random.default_rng(1)
+    stem_b = np.concatenate([stem_a, rng.standard_normal((500, 1))], axis=0)
+    assert stem_a.shape[0] != stem_b.shape[0]
+
+    result = gate_agreement(stem_a, stem_b, sr=8000)
+
+    assert result.value is not None
+    assert result.value == pytest.approx(1.0, abs=1e-6)
+    assert result.verdict == "pass"
+
+
+# --------------------------------------------------------------------------- #
+# avg_wave ensemble (§5.4, Task 5.1): length-aligned element-wise mean across stems.
+# --------------------------------------------------------------------------- #
+
+
+def test_ensemble_avg_wave_dc_offset_copies_is_exact_mean():
+    base = _sine(4000, 220.0, sr=4000)
+    a = base + 1.0
+    b = base - 1.0
+
+    result = ensemble_avg_wave([a, b])
+
+    np.testing.assert_allclose(result, base, atol=1e-9)
+
+
+def test_ensemble_avg_wave_different_lengths_aligns_then_averages():
+    a = np.full((10, 1), 2.0)
+    b = np.full((6, 1), 4.0)
+
+    result = ensemble_avg_wave([a, b])
+
+    assert result.shape[0] == 6
+    np.testing.assert_allclose(result, np.full((6, 1), 3.0))
+
+
+def test_ensemble_avg_wave_preserves_channel_count():
+    a = np.zeros((10, 2))
+    b = np.ones((10, 2))
+
+    result = ensemble_avg_wave([a, b])
+
+    assert result.shape == (10, 2)
+    np.testing.assert_allclose(result, np.full((10, 2), 0.5))
+
+
+# --------------------------------------------------------------------------- #
 # §5 overall decision rule truth table: fail if ANY applicable gate fails; unverifiable
 # iff ALL gates are N/A; N/A gates excluded otherwise.
 # --------------------------------------------------------------------------- #
@@ -277,6 +385,39 @@ def test_run_gates_composes_gateset_with_agreement_stubbed_na():
     assert gates.bleed.verdict in {"pass", "fail", "na"}
     assert gates.silence_honesty.verdict in {"pass", "fail", "na"}
     assert gates.overall in {"pass", "fail", "unverifiable"}
+
+
+def test_run_gates_computes_agreement_when_other_stem_provided():
+    # Task 5.1: passing an ``other_stem`` (a second engine's take on the same target)
+    # switches gate 4 from the Phase-5 na stub to a real computed verdict, while every
+    # other gate stays exactly as it was.
+    n = 4000
+    vocals = _sine(n, 220.0, sr=4000)
+    drums = _sine(n, 55.0, sr=4000, amp=0.6)
+    mix = vocals + drums
+    stems = {"vocals": vocals, "drums": drums}
+
+    tagger = StubTagger(
+        classes=["Singing", "Speech"], hop_s=1.0, activations=[[0.9, 0.05]] * 1
+    )
+    mix_timeline = Timeline(classes=["Singing", "Speech"], hop_s=1.0, frames=[[0.9, 0.05]])
+
+    gates = run_gates(
+        mix=mix,
+        stems=stems,
+        target="vocals",
+        sr=4000,
+        multi_stem=True,
+        tagger=tagger,
+        target_tagger_classes=["Singing"],
+        mix_timeline=mix_timeline,
+        other_stem=vocals.copy(),
+    )
+
+    assert gates.agreement.verdict == "pass"
+    assert gates.agreement.value is not None
+    assert gates.agreement.value == pytest.approx(1.0, abs=1e-6)
+    assert gates.overall in {"pass", "fail"}
 
 
 # --------------------------------------------------------------------------- #

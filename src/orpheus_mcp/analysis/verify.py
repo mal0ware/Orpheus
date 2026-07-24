@@ -1,9 +1,12 @@
-"""``analysis/verify.py`` (Task 4.2, §5): the four verification gates that triangulate
-"is this separated stem trustworthy" without a ground-truth stem to compare against.
-Gates 1-3 are pure numeric functions on constructed signals (no model dependency beyond
-whatever produced their inputs); gate 4 (cross-model agreement) is a Phase-5 stub here —
-``run_gates`` always returns it as ``na``/``None``, consistent with §5's decision rule
-treating N/A gates as excluded rather than missing evidence.
+"""``analysis/verify.py`` (Task 4.2/5.1, §5): the four verification gates that
+triangulate "is this separated stem trustworthy" without a ground-truth stem to compare
+against. Gates 1-3 are pure numeric functions on constructed signals (no model
+dependency beyond whatever produced their inputs); gate 4 (cross-model agreement, §5.4,
+Task 5.1) compares two engines' takes on the same target via log-mel Pearson r.
+``run_gates`` only computes gate 4 when the caller passes a second engine's stem
+(``other_stem``) — with no second take to compare against, it stays the Phase-5
+``na``/``None`` stub, consistent with §5's decision rule treating N/A gates as excluded
+rather than missing evidence.
 
 **Alignment precondition (§5, stated once, applies to every gate below):** callers must
 pass LENGTH-ALIGNED arrays — ``analysis/separation.py``'s ``separate_region`` already
@@ -33,6 +36,8 @@ __all__ = [
     "gate_mix_consistency",
     "gate_bleed",
     "gate_silence_honesty",
+    "gate_agreement",
+    "ensemble_avg_wave",
     "overall_verdict",
     "run_gates",
 ]
@@ -223,6 +228,83 @@ def gate_silence_honesty(
 
 
 # --------------------------------------------------------------------------- #
+# Gate 4 — cross-model agreement (§5.4, Task 5.1): two engines' takes on the same target.
+# --------------------------------------------------------------------------- #
+
+
+def _align_length(arr: np.ndarray, target_len: int) -> np.ndarray:
+    """Truncate or zero-pad ``(frames, channels)`` to exactly ``target_len`` frames — a
+    local copy of ``analysis.separation``'s helper of the same name and semantics, kept
+    independent so this module doesn't pull separation.py's heavier import graph
+    (subprocess/model_registry/fetch_models) in just for one length-alignment helper."""
+    frames = arr.shape[0]
+    if frames == target_len:
+        return arr
+    if frames > target_len:
+        return arr[:target_len]
+    pad = np.zeros((target_len - frames, arr.shape[1]), dtype=arr.dtype)
+    return np.concatenate([arr, pad], axis=0)
+
+
+def gate_agreement(stem_a: np.ndarray, stem_b: np.ndarray, sr: int) -> GateResult:
+    """``r = corrcoef(log_mel(stem_a), log_mel(stem_b))`` — 128-band, hop-1024 log-mel
+    spectrograms (``librosa.feature.melspectrogram`` + ``power_to_db``), flattened over
+    (band, frame) and compared with a single Pearson r; pass iff
+    ``r >= CFG.GATE_AGREEMENT_PASS``. Mismatched lengths are aligned to the SHORTER stem
+    (§5's length-align precondition) before mel extraction — never resampled/padded to
+    the longer one, which would fabricate content on one side. Both stems exact-silent
+    means there is nothing to compare -> N/A. Exactly one stem exact-silent makes that
+    side's log-mel constant, so Pearson r is the classic zero-variance 0/0 case;
+    ``np.corrcoef`` would emit a RuntimeWarning and NaN there, so that case is special-cased
+    to the weakest possible agreement instead: verdict ``"fail"``, value ``0.0`` (never
+    NaN, never a crash)."""
+    a = np.asarray(stem_a, dtype=np.float64)
+    b = np.asarray(stem_b, dtype=np.float64)
+    a = a if a.ndim == 2 else a.reshape(-1, 1)
+    b = b if b.ndim == 2 else b.reshape(-1, 1)
+
+    target_len = min(a.shape[0], b.shape[0])
+    if target_len == 0:
+        return GateResult(verdict="na", value=None)
+    a = _align_length(a, target_len)
+    b = _align_length(b, target_len)
+
+    if not bool(np.any(a)) and not bool(np.any(b)):
+        return GateResult(verdict="na", value=None)
+
+    import librosa
+
+    mono_a = a.mean(axis=1).astype(np.float32)
+    mono_b = b.mean(axis=1).astype(np.float32)
+
+    mel_a = librosa.feature.melspectrogram(y=mono_a, sr=sr, n_mels=128, hop_length=1024)
+    mel_b = librosa.feature.melspectrogram(y=mono_b, sr=sr, n_mels=128, hop_length=1024)
+
+    log_a = librosa.power_to_db(mel_a).reshape(-1)
+    log_b = librosa.power_to_db(mel_b).reshape(-1)
+
+    if float(np.std(log_a)) == 0.0 or float(np.std(log_b)) == 0.0:
+        return GateResult(verdict="fail", value=0.0)
+
+    r = float(np.corrcoef(log_a, log_b)[0, 1])
+    verdict: Literal["pass", "fail"] = "pass" if r >= CFG.GATE_AGREEMENT_PASS else "fail"
+    return GateResult(verdict=verdict, value=r)
+
+
+def ensemble_avg_wave(stems: list[np.ndarray]) -> np.ndarray:
+    """§5.4 ``avg_wave`` ensemble: element-wise mean across ``stems`` after aligning
+    every stem to the SHORTEST one's length (mirrors ``gate_agreement``'s
+    align-to-shorter rule). Each stem may be 1-D (mono) or 2-D (frames, channels);
+    channel count is preserved in the output, so callers must pass same-channel-count
+    stems."""
+    arrays = [np.asarray(s) for s in stems]
+    arrays = [a if a.ndim == 2 else a.reshape(-1, 1) for a in arrays]
+    target_len = min(a.shape[0] for a in arrays)
+    aligned = [_align_length(a, target_len) for a in arrays]
+    return np.mean(np.stack(aligned, axis=0), axis=0)
+
+
+# --------------------------------------------------------------------------- #
 # §5 decision rule + run_gates composition
 # --------------------------------------------------------------------------- #
 
@@ -248,9 +330,10 @@ def run_gates(
     tagger: TaggerEngine,
     target_tagger_classes: list[str],
     mix_timeline: Timeline,
+    other_stem: np.ndarray | None = None,
 ) -> GateSet:
-    """Composes gates 1-3 for ``stems[target]`` plus the Phase-5 gate-4 stub (always
-    ``na``/``None``) into one :class:`GateSet`, including the §5 ``overall`` verdict.
+    """Composes gates 1-4 for ``stems[target]`` into one :class:`GateSet`, including the
+    §5 ``overall`` verdict.
 
     - Gate 1 sees the full ``stems`` dict (mix consistency needs every co-produced stem).
     - Gate 2 runs ``tagger`` ON THE STEM itself (§5.2) via ``analysis.timeline.
@@ -261,6 +344,9 @@ def run_gates(
       already region-cropped/re-indexed by the caller so frame 0 == the stem's sample 0
       (§5.3: judging silence against the mix's ground truth of when the target plays,
       not against a possibly bleed-contaminated re-tagging of the stem itself).
+    - Gate 4 (§5.4, Task 5.1) only runs when the caller supplies ``other_stem`` — a
+      second engine's independent take on the same target. With no second take to
+      compare against, gate 4 stays the Phase-5 ``na``/``None`` stub.
     """
     from orpheus_mcp.analysis.cachefs import Pcm
     from orpheus_mcp.analysis.timeline import build_timeline
@@ -293,7 +379,11 @@ def run_gates(
     ]
     g3 = gate_silence_honesty(stem, sr, mix_timeline, mix_target_idx)
 
-    g4 = GateResult(verdict="na", value=None)  # Phase 5: cross-model agreement
+    g4 = (
+        GateResult(verdict="na", value=None)
+        if other_stem is None
+        else gate_agreement(stem, other_stem, sr)
+    )
 
     return GateSet(
         mix_consistency=g1,
