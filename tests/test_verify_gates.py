@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from orpheus_mcp.analysis.config import CFG
+from orpheus_mcp.analysis.model_registry import ModelEntry, classes_for_target
 from orpheus_mcp.analysis.verify import (
     gate_bleed,
     gate_mix_consistency,
@@ -276,3 +277,63 @@ def test_run_gates_composes_gateset_with_agreement_stubbed_na():
     assert gates.bleed.verdict in {"pass", "fail", "na"}
     assert gates.silence_honesty.verdict in {"pass", "fail", "na"}
     assert gates.overall in {"pass", "fail", "unverifiable"}
+
+
+# --------------------------------------------------------------------------- #
+# D13: the bleed gate must see PER-TARGET tagger classes, not a multi-target entry's
+# flat tagger_classes union -- otherwise vocal-class activation bleeding into an
+# isolated drums stem reads as "target" energy and the gate stays blind to it.
+# --------------------------------------------------------------------------- #
+
+
+def test_run_gates_bleed_gate_d13_per_target_classes_catches_cross_target_bleed():
+    # A multi-stem entry whose flat tagger_classes is the pre-D13 union across every
+    # target (vocals + drums); tagger_classes_by_target scopes each target to its own
+    # family, exactly like the real seed data's 4-stem entries.
+    entry = ModelEntry(
+        id="4stem-fake/bleed-fixture",
+        task="multi-stem",
+        targets=["vocals", "drums"],
+        engine="audio-separator",
+        checkpoint_url=None,
+        sha256=None,
+        vram_gb=0.0,
+        rt_factor=None,
+        benchmark=None,
+        license="MIT",
+        rank=1,
+        tagger_classes=["Singing", "Drum kit"],  # the pre-D13 flat union
+        tagger_classes_by_target={"vocals": ["Singing"], "drums": ["Drum kit"]},
+    )
+
+    n = 4000
+    drums_stem = _sine(n, 55.0, sr=4000, amp=0.6)
+
+    # Vocal ("Singing") bleed into the isolated drums stem reads exactly as high as the
+    # genuine drums-family ("Drum kit") activation -- the scenario the fix must catch.
+    tagger = StubTagger(classes=["Singing", "Drum kit"], hop_s=1.0, activations=[[0.9, 0.9]])
+    mix_timeline = Timeline(classes=["Singing", "Drum kit"], hop_s=1.0, frames=[[0.9, 0.9]])
+
+    gates = run_gates(
+        mix=drums_stem,
+        stems={"drums": drums_stem},
+        target="drums",
+        sr=4000,
+        multi_stem=False,
+        tagger=tagger,
+        # D13 fix: classes_for_target scopes to ["Drum kit"] only -- "Singing" correctly
+        # counts as non-target bleed.
+        target_tagger_classes=classes_for_target(entry, "drums"),
+        mix_timeline=mix_timeline,
+    )
+
+    assert gates.bleed.value is not None
+    assert gates.bleed.value == pytest.approx(1.0, abs=1e-3)
+    assert gates.bleed.verdict == "fail"
+
+    # NOT asserted -- documentation only: had the caller instead passed the OLD flat
+    # union (entry.tagger_classes == ["Singing", "Drum kit"]) as target_tagger_classes,
+    # BOTH columns would count as "target", leaving nothing in mapped_idx outside the
+    # target set -- nontarget_vals defaults to zeros, the ratio collapses to 0.0, and the
+    # bleed gate would have read "pass" on a stem with genuine vocal bleed. That silent
+    # pass is exactly the D13 defect this test proves is fixed.

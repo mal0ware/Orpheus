@@ -26,7 +26,13 @@
       "Drum",
       "Snare drum",
       "Bass guitar"
-    ]
+    ],
+    "tagger_classes_by_target": {
+      "vocals": ["Singing", "Speech"],
+      "drums": ["Drum kit", "Drum machine", "Drum", "Snare drum"],
+      "bass": ["Bass guitar"],
+      "other": []
+    }
   },
   {
     "id": "4stem-b/scnet-xl",
@@ -54,7 +60,13 @@
       "Drum",
       "Snare drum",
       "Bass guitar"
-    ]
+    ],
+    "tagger_classes_by_target": {
+      "vocals": ["Singing", "Speech"],
+      "drums": ["Drum kit", "Drum machine", "Drum", "Snare drum"],
+      "bass": ["Bass guitar"],
+      "other": []
+    }
   },
   {
     "id": "4stem-c/htdemucs-ft",
@@ -92,7 +104,13 @@
       "Drum",
       "Snare drum",
       "Bass guitar"
-    ]
+    ],
+    "tagger_classes_by_target": {
+      "vocals": ["Singing", "Speech"],
+      "drums": ["Drum kit", "Drum machine", "Drum", "Snare drum"],
+      "bass": ["Bass guitar"],
+      "other": []
+    }
   },
   {
     "id": "vocals/melroformer",
@@ -145,7 +163,15 @@
       "Electric guitar",
       "Acoustic guitar",
       "Piano"
-    ]
+    ],
+    "tagger_classes_by_target": {
+      "vocals": ["Singing", "Speech"],
+      "drums": ["Drum kit", "Drum machine", "Drum", "Snare drum"],
+      "bass": ["Bass guitar"],
+      "guitar": ["Guitar", "Electric guitar", "Acoustic guitar"],
+      "piano": ["Piano"],
+      "other": []
+    }
   },
   {
     "id": "6stem-fallback/htdemucs-6s",
@@ -179,7 +205,15 @@
       "Electric guitar",
       "Acoustic guitar",
       "Piano"
-    ]
+    ],
+    "tagger_classes_by_target": {
+      "vocals": ["Singing", "Speech"],
+      "drums": ["Drum kit", "Drum machine", "Drum", "Snare drum"],
+      "bass": ["Bass guitar"],
+      "guitar": ["Guitar", "Electric guitar", "Acoustic guitar"],
+      "piano": ["Piano"],
+      "other": []
+    }
   },
   {
     "id": "guitar/melroformer-becruily",
@@ -228,7 +262,14 @@
       "Hi-hat",
       "Cymbal",
       "Bass drum"
-    ]
+    ],
+    "tagger_classes_by_target": {
+      "kick": ["Bass drum"],
+      "snare": ["Snare drum"],
+      "toms": [],
+      "hats": ["Hi-hat"],
+      "cymbals": ["Cymbal"]
+    }
   },
   {
     "id": "drumkit-split/larsnet",
@@ -256,7 +297,14 @@
       "Hi-hat",
       "Cymbal",
       "Bass drum"
-    ]
+    ],
+    "tagger_classes_by_target": {
+      "kick": ["Bass drum"],
+      "snare": ["Snare drum"],
+      "toms": [],
+      "hats": ["Hi-hat"],
+      "cymbals": ["Cymbal"]
+    }
   },
   {
     "id": "dereverb/anvuew",

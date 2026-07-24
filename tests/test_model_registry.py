@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.analysis.model_registry import (
@@ -10,6 +11,7 @@ from orpheus_mcp.analysis.model_registry import (
     ModelEntry,
     RegistryError,
     checkpoint_dir,
+    classes_for_target,
     free_vram_gb,
     load_registry,
     resolve,
@@ -220,3 +222,156 @@ def test_checkpoint_dir_honors_env_override(tmp_path, monkeypatch):
 
     per_model = checkpoint_dir("4stem-a/bsroformer")
     assert per_model == tmp_path / "checkpoints" / "4stem-a" / "bsroformer"
+
+
+# --------------------------------------------------------------------------- #
+# D13: tagger_classes_by_target (per-target tagger classes for multi-target entries)
+# --------------------------------------------------------------------------- #
+
+_MULTI_TARGET_BASE = dict(
+    id="4stem-fake/example",
+    task="multi-stem",
+    targets=["vocals", "drums", "bass", "other"],
+    engine="audio-separator",
+    checkpoint_url=None,
+    sha256=None,
+    vram_gb=0.0,
+    rt_factor=None,
+    benchmark=None,
+    license="MIT",
+    rank=1,
+    tagger_classes=["Singing", "Speech", "Drum kit", "Bass guitar"],
+)
+
+
+def test_multi_target_entry_requires_tagger_classes_by_target():
+    # A multi-target entry (len(targets) > 1) with NO tagger_classes_by_target is exactly
+    # the pre-D13 bug shape (one flat union list for every target) -- the loader must reject
+    # it rather than silently accept a registry entry that would leave a per-target bleed
+    # gate blind to cross-target bleed.
+    with pytest.raises(ValidationError, match="tagger_classes_by_target"):
+        ModelEntry(**_MULTI_TARGET_BASE)
+
+
+def test_multi_target_entry_rejects_by_target_keys_outside_targets():
+    with pytest.raises(ValidationError, match="tagger_classes_by_target has keys not in targets"):
+        ModelEntry(
+            **_MULTI_TARGET_BASE,
+            tagger_classes_by_target={
+                "vocals": ["Singing", "Speech"],
+                "drums": ["Drum kit"],
+                "bass": ["Bass guitar"],
+                "other": [],
+                "guitar": ["Guitar"],  # not in targets -- rejected
+            },
+        )
+
+
+def test_multi_target_entry_accepts_valid_by_target():
+    entry = ModelEntry(
+        **_MULTI_TARGET_BASE,
+        tagger_classes_by_target={
+            "vocals": ["Singing", "Speech"],
+            "drums": ["Drum kit"],
+            "bass": ["Bass guitar"],
+            "other": [],
+        },
+    )
+    assert entry.tagger_classes_by_target is not None
+    assert entry.tagger_classes_by_target["other"] == []
+
+
+def test_multi_target_entry_by_target_keys_may_be_a_strict_subset_of_targets():
+    # "keys subset of targets", not "keys == targets" -- an entry may leave some targets
+    # uncovered (classes_for_target falls back to the flat union for those).
+    entry = ModelEntry(
+        **_MULTI_TARGET_BASE,
+        tagger_classes_by_target={"vocals": ["Singing", "Speech"]},
+    )
+    assert set(entry.tagger_classes_by_target) <= set(entry.targets)
+
+
+def test_single_target_entry_does_not_require_tagger_classes_by_target():
+    # Only one target -- the flat union list already IS the per-target list, nothing to
+    # disambiguate, so the loader must not demand tagger_classes_by_target here.
+    entry = ModelEntry(
+        id="vocals-fake/example",
+        task="single-target",
+        targets=["vocals"],
+        engine="audio-separator",
+        checkpoint_url=None,
+        sha256=None,
+        vram_gb=0.0,
+        rt_factor=None,
+        benchmark=None,
+        license="MIT",
+        rank=1,
+        tagger_classes=["Singing", "Speech"],
+    )
+    assert entry.tagger_classes_by_target is None
+
+
+def test_classes_for_target_uses_by_target_when_present():
+    entry = ModelEntry(
+        **_MULTI_TARGET_BASE,
+        tagger_classes_by_target={
+            "vocals": ["Singing", "Speech"],
+            "drums": ["Drum kit"],
+            "bass": ["Bass guitar"],
+            "other": [],
+        },
+    )
+    assert classes_for_target(entry, "drums") == ["Drum kit"]
+    assert classes_for_target(entry, "vocals") == ["Singing", "Speech"]
+    # "other" is present with an explicit empty list -- that IS the honest N/A answer, not a
+    # signal to fall back to the flat union (which would silently reintroduce the D13 bug).
+    assert classes_for_target(entry, "other") == []
+
+
+def test_classes_for_target_falls_back_to_flat_list_when_target_key_absent():
+    entry = ModelEntry(
+        **_MULTI_TARGET_BASE,
+        tagger_classes_by_target={"vocals": ["Singing", "Speech"]},
+    )
+    # "drums" has no by-target entry at all (not even an empty one) -- falls back to the
+    # flat union rather than silently returning [] as if it were a confirmed N/A.
+    assert classes_for_target(entry, "drums") == entry.tagger_classes
+
+
+def test_classes_for_target_falls_back_to_flat_list_for_single_target_entry():
+    entry = ModelEntry(
+        id="vocals-fake/example",
+        task="single-target",
+        targets=["vocals"],
+        engine="audio-separator",
+        checkpoint_url=None,
+        sha256=None,
+        vram_gb=0.0,
+        rt_factor=None,
+        benchmark=None,
+        license="MIT",
+        rank=1,
+        tagger_classes=["Singing", "Speech"],
+    )
+    assert classes_for_target(entry, "vocals") == ["Singing", "Speech"]
+
+
+def test_seed_registry_multi_stem_entries_carry_by_target_classes():
+    # The real seed data (D13 fix): every multi-target entry in data/model_registry.json
+    # must carry tagger_classes_by_target -- this is exactly what the loader's own
+    # validator (see above) mechanically enforces just by parsing the file successfully,
+    # but this test also checks the specific per-family split rather than just "not None".
+    entries = {e.id: e for e in load_registry(allow_unpinned=True)}
+    for four_stem_id in ("4stem-a/bsroformer", "4stem-b/scnet-xl", "4stem-c/htdemucs-ft"):
+        by_target = entries[four_stem_id].tagger_classes_by_target
+        assert by_target is not None
+        assert by_target["vocals"] == ["Singing", "Speech"]
+        assert by_target["bass"] == ["Bass guitar"]
+        assert "Singing" not in by_target["drums"]  # the D13 bleed case
+        assert by_target["other"] == []  # honest N/A -- no clean AudioSet class
+
+    drumsep_by_target = entries["drumsep"].tagger_classes_by_target
+    assert drumsep_by_target is not None
+    assert drumsep_by_target["kick"] == ["Bass drum"]
+    assert drumsep_by_target["snare"] == ["Snare drum"]
+    assert "Snare drum" not in drumsep_by_target["kick"]  # the D13 bleed case, drum-component-scale

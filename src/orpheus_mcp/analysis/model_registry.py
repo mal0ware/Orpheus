@@ -72,6 +72,19 @@ class ModelEntry(BaseModel):
     license: str
     rank: int
     tagger_classes: list[str]  # empty => bleed/exposure gates N/A for this entry (§4)
+    # Per-target tagger classes (D13, exec-discovered at Task 4.2): ``tagger_classes`` above
+    # is ONE list per entry, so for a multi-target entry (e.g. the 4-stem family's
+    # vocals/drums/bass/other) it is the UNION across every target — a per-target §5.2 bleed
+    # gate (or a §3.1 exposure/absent check) that consumed the union for, say, the "drums"
+    # stem would treat vocal classes as "target": vocal bleed into a separated drums stem
+    # reads as target energy and the gate stays blind to it. ``tagger_classes_by_target`` maps
+    # each target name to ITS OWN classes so per-target consumers can ask the right question.
+    # Required (non-None, keys subset of ``targets``) on every multi-target entry by the
+    # loader below; single-target entries may omit it and rely on the flat list (they have
+    # only one target, so the union IS the per-target list already). The flat ``tagger_classes``
+    # stays the union regardless — ``mapped_tagger_classes``/``build_timeline`` (§9's
+    # mapped-subset machinery) is a union consumer by design and keeps reading it unchanged.
+    tagger_classes_by_target: dict[str, list[str]] | None = None
     # The exact ``--model_filename`` audio-separator's own registry expects for this
     # checkpoint (Task 4.1 / D9): our pinned checkpoint files are byte-identical to what
     # audio-separator would download for these entries (same upstream URLs), so pointing its
@@ -128,6 +141,30 @@ class ModelEntry(BaseModel):
             raise ValueError(
                 f"{self.id}: checkpoint_url has {len(self.checkpoint_url)} entries but "  # type: ignore[arg-type]
                 f"sha256 has {len(self.sha256)} — they must match positionally."  # type: ignore[arg-type]
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _multi_target_requires_by_target_classes(self) -> ModelEntry:
+        """D13: a multi-target entry (``len(targets) > 1``) MUST carry
+        ``tagger_classes_by_target`` — the flat ``tagger_classes`` union is exactly the bug
+        this field exists to fix, so a multi-target entry that omits it would silently keep
+        every per-target gate blind to cross-target bleed. Single-target entries are exempt
+        (their one target's classes ARE the flat list already — nothing to disambiguate).
+        Keys must be a subset of ``targets``: a by-target class list for a target the entry
+        doesn't even produce is a registry bug, not a valid "extra" mapping."""
+        if len(self.targets) <= 1:
+            return self
+        if self.tagger_classes_by_target is None:
+            raise ValueError(
+                f"{self.id}: multi-target entry (targets={self.targets}) must declare "
+                "tagger_classes_by_target — a flat tagger_classes union lets vocal-class "
+                "bleed into a drums stem (etc.) read as target energy, undetected (D13)."
+            )
+        extra_keys = set(self.tagger_classes_by_target) - set(self.targets)
+        if extra_keys:
+            raise ValueError(
+                f"{self.id}: tagger_classes_by_target has keys not in targets: {extra_keys}"
             )
         return self
 
@@ -231,6 +268,22 @@ def mapped_tagger_classes(*, allow_unpinned: bool = True) -> list[str]:
     for entry in entries:
         seen.update(entry.tagger_classes)
     return sorted(seen)
+
+
+def classes_for_target(entry: ModelEntry, target: str) -> list[str]:
+    """The tagger classes that count as "target" for ONE of ``entry``'s targets (D13).
+
+    Prefers ``entry.tagger_classes_by_target[target]`` when that key is present — including
+    when its value is an empty list (e.g. ``"other"``/``"toms"``, which honestly have no
+    clean AudioSet class: that empty list IS the answer, not a signal to fall back). Falls
+    back to the flat ``tagger_classes`` union only when there's no by-target entry for
+    ``target`` at all — a single-target entry (no ``tagger_classes_by_target``) or, for a
+    multi-target entry, a ``target`` the by-target map doesn't cover.
+    """
+    by_target = entry.tagger_classes_by_target
+    if by_target is not None and target in by_target:
+        return by_target[target]
+    return entry.tagger_classes
 
 
 def entries_for_task(task: str, *, allow_unpinned: bool = True) -> list[ModelEntry]:

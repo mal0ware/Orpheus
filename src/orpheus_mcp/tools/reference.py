@@ -436,7 +436,7 @@ def separate_region(
         sr=sr,
         multi_stem=entry.task == "multi-stem",
         tagger=tagger_engine,
-        target_tagger_classes=list(entry.tagger_classes),
+        target_tagger_classes=list(model_registry.classes_for_target(entry, target)),
         mix_timeline=region_tl,
     )
 
