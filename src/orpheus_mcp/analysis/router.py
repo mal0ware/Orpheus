@@ -17,9 +17,11 @@ with no GPU / no model weights (tests script the gates and count engine calls):
 - ``tagger``    — the T2 ``TaggerEngine`` (only the production verifier / re-tagging touches it).
 - ``timeline``  — the song's T2 :class:`Timeline` (the absent/exposure pre-gates and the R5
   exposure fallback read it; no separation needed to answer those).
-- ``verify``    — ``Callable[[stems, target, other_stem_path], GateSet]``: the §5 gate seam.
-  ``None`` builds the production verifier (loads stem audio, runs ``verify.run_gates``); ladder
-  tests inject a scripted double.
+- ``verify``    — ``verify(stems, target, other_stem_path, *, entry)``: the §5 gate seam. The
+  keyword ``entry`` is the ModelEntry that PRODUCED ``stems`` (D13: classes are resolved
+  per-call from *that* entry, so a gate never judges one target's stems against another
+  target's tagger classes). ``None`` builds the production verifier (loads stem audio, crops a
+  per-call region timeline, runs ``verify.run_gates``); ladder tests inject a scripted double.
 - ``clock``     — ``Callable[[], float]`` wall-clock for the §6 budget guard (tests fake it).
 
 **§6 exhaustion semantics (locked):** if ``max_seconds`` expires mid-ladder the ladder returns
@@ -34,9 +36,10 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 import soundfile as sf
@@ -44,7 +47,7 @@ import soundfile as sf
 from orpheus_mcp.analysis import cachefs as _cachefs
 from orpheus_mcp.analysis.model_registry import classes_for_target
 from orpheus_mcp.analysis.separation import separate_region
-from orpheus_mcp.analysis.timeline import most_exposed_window, target_absent
+from orpheus_mcp.analysis.timeline import crop_timeline, most_exposed_window, target_absent
 from orpheus_mcp.analysis.verify import ensemble_avg_wave
 from orpheus_mcp.models import GateSet, StemResult, Window
 
@@ -85,9 +88,25 @@ _ORDER = ["absent", "exposure", "rank1", "R1", "R2", "R3", "R4", "R5", "R6"]
 
 _GATE_FIELDS = ("mix_consistency", "bleed", "silence_honesty", "agreement")
 
-Verifier = Callable[["dict[str, StemResult]", str, "str | None"], GateSet]
 Resolver = Callable[[str], "list[ModelEntry]"]
 EngineFactory = Callable[["ModelEntry"], "SeparatorEngine"]
+
+
+class Verifier(Protocol):
+    """The §5 gate seam. ``entry`` is the registry entry that PRODUCED ``stems`` — each call
+    resolves ``classes_for_target(entry, target)`` itself (D13: never reuse one target's
+    tagger classes to judge another target's stems), or ``[]`` when ``entry`` is ``None`` (a
+    synthetic R3 residual / checkpoint-less target with no tagger mapping). ``None`` at the
+    ``climb`` boundary builds the production verifier; ladder tests inject a scripted double."""
+
+    def __call__(
+        self,
+        stems: dict[str, StemResult],
+        target: str,
+        other_stem_path: str | None = None,
+        *,
+        entry: ModelEntry | None,
+    ) -> GateSet: ...
 
 
 @dataclass
@@ -238,8 +257,6 @@ def _ensemble_target(
     """§6 R2: the ``avg_wave`` ensemble of two architectures' takes on ``target``, written to
     a fresh FLAC next to ``a``'s stem so the result is a first-class :class:`StemResult`."""
     avg = ensemble_avg_wave([_read_audio(a.stem_path), _read_audio(b.stem_path)])
-    from pathlib import Path
-
     dest = Path(a.stem_path).with_name(f"{_safe(target)}__ensemble.flac")
     sf.write(str(dest), avg, a.sample_rate, subtype="PCM_24")
     return StemResult(
@@ -268,6 +285,7 @@ def _complement_model(registry: Resolver) -> ModelEntry | None:
 def _r3_complement(
     pcm: Pcm,
     target: str,
+    target_entry: ModelEntry | None,
     region: Window | None,
     registry: Resolver,
     engines: EngineFactory,
@@ -275,7 +293,11 @@ def _r3_complement(
     st: _State,
 ) -> tuple[str, dict[str, StemResult] | None, GateSet | None]:
     """§6 R3. Returns ``(status, stems, gates)`` where status is ``"skip"`` (precondition
-    failed or no complement model — logged), ``"pass"``/``"fail"`` (residual gated)."""
+    failed or no complement model — logged), ``"pass"``/``"fail"`` (residual gated).
+
+    ``target_entry`` is the target's own rank-1 registry entry (or ``None`` for a
+    checkpoint-less target) — the residual has no single producer, so its bleed gate resolves
+    the *target's* tagger classes from that entry, never the complement model's."""
     comp = _complement_model(registry)
     if comp is None:
         st.log.append("R3: skipped (no multi-stem complement model available)")
@@ -288,12 +310,17 @@ def _r3_complement(
 
     stems = _separate(pcm, comp, region, engines)
 
-    # Precondition (§6): every stem being subtracted must individually pass gates 2-4. If the
-    # ladder reached R3 because those stems are bad, subtracting them yields a worse residual.
+    # Precondition (§6, locked): every subtracted stem must individually clear gates 2-4
+    # (bleed / silence_honesty / agreement) — mix_consistency (gate 1) is NOT part of this
+    # gate: it judges the whole co-produced set, not one stem's subtraction-safety. Each stem
+    # is verified against ITS OWN tagger classes (D13), resolved from the complement entry.
+    _gates_2_4 = ("bleed", "silence_honesty", "agreement")
     for t in strong:
-        gs = verify(stems, t, None)
-        if gs.overall != "pass":
-            st.log.append(f"R3: precondition {t} {_fail_desc(gs)} — complement skipped")
+        gs = verify(stems, t, None, entry=comp)
+        failing = next((f for f in _gates_2_4 if getattr(gs, f).verdict == "fail"), None)
+        if failing is not None:
+            val = getattr(gs, failing).value
+            st.log.append(f"R3: precondition {t} {failing}={val} — complement skipped")
             return "skip", None, None
 
     region_win = stems[strong[0]].region_trimmed
@@ -303,8 +330,6 @@ def _r3_complement(
         stem = _read_audio(stems[t].stem_path).astype(np.float64)
         n = min(residual.shape[0], stem.shape[0])
         residual = residual[:n] - stem[:n]
-
-    from pathlib import Path
 
     dest = Path(stems[strong[0]].stem_path).with_name(f"{_safe(target)}__complement.flac")
     sf.write(str(dest), residual.astype(np.float32), pcm.sample_rate, subtype="PCM_24")
@@ -320,7 +345,7 @@ def _r3_complement(
         notes=["complement=True (§6 R3 residual)"],
     )
     out = {target: res}
-    gs = verify(out, target, None)
+    gs = verify(out, target, None, entry=target_entry)
     out = _stamp(out, target, gs)
     return ("pass" if gs.overall == "pass" else "fail"), out, gs
 
@@ -334,30 +359,39 @@ def _production_verifier(
     pcm: Pcm,
     tagger: TaggerEngine,
     timeline: Timeline,
-    candidates: Sequence[ModelEntry],
-    target: str,
 ) -> Verifier:
+    """Build the default ``verify`` seam. Two wirings the caller must get right per call, not
+    once (each was a cross-target/whole-song blindness bug otherwise):
+
+    - **classes** are resolved from the PRODUCING ``entry`` for *this* call's ``tgt`` (D13) —
+      R3 verifies drums/bass against the complement model's classes, not the original
+      target's; a synthetic residual (``entry is None``) has no tagger mapping → ``[]``.
+    - **timeline** is cropped to *this* stem's region and re-indexed (frame 0 == stem sample
+      0) for gate 3, on a fresh COPY — the full-song ``timeline`` is untouched so the ladder's
+      absent/exposure pre-gates keep the song-wide view."""
     from orpheus_mcp.analysis.verify import run_gates
 
-    entry = candidates[0] if candidates else None
-    tclasses = classes_for_target(entry, target) if entry is not None else []
-
     def _verify(
-        stems: dict[str, StemResult], tgt: str, other_stem_path: str | None
+        stems: dict[str, StemResult],
+        target: str,
+        other_stem_path: str | None = None,
+        *,
+        entry: ModelEntry | None,
     ) -> GateSet:
         stem_audio = {t: _read_audio(sr.stem_path) for t, sr in stems.items()}
-        region = stems[tgt].region_trimmed
+        region = stems[target].region_trimmed
         mix = _crop_audio(pcm, region)
         other = _read_audio(other_stem_path) if other_stem_path else None
+        tclasses = classes_for_target(entry, target) if entry is not None else []
         return run_gates(
             mix=mix,
             stems=stem_audio,
-            target=tgt,
+            target=target,
             sr=pcm.sample_rate,
             multi_stem=len(stems) > 1,
             tagger=tagger,
             target_tagger_classes=tclasses,
-            mix_timeline=timeline,
+            mix_timeline=crop_timeline(timeline, region),
             other_stem=other,
         )
 
@@ -399,9 +433,13 @@ def climb(
 
     candidates = list(registry(target))
     if verify is None:
-        verify = _production_verifier(pcm, tagger, timeline, candidates, target)
+        verify = _production_verifier(pcm, tagger, timeline)
 
-    target_classes = classes_for_target(candidates[0], target) if candidates else []
+    # The target's own rank-1 entry (``None`` for a checkpoint-less target) — the seam through
+    # which every verify call that judges the *target* (rank1/R1/R2/R3-residual/R4) resolves
+    # the target's tagger classes. ``target_classes`` (pre-flight absent/exposure) reuses it.
+    target_entry = candidates[0] if candidates else None
+    target_classes = classes_for_target(target_entry, target) if target_entry else []
 
     st = _State()
     t0 = clock()
@@ -469,7 +507,7 @@ def climb(
                 continue
             entry = candidates[0]
             stems = _separate(pcm, entry, region, engines)
-            gs = verify(stems, target, None)
+            gs = verify(stems, target, None, entry=entry)
             stems = _stamp(stems, target, gs)
             st.separated[entry.id] = stems
             _record(stems, "rank1", entry.id, gs)
@@ -482,7 +520,7 @@ def climb(
                 continue
             entry = candidates[1]
             stems = _separate(pcm, entry, region, engines)
-            gs = verify(stems, target, None)
+            gs = verify(stems, target, None, entry=entry)
             stems = _stamp(stems, target, gs)
             st.separated[entry.id] = stems
             _record(stems, "R1", entry.id, gs)
@@ -500,7 +538,9 @@ def climb(
                 continue
             model_id = f"{e0.id}+{e1.id} avg_wave"
             ens = {target: _ensemble_target(pcm, a, b, target, model_id)}
-            gs = verify(ens, target, b.stem_path)
+            # Both parents (e0, e1) produce the SAME target stem class set, so the ensemble's
+            # gate classes come from e0 (rank-1) — either parent's entry resolves identically.
+            gs = verify(ens, target, b.stem_path, entry=e0)
             ens = _stamp(ens, target, gs)
             _record(ens, "R2", model_id, gs)
             if gs.overall in ("pass", "unverifiable"):
@@ -509,7 +549,7 @@ def climb(
 
         elif stage == "R3":
             status, r_stems, r_gs = _r3_complement(
-                pcm, target, region, registry, engines, verify, st
+                pcm, target, target_entry, region, registry, engines, verify, st
             )
             if status == "skip":
                 continue
@@ -524,7 +564,7 @@ def climb(
                 continue
             entry = candidates[0]
             stems = _separate(pcm, entry, None, engines)  # widen → full song (§6 R4)
-            gs = verify(stems, target, None)
+            gs = verify(stems, target, None, entry=entry)
             stems = _stamp(stems, target, gs)
             _record(stems, "R4", f"{entry.id} (full-song)", gs)
             if gs.overall in ("pass", "unverifiable"):

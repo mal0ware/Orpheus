@@ -313,19 +313,6 @@ def _stem_verify_meta(entry: ModelEntry) -> dict:
     }
 
 
-def _crop_timeline(tl: Timeline, start_s: float, end_s: float) -> Timeline:
-    """Slice ``tl.frames`` to ``[start_s, end_s)`` and re-index so frame 0 corresponds
-    to ``start_s`` — ``gate_silence_honesty`` has no notion of a song-wide offset (its
-    contract requires frame 0 == the stem's sample 0, the caller's job)."""
-    hop = tl.hop_s
-    if hop <= 0:
-        return Timeline(classes=tl.classes, hop_s=hop, frames=[])
-    start_idx = max(0, int(math.floor(start_s / hop + 1e-9)))
-    end_idx = min(len(tl.frames), int(math.ceil(end_s / hop - 1e-9)))
-    end_idx = max(end_idx, start_idx)
-    return Timeline(classes=tl.classes, hop_s=hop, frames=list(tl.frames[start_idx:end_idx]))
-
-
 def _align_len(arr: np.ndarray, n: int) -> np.ndarray:
     frames = arr.shape[0]
     if frames == n:
@@ -368,7 +355,7 @@ def separate_region(
     probe ``instrument_timeline`` uses), matching the plan's ``capped_by_missing_extra``
     pattern for a ``[separation]``-tier tool.
     """
-    from orpheus_mcp.analysis.timeline import PannsTagger
+    from orpheus_mcp.analysis.timeline import PannsTagger, crop_timeline
     from orpheus_mcp.analysis.verify import run_gates
 
     fs = cache if cache is not None else CacheFS()
@@ -427,7 +414,7 @@ def separate_region(
     mix_crop = _align_len(mix_samples[start_i:end_i], stems_arrays[target].shape[0])
 
     mix_tl = instrument_timeline(file, cache=fs, tagger=tagger_engine)
-    region_tl = _crop_timeline(mix_tl, rt.start_s, rt.end_s)
+    region_tl = crop_timeline(mix_tl, rt)
 
     gates = run_gates(
         mix=mix_crop,

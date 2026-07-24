@@ -231,6 +231,21 @@ def build_timeline(pcm: Pcm, tagger: TaggerEngine) -> Timeline:
     return Timeline(classes=keep_names, hop_s=_LOCKED_HOP_S, frames=frames)
 
 
+def crop_timeline(tl: Timeline, region: Window) -> Timeline:
+    """Slice ``tl.frames`` to ``[region.start_s, region.end_s)`` and re-index so frame 0
+    corresponds to ``region.start_s`` — ``gate_silence_honesty`` has no notion of a
+    song-wide offset (its contract requires frame 0 == the stem's sample 0, the caller's
+    job). Returns a fresh :class:`Timeline`; the input is never mutated (§5.3 callers crop a
+    copy per gate run while keeping the full-song timeline for absent/exposure checks)."""
+    hop = tl.hop_s
+    if hop <= 0:
+        return Timeline(classes=tl.classes, hop_s=hop, frames=[])
+    start_idx = max(0, int(math.floor(region.start_s / hop + 1e-9)))
+    end_idx = min(len(tl.frames), int(math.ceil(region.end_s / hop - 1e-9)))
+    end_idx = max(end_idx, start_idx)
+    return Timeline(classes=tl.classes, hop_s=hop, frames=list(tl.frames[start_idx:end_idx]))
+
+
 # --------------------------------------------------------------------------- #
 # most_exposed_window / target_absent — §3.1b/c, sharing the §5.2 ratio formula
 # --------------------------------------------------------------------------- #

@@ -212,13 +212,18 @@ class ScriptedGates:
     def __init__(self, script: Sequence[str | GateSet]) -> None:
         self._queue: list[str | GateSet] = list(script)
         self.calls: list[tuple[frozenset[str], str, str | None]] = []
+        # Parallel record of the PRODUCING entry id each call was verified against (D13 seam).
+        self.entries: list[str | None] = []
 
     def __call__(
         self,
         stems: dict[str, StemResult],
         target: str,
         other_stem_path: str | None = None,
+        *,
+        entry: ModelEntry | None = None,
     ) -> GateSet:
         self.calls.append((frozenset(stems), target, other_stem_path))
+        self.entries.append(entry.id if entry is not None else None)
         item = self._queue.pop(0) if self._queue else "pass"
         return item if isinstance(item, GateSet) else gateset(item)

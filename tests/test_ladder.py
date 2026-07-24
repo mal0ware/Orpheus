@@ -16,7 +16,7 @@ from orpheus_mcp.analysis import model_registry, router
 from orpheus_mcp.analysis.cachefs import CacheFS, Pcm
 from orpheus_mcp.analysis.router import climb
 from orpheus_mcp.models import Timeline, Window
-from stub_engines import EngineHub, ScriptedGates
+from stub_engines import EngineHub, ScriptedGates, StubTagger, gateset
 
 SR = 8000
 RANK1 = "4stem-c/htdemucs-ft"  # vram 0, native_sr None → no resample, no VRAM fallback
@@ -196,7 +196,7 @@ def test_R3_complement_flags_residual_when_precondition_passes(tmp_path):
 
 def test_R3_skipped_when_subtracted_stems_fail(tmp_path):
     eng = EngineHub()
-    # First strong stem fails its precondition → R3 skipped, ladder falls through to R5.
+    # First strong stem's BLEED (a gate-2-4 gate) fails → R3 skipped, ladder falls to R5.
     out = _climb(
         _pcm(),
         "strings",
@@ -207,7 +207,30 @@ def test_R3_skipped_when_subtracted_stems_fail(tmp_path):
         mapping=_STRINGS_MAP,
     )
     assert out.rung == "R5"
-    assert any("precondition" in line and "complement skipped" in line for line in out.log)
+    assert any(
+        "precondition" in line and "bleed=" in line and "complement skipped" in line
+        for line in out.log
+    )
+
+
+def test_R3_precondition_accepts_mix_consistency_fail_donor(tmp_path):
+    """Locked spec scopes the R3 precondition to gates 2-4 (bleed/silence/agreement) —
+    mix_consistency (gate 1) is NOT part of it. A donor stem failing ONLY gate 1 but clearing
+    gates 2-4 is still subtraction-safe, so R3 must run (contrast: bleed-fail donor skips)."""
+    eng = EngineHub()
+    mc_fail = gateset("fail", fail_gate="mix_consistency")  # overall fail, gates 2-4 pass
+    out = _climb(
+        _pcm(),
+        "strings",
+        _mixed_timeline(),
+        eng,
+        ScriptedGates([mc_fail, mc_fail, mc_fail, "pass"]),  # 3 donor preconditions + residual
+        CacheFS(tmp_path),
+        mapping=_STRINGS_MAP,
+    )
+    assert out.rung == "R3"  # not skipped to R5
+    assert out.stems["strings"].gates.overall == "pass"
+    assert not any("precondition" in line for line in out.log)
 
 
 def test_checkpointless_target_skips_R1_R2(tmp_path):
@@ -278,6 +301,82 @@ def test_R6_only_fires_when_max_tier_is_T5(tmp_path):
     )
     assert at_t5.rung == "R6"
     assert "transcribe-source" in at_t5.source
+
+
+def test_T3_cap_stops_after_rank1_no_R1(tmp_path):
+    """max_tier='T3' tier-gates every escalation rung (R1+ are T4/T5): rank-1 runs, fails its
+    gate, and the ladder delivers that best-so-far artifact without ever separating rank-2."""
+    eng = EngineHub()
+    out = _climb(
+        _pcm(),
+        "vocals",
+        _mixed_timeline(),
+        eng,
+        ScriptedGates(["fail"]),
+        CacheFS(tmp_path),
+        max_tier="T3",
+    )
+    assert out.rung == "rank1"
+    assert out.stems is not None and "vocals" in out.stems
+    assert eng.calls_for(RANK1) == 1
+    assert eng.calls_for(RANK2) == 0  # R1 tier-gated away — never separated
+
+
+# --------------------------------------------------------------------------- #
+# Production verifier (verify=None) — the CI-invisible seam. Stub the engines and
+# monkeypatch run_gates with a recorder; pin the two wirings that were broken.
+# --------------------------------------------------------------------------- #
+
+
+def test_production_verifier_wires_per_entry_classes_and_region_timeline(tmp_path, monkeypatch):
+    """Drive ``climb`` with ``verify=None`` (the real production verifier) but StubEngine
+    separation and a ``run_gates`` recorder, so the two defects the scripted seam can't see
+    are pinned: (a) each R3-precondition call resolves the SUBTRACTED stem's own classes from
+    the complement entry (D13), not the original target's; (b) gate 3 gets a region-cropped
+    timeline (frame 0 == stem sample 0), not the full-song one."""
+    from orpheus_mcp.analysis import verify as verify_mod
+
+    recorded: list[dict] = []
+
+    def _recorder(**kwargs):
+        recorded.append(kwargs)
+        return gateset("pass")
+
+    monkeypatch.setattr(verify_mod, "run_gates", _recorder)
+
+    pcm = _pcm(8.0)  # 8 s song
+    song_tl = _timeline([[0.5, 0.0, 0.5]] * 8)  # 8 frames @ 1 s hop
+    eng = EngineHub()
+    out = climb(
+        pcm,
+        "strings",  # checkpoint-less → enters at R3, exercising the precondition seam
+        Window(start_s=1.0, end_s=4.0),  # 3 s region
+        registry=_resolver(_STRINGS_MAP),
+        engines=eng,
+        tagger=StubTagger(),
+        timeline=song_tl,
+        max_tier="T4",
+        max_seconds=1e9,
+        cache=CacheFS(tmp_path),
+        verify=None,  # PRODUCTION verifier
+    )
+    assert out.rung == "R3"
+
+    comp = _REG[RANK1]  # complement model (bass/drums → htdemucs-ft)
+    by_target = {c["target"]: c for c in recorded}
+    # (a) drums/bass preconditions verified against THEIR OWN complement-entry classes, not
+    #     the original ("strings", checkpoint-less → []) target's — the old close-over bug.
+    assert by_target["drums"]["target_tagger_classes"] == model_registry.classes_for_target(
+        comp, "drums"
+    )
+    assert by_target["bass"]["target_tagger_classes"] == model_registry.classes_for_target(
+        comp, "bass"
+    )
+    assert by_target["drums"]["target_tagger_classes"]  # non-empty ⇒ assertion is meaningful
+
+    # (b) every gate-3 timeline is the 3-frame REGION crop, never the 8-frame song timeline.
+    assert len(song_tl.frames) == 8
+    assert recorded and all(len(c["mix_timeline"].frames) == 3 for c in recorded)
 
 
 # --------------------------------------------------------------------------- #
