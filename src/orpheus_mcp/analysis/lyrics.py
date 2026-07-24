@@ -486,8 +486,8 @@ def _structural_sections(lines: list[LyricLine], recon: Recon) -> list[LyricSect
 
 def _snap_to_recon(start: float, end: float, recon: Recon) -> tuple[float, float]:
     """Cross-check a lyric-section span against ``recon.sections`` (§14.1.4): snap each edge to
-    the nearest recon boundary within ``CFG.LYRIC_LINE_GAP_S`` (a light-touch alignment — the
-    repetition drives naming, the recon grid tidies the edges). No boundaries → unchanged."""
+    the nearest recon boundary within ``CFG.LYRIC_SECTION_SNAP_S`` (a light-touch alignment —
+    the repetition drives naming, the recon grid tidies the edges). No boundaries → unchanged."""
     bounds: list[float] = []
     for win in recon.sections:
         bounds.extend((win.start_s, win.end_s))
@@ -496,7 +496,7 @@ def _snap_to_recon(start: float, end: float, recon: Recon) -> tuple[float, float
 
     def _snap(t: float) -> float:
         nearest = min(bounds, key=lambda b: abs(b - t))
-        return nearest if abs(nearest - t) <= CFG.LYRIC_LINE_GAP_S else t
+        return nearest if abs(nearest - t) <= CFG.LYRIC_SECTION_SNAP_S else t
 
     return _snap(start), _snap(end)
 

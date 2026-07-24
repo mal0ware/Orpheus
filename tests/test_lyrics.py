@@ -126,6 +126,32 @@ def test_vad_all_below_threshold_yields_no_windows():
     assert vad_windows(quiet.reshape(-1, 1), SR) == []
 
 
+def test_vad_windows_merges_small_gap_but_splits_large_gap():
+    """Two active bursts separated by a gap < ``CFG.VAD_MERGE_GAP_S`` (0.20 s) bridge into ONE
+    window (a brief dip mid-phrase must not shred a line); separated by 0.5 s they stay TWO."""
+    burst = _tone(CFG.VAD_VOCAL_ACTIVE_DBFS + 8.0, 0.3)
+
+    small_gap = _silence(CFG.VAD_MERGE_GAP_S / 2.0)  # well under the merge threshold
+    merged = np.concatenate([burst, small_gap, burst])
+    assert len(vad_windows(merged.reshape(-1, 1), SR)) == 1
+
+    large_gap = _silence(0.5)  # well over the merge threshold
+    split = np.concatenate([burst, large_gap, burst])
+    assert len(vad_windows(split.reshape(-1, 1), SR)) == 2
+
+
+def test_vad_windows_drops_burst_shorter_than_min_window(monkeypatch):
+    """An active burst shorter than ``CFG.VAD_MIN_WINDOW_S`` is dropped as noise — proven by
+    raising the threshold above a burst that survives at the default (sanity-checked first)."""
+    burst = _tone(CFG.VAD_VOCAL_ACTIVE_DBFS + 8.0, 0.3)
+    mono = np.concatenate([_silence(0.5), burst, _silence(0.5)])
+
+    assert len(vad_windows(mono.reshape(-1, 1), SR)) == 1  # survives at the default min-window
+
+    monkeypatch.setattr(CFG, "VAD_MIN_WINDOW_S", 1.0)  # now longer than the 0.3 s burst
+    assert vad_windows(mono.reshape(-1, 1), SR) == []
+
+
 # --------------------------------------------------------------------------- #
 # ASR receives ONLY the VAD-active windows.
 # --------------------------------------------------------------------------- #
@@ -260,6 +286,18 @@ def test_no_aligner_language_keeps_coarse_timestamps():
     assert [w.end_s for w in aligned_words] == [0.4, 0.7]
 
 
+def test_align_words_none_language_keeps_coarse_timestamps():
+    """The ``language is None`` branch (undetectable language) — same coarse-timestamp,
+    aligned_flag=False contract as an unsupported language, exercised directly."""
+    words = [_word("kore", 0.0, 0.4), _word("wa.", 0.4, 0.7)]
+    aligned_words, flag = align_words(words, "does-not-matter.wav", None)
+
+    assert flag is False  # no language detected -> no aligner to select
+    assert [w.word for w in aligned_words] == ["kore", "wa."]
+    assert [w.start_s for w in aligned_words] == [0.0, 0.4]  # untouched
+    assert [w.end_s for w in aligned_words] == [0.4, 0.7]
+
+
 def test_build_lyrics_flags_coarse_for_unaligned_language():
     mono = _tone(CFG.VAD_VOCAL_ACTIVE_DBFS + 6.0, 1.0)
     pcm = _pcm(mono)
@@ -270,6 +308,30 @@ def test_build_lyrics_flags_coarse_for_unaligned_language():
     assert result.status == "ok"
     assert result.language == "zz"
     assert result.aligned is False
+
+
+# --------------------------------------------------------------------------- #
+# _snap_to_recon — edges snap to a DIFFERING recon boundary within CFG.LYRIC_SECTION_SNAP_S.
+# --------------------------------------------------------------------------- #
+
+
+def test_snap_to_recon_reads_lyric_section_snap_s(monkeypatch):
+    """``_snap_to_recon`` must read ``CFG.LYRIC_SECTION_SNAP_S`` (its own dedicated tolerance,
+    split off from the conflated ``CFG.LYRIC_LINE_GAP_S``), not just happen to work because the
+    two constants share a value. Raising SNAP_S to 5.0 while leaving LINE_GAP_S at its 1.0
+    default, then testing a 2.0 s raw-to-edge distance, only snaps if the call site reads
+    SNAP_S — this fails both if _snap_to_recon becomes a no-op and if it silently reverts to
+    reading LINE_GAP_S."""
+    from orpheus_mcp.analysis.lyrics import _snap_to_recon
+
+    assert CFG.LYRIC_LINE_GAP_S < 2.0  # sanity: the old conflated constant would NOT cover this
+    monkeypatch.setattr(CFG, "LYRIC_SECTION_SNAP_S", 5.0)
+
+    recon = _recon([Window(start_s=12.0, end_s=20.0)])
+    start, end = _snap_to_recon(10.0, 18.0, recon)  # each 2.0 s from a differing recon edge
+
+    assert start == pytest.approx(12.0)  # snapped to the recon edge, not left at raw 10.0
+    assert end == pytest.approx(20.0)  # snapped to the recon edge, not left at raw 18.0
 
 
 # --------------------------------------------------------------------------- #

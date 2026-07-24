@@ -95,6 +95,7 @@ class AnalysisConfig:
     LYRIC_LINE_GAP_S: float = 1.0                   # §14.1.4 new line when word gap exceeds this
     LYRIC_SENTENCE_PUNCT: str = ".!?"               # §14.1.4 line-ending punctuation
     LYRIC_CHORUS_SIMILARITY: float = 0.80           # §14.1.4 near-identical line match ratio
+    LYRIC_SECTION_SNAP_S: float = 1.0               # §14.1.4 _snap_to_recon edge-snap tolerance
 
 
 # --------------------------------------------------------------------------- #
