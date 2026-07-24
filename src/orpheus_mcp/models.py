@@ -98,6 +98,20 @@ class Section(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Reference-analysis primitives (§9) — shared by the cache filesystem and every
+# downstream analysis module (recon, timeline, separation, lyrics, ...).
+# --------------------------------------------------------------------------- #
+
+
+class Window(BaseModel):
+    """A time span in seconds — the region-of-interest primitive threaded through the
+    reference-analysis pipeline (stem crops, timeline gaps, lyric line spans, ...)."""
+
+    start_s: float
+    end_s: float
+
+
+# --------------------------------------------------------------------------- #
 # Analysis outputs
 # --------------------------------------------------------------------------- #
 
