@@ -23,11 +23,18 @@ from orpheus_mcp.analysis.cachefs import CacheFS, decode
 from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.analysis.recon import run_recon
 from orpheus_mcp.analysis.separation import SeparationError
-from orpheus_mcp.models import StemResult, Window
+from orpheus_mcp.models import LocateResult, LyricWord, StemResult, Window
 from orpheus_mcp.registry import register_tools
 from orpheus_mcp.tools import reference as reference_tools
-from orpheus_mcp.tools.reference import get_chords, recon_reference, separate_region
-from stub_engines import StubEngine, StubTagger
+from orpheus_mcp.tools.reference import (
+    ReferenceEnvMissing,
+    get_chords,
+    locate_lyric,
+    recon_reference,
+    separate_region,
+    transcribe_lyrics,
+)
+from stub_engines import StubAsr, StubEngine, StubTagger
 
 # A short re-struck two-chord progression (same recipe as test_harmony_baseline.py's
 # ``_make_progression``: a decaying sine-triad strike per beat, so the beat tracker finds a
@@ -516,3 +523,291 @@ async def test_verify_stem_tool_registered_read_only():
         tools = {t.name: t for t in await client.list_tools()}
     assert "verify_stem" in tools
     assert tools["verify_stem"].annotations.readOnlyHint is True
+
+
+# --------------------------------------------------------------------------- #
+# transcribe_lyrics + locate_lyric (Task 8.2, §14.2): the vocal-stem-via-ladder ASR index
+# and the tool-layer wrapper over the pure fuzzy resolver. Driven end-to-end by StubEngine +
+# StubTagger + StubAsr -- no real separator/tagger/ASR weights, no GPU (the same convention
+# separate_region's tests above use). The desktop/gpu-optional real end-to-end smoke sits at
+# the bottom of this file.
+# --------------------------------------------------------------------------- #
+
+_VOCAL_CLASSES = [
+    "Singing", "Speech", "Drum kit", "Snare drum", "Bass guitar", "Guitar",
+    "Electric guitar", "Piano",
+]
+
+
+def _write_lyrics_test_wav(path: Path, *, seconds: float = 4.0, sr: int = 22050) -> Path:
+    """A higher-sample-rate tone than ``_write_sep_wav`` (4 kHz, too low for recon's CQT-based
+    key/chroma passes) -- ``transcribe_lyrics`` runs the FULL §3.1 recon, unlike
+    ``separate_region``'s tests above, which never touch it."""
+    t = np.arange(int(seconds * sr)) / sr
+    tone = (0.3 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(path), tone, sr, subtype="PCM_16")
+    return path
+
+
+def _mixed_vocal_tagger() -> StubTagger:
+    """Vocals present (Singing=0.5) but not exposed (Guitar bleeds equally) -- the T2
+    pre-flight falls through to rank-1, matching test_ladder.py's ``_mixed_timeline``."""
+    row = [0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0]
+    return StubTagger(_VOCAL_CLASSES, hop_s=1.0, activations=[row] * 5)
+
+
+def _absent_vocal_tagger() -> StubTagger:
+    """Vocal classes never exceed CFG.TIMELINE_ACTIVITY_THRESHOLD anywhere -- T2 confirms
+    the target absent, matching test_ladder.py's ``_absent_timeline``."""
+    row = [0.1, 0.1, 0.0, 0.0, 0.0, 0.4, 0.0, 0.0]
+    return StubTagger(_VOCAL_CLASSES, hop_s=1.0, activations=[row] * 5)
+
+
+def _lw(text: str, start: float, end: float) -> LyricWord:
+    return LyricWord(word=text, start_s=start, end_s=end, conf=0.9)
+
+
+_SCRIPTED_WORDS = [_lw("hold", 0.5, 0.8), _lw("the", 0.9, 1.0), _lw("line.", 1.1, 1.4)]
+
+
+def test_transcribe_lyrics_confirmed_absent_skips_separation_and_asr(tmp_path, _plenty_of_vram):
+    audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+    engine = StubEngine(["vocals"])
+    asr = StubAsr(language="zz", words=list(_SCRIPTED_WORDS))
+
+    result = transcribe_lyrics(
+        str(audio), cache=fs, asr=asr, tagger=_absent_vocal_tagger(), engine=engine
+    )
+
+    assert result.status == "no_vocals"
+    assert result.words == []
+    assert asr.calls == 0  # T2 pre-flight confirmed absent -> ASR never ran
+    assert len(engine.calls) == 0  # -> and no separation ever ran either
+
+
+def test_transcribe_lyrics_runs_asr_on_ladder_stem_then_cache_hits(tmp_path, _plenty_of_vram):
+    audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+    engine = StubEngine(["vocals"])
+    asr = StubAsr(language="zz", words=list(_SCRIPTED_WORDS))
+
+    first = transcribe_lyrics(
+        str(audio), cache=fs, asr=asr, tagger=_mixed_vocal_tagger(), engine=engine
+    )
+
+    assert first.status == "ok"
+    assert first.language == "zz"
+    assert [w.word for w in first.words] == ["hold", "the", "line."]
+    assert asr.calls == 1
+    assert len(engine.calls) == 1
+
+    second = transcribe_lyrics(
+        str(audio), cache=fs, asr=asr, tagger=_mixed_vocal_tagger(), engine=engine
+    )
+
+    assert second == first
+    assert asr.calls == 1  # cache HIT -- ASR never re-ran
+    assert len(engine.calls) == 1  # -- and separation never re-ran either
+
+
+def test_transcribe_lyrics_caches_under_lyrics_lines_sections_kinds(tmp_path, _plenty_of_vram):
+    audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+    engine = StubEngine(["vocals"])
+    asr = StubAsr(language="zz", words=list(_SCRIPTED_WORDS))
+
+    transcribe_lyrics(str(audio), cache=fs, asr=asr, tagger=_mixed_vocal_tagger(), engine=engine)
+
+    file_hash = cachefs.pcm_hash(str(audio))
+    art_dir = fs.artifact_dir(file_hash)
+    assert (art_dir / "lyrics.json").is_file()
+    assert (art_dir / "lines.json").is_file()
+    assert (art_dir / "sections.json").is_file()
+
+
+def test_transcribe_lyrics_propagates_separation_error(tmp_path, _plenty_of_vram):
+    audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+
+    class _BrokenEngine:
+        def separate(self, wav_path, entry, out_dir):
+            raise SeparationError("no compatible checkpoint for this box")
+
+    with pytest.raises(SeparationError):
+        transcribe_lyrics(
+            str(audio),
+            cache=fs,
+            asr=StubAsr(),
+            tagger=_mixed_vocal_tagger(),
+            engine=_BrokenEngine(),
+        )
+
+
+def test_transcribe_lyrics_raises_reference_env_missing_without_analysis_extra(
+    tmp_path, _plenty_of_vram, monkeypatch
+):
+    audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "orpheus_mcp.analysis.timeline":
+            raise ImportError("no panns_inference")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    with pytest.raises(ReferenceEnvMissing):
+        transcribe_lyrics(str(audio), cache=fs, asr=StubAsr())
+
+
+# --------------------------------------------------------------------------- #
+# locate_lyric (tool layer): fetches via transcribe_lyrics, then the pure scorer.
+# --------------------------------------------------------------------------- #
+
+
+def test_locate_lyric_tool_finds_scripted_quote_and_reuses_the_cache(tmp_path, _plenty_of_vram):
+    audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+    engine = StubEngine(["vocals"])
+    asr = StubAsr(language="zz", words=list(_SCRIPTED_WORDS))
+
+    result = locate_lyric(
+        str(audio), "hold the line", cache=fs, asr=asr, tagger=_mixed_vocal_tagger(), engine=engine
+    )
+
+    assert isinstance(result, LocateResult)
+    assert result.status == "ok"
+    assert result.matches
+    assert result.matches[0].score == pytest.approx(1.0)
+    assert asr.calls == 1
+
+    # a second locate_lyric call reuses the already-cached lyrics index (no re-ASR).
+    locate_lyric(
+        str(audio), "hold the line", cache=fs, asr=asr, tagger=_mixed_vocal_tagger(), engine=engine
+    )
+    assert asr.calls == 1
+
+
+def test_locate_lyric_tool_on_no_vocals_file_returns_defined_result(tmp_path, _plenty_of_vram):
+    audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
+    fs = CacheFS(tmp_path / "cache")
+
+    result = locate_lyric(
+        str(audio),
+        "anything",
+        cache=fs,
+        asr=StubAsr(words=[]),
+        tagger=_absent_vocal_tagger(),
+        engine=StubEngine(["vocals"]),
+    )
+
+    assert result.status == "no_vocals"
+    assert result.matches == []
+
+
+# --------------------------------------------------------------------------- #
+# MCP registration: locate_lyric always (librosa tier); transcribe_lyrics additionally
+# gated on faster_whisper (nested inside the panns/torch probe, matching separate_region's
+# already-established pattern for a desktop-tier extra).
+# --------------------------------------------------------------------------- #
+
+
+async def test_locate_lyric_tool_registered_read_only():
+    mcp = FastMCP(name="t")
+    register_tools(mcp, profile="default")
+    async with Client(mcp) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+    assert "locate_lyric" in tools
+    assert tools["locate_lyric"].annotations.readOnlyHint is True
+
+
+async def test_locate_lyric_registered_even_without_panns_or_torch(monkeypatch):
+    import importlib.util as ilu
+
+    real_find_spec = ilu.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name in ("panns_inference", "torch"):
+            return None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(ilu, "find_spec", fake_find_spec)
+
+    mcp = FastMCP(name="t")
+    with pytest.warns(UserWarning, match="instrument_timeline not registered"):
+        reference_tools.register(mcp)
+
+    async with Client(mcp) as client:
+        tools = {t.name for t in await client.list_tools()}
+    assert "locate_lyric" in tools  # librosa tier -- unaffected by the panns/torch probe
+    assert "transcribe_lyrics" not in tools
+
+
+async def test_transcribe_lyrics_tool_registered_when_faster_whisper_available():
+    mcp = FastMCP(name="t")
+    register_tools(mcp, profile="default")
+    async with Client(mcp) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+    assert "transcribe_lyrics" in tools
+    assert tools["transcribe_lyrics"].annotations.readOnlyHint is True
+
+
+async def test_transcribe_lyrics_not_registered_without_faster_whisper(monkeypatch):
+    import importlib.util as ilu
+
+    real_find_spec = ilu.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == "faster_whisper":
+            return None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(ilu, "find_spec", fake_find_spec)
+
+    mcp = FastMCP(name="t")
+    reference_tools.register(mcp)
+
+    async with Client(mcp) as client:
+        tools = {t.name for t in await client.list_tools()}
+    assert "transcribe_lyrics" not in tools
+    assert "separate_region" in tools  # unaffected -- gated independently
+    assert "locate_lyric" in tools
+
+
+# --------------------------------------------------------------------------- #
+# Desktop/gpu-optional real end-to-end: transcribe_lyrics on ci_vocal (ladder -> real vocal
+# stem via the registry-resolved engine -> real faster-whisper ASR on CPU), asserting
+# locate_lyric finds an exact truth-line quote. Run yourself at the desktop (Task 8.2 brief)
+# -- CPU is fine here; only the SEPARATE GPU ASR smoke (test_lyrics.py) is GPU-gated.
+# --------------------------------------------------------------------------- #
+
+_CI_VOCAL_MIX = Path(__file__).resolve().parent / "fixtures" / "audio" / "ci_vocal" / "mix.flac"
+
+
+@pytest.mark.desktop
+def test_transcribe_lyrics_and_locate_lyric_end_to_end_on_ci_vocal(tmp_path, monkeypatch):
+    pytest.importorskip("faster_whisper")
+    pytest.importorskip("panns_inference")
+    torch = pytest.importorskip("torch")
+    if not _CI_VOCAL_MIX.is_file():
+        pytest.skip("ci_vocal fixture missing")
+
+    import json
+
+    truth = json.loads((_CI_VOCAL_MIX.parent / "truth.json").read_text(encoding="utf-8"))
+    truth_line = truth["lyrics"]["lines"][0]
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)  # force CPU per the brief
+
+    fs = CacheFS(tmp_path / "cache")
+    result = transcribe_lyrics(str(_CI_VOCAL_MIX), cache=fs)
+    assert result.status == "ok"
+
+    located = locate_lyric(str(_CI_VOCAL_MIX), truth_line, cache=fs)
+    assert located.status == "ok"
+    assert located.matches
+    assert located.matches[0].score >= CFG.LYRIC_MATCH_MIN_SCORE

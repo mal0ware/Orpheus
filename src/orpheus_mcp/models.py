@@ -283,6 +283,38 @@ class LyricsResult(BaseModel):
     sections: list[LyricSection] = Field(default_factory=list)
 
 
+class LocateMatch(BaseModel):
+    """One §14.2 ``locate_lyric`` candidate match. ``matched_text`` is the ACTUAL transcript
+    words spanned by the match window (not the user's query quote) — what was really sung.
+    ``section`` is the containing :class:`LyricSection`'s ``name`` (e.g. ``"chorus 2"``) when
+    the match window's start falls inside one, else ``None``. ``occurrence`` is the 1-based
+    TEMPORAL rank (sung order, not score order) among the candidates in the same
+    :class:`LocateResult` — a repeated chorus line's second occurrence always carries
+    ``occurrence=2``, even if it scored lower than occurrence 1."""
+
+    start_s: float
+    end_s: float
+    matched_text: str
+    score: float
+    section: str | None
+    occurrence: int
+
+
+class LocateResult(BaseModel):
+    """The §14.2 ``locate_lyric`` result. ``status="no_vocals"`` is the DEFINED result for a
+    file whose vocal stem never crossed the §14.1 VAD gate — ``matches`` stays empty, and this
+    is deliberately distinguishable from an ``"ok"`` result that merely found nothing (the
+    honesty rule: a no-vocal file must never look like an ordinary empty match list).
+    ``low_confidence`` is set when the best candidate scored below
+    ``CFG.LYRIC_MATCH_MIN_SCORE`` — ``matches`` then holds the top-3 candidates instead of the
+    (empty) passing set, and callers should ask the user rather than guess."""
+
+    schema_version: int = 1
+    status: Literal["ok", "no_vocals"]
+    matches: list[LocateMatch] = Field(default_factory=list)
+    low_confidence: bool = False
+
+
 # --------------------------------------------------------------------------- #
 # Separation + verification primitives (§5/§9) — the typed contract separation.py
 # (engines, ``separate_region``) produces and verify.py (Task 4.2, gates) fills in.

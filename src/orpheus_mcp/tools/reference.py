@@ -11,6 +11,7 @@ import contextlib
 import json
 import math
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ from fastmcp import FastMCP
 
 from orpheus_mcp.analysis import cachefs, model_registry
 from orpheus_mcp.analysis.cachefs import CacheFS, Pcm
+from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.analysis.separation import SeparationError
 from orpheus_mcp.analysis.separation import separate_region as _run_separation_core
 from orpheus_mcp.models import (
@@ -27,6 +29,8 @@ from orpheus_mcp.models import (
     ChordsLane,
     GateResult,
     GateSet,
+    LocateResult,
+    LyricsResult,
     Recon,
     SoundCharacter,
     StemHandle,
@@ -36,6 +40,7 @@ from orpheus_mcp.models import (
 )
 
 if TYPE_CHECKING:
+    from orpheus_mcp.analysis.lyrics import AsrEngine
     from orpheus_mcp.analysis.model_registry import ModelEntry
     from orpheus_mcp.analysis.separation import SeparatorEngine
     from orpheus_mcp.analysis.timeline import TaggerEngine
@@ -47,8 +52,19 @@ __all__ = [
     "separate_region",
     "verify_stem",
     "characterize",
+    "transcribe_lyrics",
+    "locate_lyric",
     "register",
 ]
+
+
+class ReferenceEnvMissing(Exception):
+    """A tool call needs the ``[analysis]`` extra (panns-inference + torch) that isn't
+    installed. Raised instead of letting a raw ``ImportError`` escape a tool call — mirrors
+    ``analysis.separation.SeparatorEnvMissing`` / ``analysis.lyrics.LyricsAsrEnvMissing`` for
+    the base analysis stack ``instrument_timeline``/the §6 ladder needs. A future orchestrator
+    (§9 ``analyze_reference``) catches this and records ``capped_by_missing_extra="analysis"``
+    in the answer envelope."""
 
 _RO = {"readOnlyHint": True}
 
@@ -647,6 +663,262 @@ def _default_dereverb_engine() -> SeparatorEngine | None:
         return None
 
 
+# --------------------------------------------------------------------------- #
+# transcribe_lyrics + locate_lyric (Task 8.2, §14.2) — the vocal-stem-via-ladder ASR index
+# and the tool-layer wrapper over the pure fuzzy resolver in analysis/lyrics.py.
+# --------------------------------------------------------------------------- #
+
+_LYRICS_KIND = "lyrics"
+_LINES_KIND = "lines"
+_SECTIONS_KIND = "sections"
+_LYRICS_SCHEMA_VERSION = 1
+_LYRICS_TASK = "lyrics-asr"
+_VOCALS_TARGET = "vocals"
+
+
+def _asr_model_id() -> str:
+    """The rank-1 ``lyrics-asr``/``fasterwhisper`` registry entry's id, or ``"unknown"`` if
+    the registry ships none — this is CHEAP (registry JSON read, no import of faster_whisper
+    itself) so it can be part of the cache meta on every call, including a HIT (§9: meta must
+    be buildable before paying for a decode)."""
+    entries = [
+        e
+        for e in model_registry.entries_for_task(_LYRICS_TASK, allow_unpinned=True)
+        if e.engine == "fasterwhisper"
+    ]
+    if not entries:
+        return "unknown"
+    return sorted(entries, key=lambda e: e.rank)[0].id
+
+
+def _lyrics_meta(file: str, asr_model_id: str) -> dict:
+    """The §9 cache sidecar shape shared by the three ``lyrics``/``lines``/``sections`` cache
+    kinds (§9 — ``lyrics.json``/``lines.json``/``sections.json``, mirrored here as three
+    ``CacheFS`` kinds so a re-ask never re-pays ASR/alignment cost). ``asr_model_id`` busts a
+    cached transcript when the pinned faster-whisper checkpoint changes, even though
+    ``registry_version`` already covers it too (belt-and-suspenders: the brief calls this out
+    explicitly since ASR quality is this artifact's whole reason to exist)."""
+    return {
+        "schema_version": _LYRICS_SCHEMA_VERSION,
+        "registry_version": cachefs.registry_version(),
+        "verify_config_hash": cachefs.verify_config_hash(),
+        "decoder": cachefs.decoder_for(file),
+        "asr_model_id": asr_model_id,
+    }
+
+
+def _read_lyrics_cache(fs: CacheFS, file_hash: str, meta: dict) -> LyricsResult | None:
+    """A HIT requires all three kinds to be present and meta-matching — a partial write (one
+    kind stale/missing) is treated as a full miss, never a Frankenstein reconstruction."""
+    core = fs.read_json(file_hash, _LYRICS_KIND, meta=meta)
+    lines = fs.read_json(file_hash, _LINES_KIND, meta=meta)
+    sections = fs.read_json(file_hash, _SECTIONS_KIND, meta=meta)
+    if core is None or lines is None or sections is None:
+        return None
+    return LyricsResult(
+        schema_version=core.get("schema_version", _LYRICS_SCHEMA_VERSION),
+        status=core["status"],
+        language=core.get("language"),
+        aligned=core.get("aligned", False),
+        words=core.get("words", []),
+        lines=lines.get("lines", []),
+        sections=sections.get("sections", []),
+    )
+
+
+def _write_lyrics_cache(fs: CacheFS, file_hash: str, meta: dict, result: LyricsResult) -> None:
+    dumped = result.model_dump(mode="json")
+    core = {k: dumped[k] for k in ("schema_version", "status", "language", "aligned", "words")}
+    fs.write_json(file_hash, _LYRICS_KIND, core, meta=meta)
+    fs.write_json(file_hash, _LINES_KIND, {"lines": dumped["lines"]}, meta=meta)
+    fs.write_json(file_hash, _SECTIONS_KIND, {"sections": dumped["sections"]}, meta=meta)
+
+
+def _resolve_tagger(tagger: TaggerEngine | None) -> TaggerEngine:
+    if tagger is not None:
+        return tagger
+    try:
+        from orpheus_mcp.analysis.timeline import PannsTagger
+    except ImportError as exc:
+        raise ReferenceEnvMissing(
+            "transcribe_lyrics needs the `[analysis]` extra (panns-inference + torch) to "
+            "build the T2 timeline the §6 vocal-stem ladder depends on."
+        ) from exc
+    return PannsTagger()
+
+
+def _resolve_asr(asr: AsrEngine | None) -> AsrEngine:
+    if asr is not None:
+        return asr
+    from orpheus_mcp.analysis.lyrics import FasterWhisperAsr
+
+    return FasterWhisperAsr()  # lazy-loaded; LyricsAsrEnvMissing raises at first .transcribe()
+
+
+def _separator_registry_resolver(
+    free_vram_gb: float | None,
+) -> Callable[[str], list[ModelEntry]]:
+    """A ``router.climb`` ``Resolver`` — every registry candidate producing ``target`` across
+    every separator-capable task, rank-merged, the SAME candidate-gathering logic
+    ``_resolve_separator_entry`` uses for ``separate_region`` (kept in sync deliberately: the
+    ladder and the single-shot tool must agree on what "rank-1 for this target" means)."""
+
+    def _resolve(target: str) -> list[ModelEntry]:
+        candidates: list[ModelEntry] = []
+        for task in _SEPARATOR_TASKS:
+            candidates.extend(model_registry.resolve(task, target, vram_free_gb=free_vram_gb))
+        return sorted(candidates, key=lambda e: e.rank)
+
+    return _resolve
+
+
+def _engine_factory(
+    override: SeparatorEngine | None,
+) -> Callable[[ModelEntry], SeparatorEngine]:
+    from orpheus_mcp.analysis.separation import _default_engine
+
+    def _get(entry: ModelEntry) -> SeparatorEngine:
+        return override if override is not None else _default_engine(entry)
+
+    return _get
+
+
+def _vocal_stem_via_ladder(
+    file: str,
+    pcm: Pcm,
+    fs: CacheFS,
+    *,
+    tagger: TaggerEngine,
+    engine: SeparatorEngine | None,
+    max_seconds: float,
+) -> tuple[Pcm | None, bool]:
+    """Resolve the full-song vocal stem through the §6 ladder (``router.climb``, target
+    ``"vocals"``, ``max_tier="T3"`` — the ``QUESTION_TIERS["lyric_navigate"]`` ceiling). A
+    "T3" ceiling only ever reaches pre-flight (absent/exposure) + rank-1 (§6: every R1+
+    escalation rung needs T4) — intentionally a SINGLE validated separation, not full R1-R6
+    escalation: a lyrics index needs one good stem, not the best-of-many-tries answer a
+    "sound_at" question would chase. Any genuine [separation]/env failure (``SeparatorEnvMissing``
+    / ``SeparationError``) propagates from ``climb`` uncaught — a typed, documented failure a
+    future orchestrator translates into ``capped_by_missing_extra`` (§9), not swallowed here.
+
+    Returns ``(vocal_pcm, confirmed_absent)``. ``confirmed_absent=True`` (T2 pre-flight: the
+    vocal tagger classes never exceed the activity threshold anywhere in the song) means the
+    caller should skip VAD/ASR entirely and return ``no_vocals`` directly — cheap AND honest,
+    consistent with §14.1's own audio-level hallucination gate. Any other stem-less rung (the
+    rare pre-flight "exposed" case — a window where vocals are already isolated in the raw
+    mix) falls back to the RAW MIX ``pcm`` as ``vocal_pcm``; ``build_lyrics``'s own VAD gate
+    remains the final honesty backstop, so this can never fabricate lyrics from a genuinely
+    silent mix — it can only run ASR without the benefit of separation."""
+    from orpheus_mcp.analysis import router
+
+    free = model_registry.free_vram_gb()
+    registry = _separator_registry_resolver(free)
+    engines = _engine_factory(engine)
+    timeline = instrument_timeline(file, cache=fs, tagger=tagger)
+
+    outcome = router.climb(
+        pcm,
+        _VOCALS_TARGET,
+        None,
+        registry=registry,
+        engines=engines,
+        tagger=tagger,
+        timeline=timeline,
+        max_tier="T3",
+        max_seconds=max_seconds,
+        cache=fs,
+    )
+
+    if outcome.rung == "absent":
+        return None, True
+    if outcome.stems is not None and _VOCALS_TARGET in outcome.stems:
+        stem_path = outcome.stems[_VOCALS_TARGET].stem_path
+        return cachefs.decode(stem_path), False
+    return pcm, False  # "exposed" (or any other stem-less rung): best-effort on the raw mix
+
+
+def transcribe_lyrics(
+    file: str,
+    *,
+    cache: CacheFS | None = None,
+    asr: AsrEngine | None = None,
+    tagger: TaggerEngine | None = None,
+    engine: SeparatorEngine | None = None,
+    max_seconds: float | None = None,
+) -> LyricsResult:
+    """§14 lyric index: resolve the vocal stem through the §6 ladder (cached once per §3.1 —
+    the SAME ``CacheFS`` the ladder writes its own ``ladder__vocals__...`` entry into, so a
+    re-ask never re-separates even across a ``transcribe_lyrics`` cache miss on THIS artifact),
+    run the §14.1 VAD-gated ASR + alignment + assembly pipeline, and cache the result under
+    the ``lyrics``/``lines``/``sections`` kinds (§9). A cache HIT returns straight from disk —
+    no decode, no ladder, no ASR — so a file transcribed once elsewhere (a shared cache dir)
+    never re-pays the T3 vocal-stem cost or the ASR cost here.
+
+    ``asr``/``tagger``/``engine`` are injection seams (tests; a production call leaves them
+    ``None`` and gets the real ``FasterWhisperAsr``/``PannsTagger``/registry-resolved separator
+    engine). Raises ``ReferenceEnvMissing`` ([analysis] extra), ``SeparatorEnvMissing``/
+    ``SeparationError`` ([separation] extra / no compatible vocal model), or
+    ``LyricsAsrEnvMissing`` (faster-whisper) on a genuine cache MISS without the needed stack —
+    never a bare ``ImportError`` escaping the call."""
+    from orpheus_mcp.analysis.lyrics import build_lyrics
+
+    fs = cache if cache is not None else CacheFS()
+    asr_id = _asr_model_id()
+    file_hash = cachefs.pcm_hash(file)
+    meta = _lyrics_meta(file, asr_id)
+
+    hit = _read_lyrics_cache(fs, file_hash, meta)
+    if hit is not None:
+        return hit
+
+    tagger_engine = _resolve_tagger(tagger)
+    asr_engine = _resolve_asr(asr)
+    budget = max_seconds if max_seconds is not None else CFG.DEFAULT_MAX_SECONDS
+
+    pcm = cachefs.decode(file)
+    recon, _ = _recon_read_through(file, fs, pcm=pcm)
+
+    vocal_pcm, confirmed_absent = _vocal_stem_via_ladder(
+        file, pcm, fs, tagger=tagger_engine, engine=engine, max_seconds=budget
+    )
+    if confirmed_absent:
+        result = LyricsResult(
+            status="no_vocals", language=None, aligned=False, words=[], lines=[], sections=[]
+        )
+    else:
+        assert vocal_pcm is not None
+        result = build_lyrics(vocal_pcm, recon, asr_engine)
+
+    _write_lyrics_cache(fs, file_hash, meta, result)
+    return result
+
+
+def locate_lyric(
+    file: str,
+    quote: str,
+    occurrence: int | None = None,
+    *,
+    cache: CacheFS | None = None,
+    asr: AsrEngine | None = None,
+    tagger: TaggerEngine | None = None,
+    engine: SeparatorEngine | None = None,
+) -> LocateResult:
+    """§14.2 fuzzy lyric resolver: fetch (cache-first, transcribing on a genuine miss) the
+    file's :class:`LyricsResult` via :func:`transcribe_lyrics`, then run the pure scorer
+    (``analysis.lyrics.locate_lyric``) — normalize, slide a ± ``CFG.LYRIC_MATCH_WINDOW_SLOP``
+    window over the flat word stream, score by token-level edit distance with phonetic +
+    masked-profanity equivalence, non-max-suppress overlapping candidates. On a cache HIT this
+    only reads the cached index and runs the pure scorer — no separation/ASR stack needed at
+    all (registered unconditionally in the librosa tier, §9); a genuine cache MISS without the
+    needed stack surfaces the SAME typed errors ``transcribe_lyrics`` does, never a bare
+    ``ImportError``. Does not modify the input file or any REAPER project (``readOnlyHint``)."""
+    from orpheus_mcp.analysis.lyrics import locate_lyric as _locate_lyric_pure
+
+    fs = cache if cache is not None else CacheFS()
+    lyrics = transcribe_lyrics(file, cache=fs, asr=asr, tagger=tagger, engine=engine)
+    return _locate_lyric_pure(lyrics, quote, occurrence)
+
+
 def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG001 - uniform signature
     """Registers the ``reference`` category. Probes for librosa BEFORE registering any
     tool: every tool in this category needs it, and ``registry.register_tools``'s
@@ -733,6 +1005,31 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
         """
         return characterize(source, region)
 
+    @mcp.tool(name="locate_lyric", annotations=_RO)
+    def locate_lyric_tool(
+        file: str, quote: str, occurrence: int | None = None
+    ) -> LocateResult:
+        """§14.2 fuzzy lyric resolver: find where ``quote`` is sung in ``file``. Normalizes
+        both sides (case/punctuation/whitespace), slides the quote over the transcribed word
+        stream (a quote may span a line boundary), and scores each candidate window by
+        token-level edit distance with phonetic (double-metaphone-class) and masked-profanity
+        (``f***``) token equivalence — so a misheard/misremembered word doesn't tank the match.
+        Returns EVERY occurrence scoring ≥ ``CFG.LYRIC_MATCH_MIN_SCORE`` (a repeated chorus
+        line returns all of them, each carrying its 1-based TEMPORAL ``occurrence`` — "the
+        second chorus" — independent of score rank), or, if the best score falls short of that
+        bar, the top-3 candidates with ``low_confidence=True`` so the caller asks the user
+        instead of guessing. ``occurrence``, if given, filters to that one occurrence.
+        ``status="no_vocals"`` is the DEFINED result for a file whose vocal stem never crossed
+        the §14.1 VAD gate — distinct from an ordinary empty match list.
+
+        Registered here in the librosa tier (not gated on panns/torch/faster-whisper): a
+        cached lyric index is queryable with ONLY the base extra; a genuine cache MISS without
+        the needed stack raises a typed, documented error, never a bare ``ImportError``. Does
+        not modify the input file or any REAPER project (``readOnlyHint``) — it does write to
+        the local analysis cache (``~/.orpheus_cache``) on a MISS.
+        """
+        return locate_lyric(file, quote, occurrence)
+
     _panns_available = (
         importlib.util.find_spec("panns_inference") is not None
         and importlib.util.find_spec("torch") is not None
@@ -781,6 +1078,32 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
             (``~/.orpheus_cache``).
             """
             return separate_region(file, target, region, model_id)
+
+        _faster_whisper_available = importlib.util.find_spec("faster_whisper") is not None
+        if _faster_whisper_available:
+
+            @mcp.tool(name="transcribe_lyrics", annotations=_RO)
+            def transcribe_lyrics_tool(file: str) -> LyricsResult:
+                """§14 lyric index: resolve the vocal stem through the §6 escalation ladder
+                (``max_tier="T3"`` — the ``lyric_navigate`` question-class ceiling; a single
+                validated rank-1 separation, cached once per §3.1 and shared with the ladder's
+                own cache entry), then run faster-whisper ASR (word timestamps) gated by the
+                §14.1 VAD hallucination gate (a stem that never crosses it returns
+                ``status="no_vocals"`` WITHOUT ASR ever running), whisperX forced alignment,
+                and line/section assembly (repeated blocks → named ``chorus``/``verse``
+                sections; through-composed → structural ``section A/B/C``).
+
+                Decodes ``file``, caches the result under the decoded-PCM hash across three
+                kinds (``lyrics``/``lines``/``sections``, §9) so repeat calls never re-run ASR.
+
+                **Desktop-tier**: needs the ``[separation]`` extra (audio-separator / vendored
+                MSST, for the vocal stem, AND faster-whisper, gated by this registration probe)
+                at CALL time — a missing isolated separator env or ASR install raises a clear,
+                typed error rather than a silent failure or a bare ``ImportError``. Does not
+                modify the input file or any REAPER project (``readOnlyHint``) — it does write
+                to the local analysis cache (``~/.orpheus_cache``).
+                """
+                return transcribe_lyrics(file)
     else:
         import warnings
 

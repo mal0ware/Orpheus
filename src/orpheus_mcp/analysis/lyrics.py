@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -45,6 +47,8 @@ from orpheus_mcp.analysis import model_registry
 from orpheus_mcp.analysis.cachefs import Pcm
 from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.models import (
+    LocateMatch,
+    LocateResult,
     LyricLine,
     LyricSection,
     LyricsResult,
@@ -54,6 +58,16 @@ from orpheus_mcp.models import (
 )
 
 _LYRICS_TASK = "lyrics-asr"
+
+
+class LyricsAsrEnvMissing(Exception):
+    """The faster-whisper ASR stack isn't installed. Raised in place of a raw ``ImportError``
+    escaping a tool call (§9 ``capped_by_missing_extra`` pattern) — mirrors
+    ``analysis.separation.SeparatorEnvMissing`` for the ``[separation]`` extra's ASR half
+    (faster-whisper ships in the SAME extra as audio-separator, per ``pyproject.toml``). A
+    future orchestrator (§9 ``analyze_reference``) catches this exact type and records
+    ``capped_by_missing_extra="separation"`` in the answer envelope; this task's tools just
+    need to raise it honestly instead of a bare ``ImportError``."""
 
 # wav2vec2 aligner language coverage (whisperX ``DEFAULT_ALIGN_MODELS`` union, torchaudio +
 # HF pipelines, as of 2026-07). A detected language OUTSIDE this set has no aligner, so
@@ -206,7 +220,13 @@ class FasterWhisperAsr:
     def _load(self) -> None:
         if self._model is not None:
             return
-        from faster_whisper import WhisperModel
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            raise LyricsAsrEnvMissing(
+                "faster-whisper is not installed — install the `[separation]` extra "
+                "(`pip install 'orpheus-mcp[separation]'`) to run lyric transcription."
+            ) from exc
 
         try:
             import torch
@@ -556,3 +576,211 @@ def build_lyrics(vocal_pcm: Pcm, recon: Recon, asr: AsrEngine) -> LyricsResult:
         lines=lines,
         sections=sections,
     )
+
+
+# --------------------------------------------------------------------------- #
+# 5. locate_lyric -- the section 14.2 fuzzy resolver (pure: no audio, no cache, no I/O)
+# --------------------------------------------------------------------------- #
+
+_TOKEN_STRIP_RE = re.compile(r"^[^\w*]+|[^\w*]+$", re.UNICODE)
+
+
+def _norm_token(word: str) -> str:
+    """Casefold + strip surrounding punctuation, KEEPING internal ``*`` (Whisper's
+    profanity-masking character -- ``_masked_prefix_match`` needs it) and internal
+    apostrophes/letters. Empty for a token that was pure punctuation."""
+    return _TOKEN_STRIP_RE.sub("", word.casefold())
+
+
+# A deliberately small (~40 LOC), pure-python, ENGLISH-phonetics-only reduction -- NOT the full
+# Lawrence Philips Double Metaphone algorithm (that runs to hundreds of lines). Good enough to
+# equate the common ASR-mishear / misremembered-lyric class the section 14.2 scorer targets
+# ("son" vs "sun", "their" vs "there") by collapsing to a consonant skeleton with vowels dropped
+# (except a single initial-vowel marker) -- classical Metaphone's core trick. A language outside
+# this reduction's assumptions simply never phonetic-matches, degrading to plain edit distance
+# (the non-English note: stated in the result meta by the caller, not enforced here).
+_DIGRAPHS: list[tuple[str, str]] = [
+    ("SCH", "SK"), ("PH", "F"), ("GH", "K"), ("CK", "K"), ("SH", "X"), ("CH", "X"),
+    ("TH", "0"), ("WH", "W"), ("QU", "K"), ("KN", "N"), ("GN", "N"), ("WR", "R"), ("PS", "S"),
+]
+_CONSONANT_MAP: dict[str, str] = {"C": "K", "Z": "S", "V": "F", "Q": "K"}
+_VOWELS = frozenset("AEIOU")
+
+
+def _phonetic_code(token: str) -> str:
+    s = "".join(c for c in token.upper() if c.isalpha())
+    if not s:
+        return ""
+    for a, b in _DIGRAPHS:
+        s = s.replace(a, b)
+    out: list[str] = []
+    prev = ""
+    for i, ch in enumerate(s):
+        if ch in _VOWELS:
+            if i == 0:
+                out.append("A")  # single initial-vowel marker, then dropped
+            prev = ""
+            continue
+        code = _CONSONANT_MAP.get(ch, ch)
+        if code != prev:
+            out.append(code)
+        prev = code
+    return "".join(out)
+
+
+def _masked_prefix_match(a: str, b: str) -> bool:
+    """Section 14.2 masked-profanity rule: if either normalized token is asterisk-masked
+    (Whisper's ``f***``), it matches any token sharing its visible prefix -- Whisper's
+    censorship must not tank the edit distance against the actual word on either side."""
+    if "*" not in a and "*" not in b:
+        return False
+    masked, other = (a, b) if "*" in a else (b, a)
+    prefix = masked.split("*", 1)[0]
+    return bool(prefix) and other.startswith(prefix)
+
+
+def _tokens_match(raw_a: str, raw_b: str) -> bool:
+    """Per-token section 14.2 match: exact (normalized) OR masked-profanity-prefix OR
+    double-metaphone-equal (English phonetics; a non-English token simply never phonetic-
+    matches anything, degrading this predicate to plain equality for that token)."""
+    a, b = _norm_token(raw_a), _norm_token(raw_b)
+    if not a or not b:
+        return a == b
+    if a == b:
+        return True
+    if _masked_prefix_match(a, b):
+        return True
+    ca, cb = _phonetic_code(a), _phonetic_code(b)
+    return bool(ca) and ca == cb
+
+
+def _token_edit_distance(a: list[str], b: list[str]) -> int:
+    """Levenshtein distance over TOKEN sequences (insert/delete/substitute, unit cost),
+    substitution cost 0 when ``_tokens_match`` -- the section 14.2 window score's numerator."""
+    n, m = len(a), len(b)
+    prev = list(range(m + 1))
+    for i in range(1, n + 1):
+        cur = [i] + [0] * m
+        for j in range(1, m + 1):
+            sub_cost = 0 if _tokens_match(a[i - 1], b[j - 1]) else 1
+            cur[j] = min(
+                prev[j] + 1,  # delete from a
+                cur[j - 1] + 1,  # insert into a
+                prev[j - 1] + sub_cost,  # substitute (or match)
+            )
+        prev = cur
+    return prev[m]
+
+
+@dataclass
+class _Candidate:
+    start: int  # word index, inclusive
+    end: int  # word index, exclusive
+    score: float
+
+
+def _slide_candidates(words: list[LyricWord], quote_tokens: list[str]) -> list[_Candidate]:
+    """Slide every window length in ``[len(quote) - SLOP, len(quote) + SLOP]`` (min 1) over the
+    FLAT word stream (never per-line -- a quote may span a line boundary, section 14.2) and
+    score each via ``1 - token_edit_distance / max(len(quote), len(window))``."""
+    qlen = len(quote_tokens)
+    if qlen == 0 or not words:
+        return []
+    slop = CFG.LYRIC_MATCH_WINDOW_SLOP
+    lengths = [n for n in range(max(1, qlen - slop), qlen + slop + 1) if n <= len(words)]
+
+    candidates: list[_Candidate] = []
+    word_texts = [w.word for w in words]
+    for length in lengths:
+        for start in range(0, len(words) - length + 1):
+            window = word_texts[start : start + length]
+            dist = _token_edit_distance(quote_tokens, window)
+            score = 1.0 - dist / max(qlen, length)
+            candidates.append(_Candidate(start, start + length, score))
+    return candidates
+
+
+def _merge_candidates(candidates: list[_Candidate]) -> list[_Candidate]:
+    """Overlapping candidate windows collapse to ONE representative, keeping the best score --
+    classic non-max suppression, NOT a transitive interval merge. A transitive merge (grow an
+    envelope through every pairwise overlap) is wrong here: because window length ranges over
+    +/- ``CFG.LYRIC_MATCH_WINDOW_SLOP`` at every start position, adjacent sliding windows
+    ALWAYS overlap by construction, so a transitive merge would chain-collapse the entire
+    candidate set -- across the WHOLE transcript -- into one cluster, silently discarding every
+    occurrence but one (the load-bearing bug this function exists to avoid: a repeated chorus
+    line must return ALL its occurrences, section 14.2). NMS instead repeatedly takes the
+    best-scoring remaining candidate, keeps it, and discards every OTHER candidate whose
+    word-index span overlaps it at all (two windows describing the same sung moment always
+    share word indices; two genuinely distinct occurrences of a repeated line never do)."""
+    remaining = sorted(candidates, key=lambda c: -c.score)
+    kept: list[_Candidate] = []
+    for c in remaining:
+        if any(c.start < k.end and c.end > k.start for k in kept):
+            continue
+        kept.append(c)
+    return kept
+
+
+def _section_for(sections: list[LyricSection], t: float) -> str | None:
+    for sec in sections:
+        if sec.start_s <= t < sec.end_s:
+            return sec.name
+    return None
+
+
+def _to_match(words: list[LyricWord], sections: list[LyricSection], c: _Candidate) -> LocateMatch:
+    span = words[c.start : c.end]
+    return LocateMatch(
+        start_s=span[0].start_s,
+        end_s=span[-1].end_s,
+        matched_text=" ".join(w.word for w in span),
+        score=c.score,
+        section=_section_for(sections, span[0].start_s),
+        occurrence=0,  # filled in below once the returned set is fixed (temporal order)
+    )
+
+
+def locate_lyric(
+    lyrics: LyricsResult, quote: str, occurrence: int | None = None
+) -> LocateResult:
+    """The section 14.2 fuzzy resolver -- PURE (no file I/O, no cache; the tool layer,
+    ``tools.reference.locate_lyric``, owns fetching/caching the :class:`LyricsResult`).
+
+    ``lyrics.status == "no_vocals"`` returns the DEFINED no-vocal :class:`LocateResult`
+    (``status="no_vocals"``, empty matches) -- never an ordinary empty-match "ok" result, so a
+    caller can tell "nothing sung here" apart from "nothing matched" (section 14.1).
+
+    Otherwise: normalize both sides, slide the quote over the flat word stream (line
+    boundaries are irrelevant -- a quote may span one), merge overlapping windows keeping the
+    best, then either return every match scoring >= ``CFG.LYRIC_MATCH_MIN_SCORE`` (temporal
+    ``occurrence`` order, list itself ranked best-score-first) or, if the best candidate falls
+    short of that bar, the top ``CFG.LYRIC_MATCH_TOP_N`` candidates with ``low_confidence=True``
+    (section 14.2: Claude asks the user instead of guessing). ``occurrence`` is always the
+    1-based temporal rank WITHIN the returned set -- the one definition that covers both the
+    normal and the low-confidence path. ``occurrence`` (the parameter) filters the final set
+    down to a single requested occurrence when given."""
+    if lyrics.status == "no_vocals":
+        return LocateResult(status="no_vocals", matches=[], low_confidence=False)
+
+    quote_tokens = [t for t in (_norm_token(tok) for tok in quote.split()) if t]
+    candidates = _merge_candidates(_slide_candidates(lyrics.words, quote_tokens))
+    if not candidates:
+        return LocateResult(status="ok", matches=[], low_confidence=False)
+
+    best_score = max(c.score for c in candidates)
+    low_confidence = best_score < CFG.LYRIC_MATCH_MIN_SCORE
+    if low_confidence:
+        chosen = sorted(candidates, key=lambda c: (-c.score, c.start))[: CFG.LYRIC_MATCH_TOP_N]
+    else:
+        chosen = [c for c in candidates if c.score >= CFG.LYRIC_MATCH_MIN_SCORE]
+
+    chosen_temporal = sorted(chosen, key=lambda c: c.start)
+    matches = [_to_match(lyrics.words, lyrics.sections, c) for c in chosen_temporal]
+    for idx, m in enumerate(matches, start=1):
+        m.occurrence = idx
+    matches.sort(key=lambda m: -m.score)  # ranked best-first; occurrence stays temporal
+
+    if occurrence is not None:
+        matches = [m for m in matches if m.occurrence == occurrence]
+
+    return LocateResult(status="ok", matches=matches, low_confidence=low_confidence)

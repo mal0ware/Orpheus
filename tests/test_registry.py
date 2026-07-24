@@ -62,13 +62,16 @@ IMPLEMENTED = {
     "render_track_region",
     # reference (Task 1.3 — T1 recon; Task 2.1 — T2 instrument timeline; Task 3.2 — §13
     # chords; Task 4.2 — §5 verification gates 1-3 + separate_region; Task 5.3 — verify_stem;
-    # Task 6.1 — §7 SoundCharacter descriptors + characterize)
+    # Task 6.1 — §7 SoundCharacter descriptors + characterize; Task 8.2 — §14.2
+    # transcribe_lyrics + locate_lyric)
     "recon_reference",
     "instrument_timeline",
     "get_chords",
     "separate_region",
     "verify_stem",
     "characterize",
+    "transcribe_lyrics",
+    "locate_lyric",
 }
 
 

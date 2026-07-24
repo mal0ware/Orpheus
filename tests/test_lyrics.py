@@ -23,9 +23,17 @@ from orpheus_mcp.analysis.lyrics import (
     align_words,
     assemble,
     build_lyrics,
+    locate_lyric,
     vad_windows,
 )
-from orpheus_mcp.models import BeatGrid, KeyEstimate, LyricWord, Recon, Window
+from orpheus_mcp.models import (
+    BeatGrid,
+    KeyEstimate,
+    LyricsResult,
+    LyricWord,
+    Recon,
+    Window,
+)
 from stub_engines import StubAsr
 
 SR = 22050
@@ -334,6 +342,151 @@ def test_snap_to_recon_reads_lyric_section_snap_s(monkeypatch):
 
     assert start == pytest.approx(12.0)  # snapped to the recon edge, not left at raw 10.0
     assert end == pytest.approx(20.0)  # snapped to the recon edge, not left at raw 18.0
+
+
+# --------------------------------------------------------------------------- #
+# locate_lyric (Task 8.2, §14.2) — the pure fuzzy resolver. Every case here is a plain
+# LyricsResult built by hand: no audio, no cache, no engines.
+# --------------------------------------------------------------------------- #
+
+
+def _transcript(*lines_at: tuple[str, float]) -> LyricsResult:
+    """Build a bare-bones ``LyricsResult`` (``status="ok"``, no sections) from
+    ``(text, start_s)`` pairs, each line laid out via ``_line_words`` (0.4 s/word)."""
+    words: list[LyricWord] = []
+    for text, start in lines_at:
+        words += _line_words(text, start)
+    return LyricsResult(
+        status="ok", language="en", aligned=True, words=words, lines=[], sections=[]
+    )
+
+
+def test_locate_lyric_exact_quote_scores_1_0_with_right_timestamps():
+    lyrics = _transcript(("hold the line and carry through", 0.0))
+
+    result = locate_lyric(lyrics, "the line and carry")
+
+    assert result.status == "ok"
+    assert len(result.matches) == 1
+    m = result.matches[0]
+    assert m.score == pytest.approx(1.0)
+    assert m.matched_text == "the line and carry"
+    assert m.start_s == pytest.approx(0.4)  # "the" is the 2nd word (0.4 s/word)
+    assert m.end_s == pytest.approx(1.95)  # "carry" is the 5th word, ends at 1.6 + 0.35
+
+
+def test_locate_lyric_misquote_still_top_match_via_metaphone():
+    """'the son also rises' (misheard/misremembered) vs the ACTUAL transcript 'the sun also
+    rises' — 'son'/'sun' collapse to the same phonetic code, so the mismatch costs nothing
+    and the match still scores (and ranks) as the top result."""
+    lyrics = _transcript(("the sun also rises over the hill", 0.0))
+
+    result = locate_lyric(lyrics, "the son also rises")
+
+    assert result.low_confidence is False
+    assert result.matches
+    best = result.matches[0]
+    assert best.score == pytest.approx(1.0)
+    assert best.matched_text == "the sun also rises"
+
+
+def test_locate_lyric_repeated_chorus_all_occurrences_temporal_order_independent_of_score():
+    """The 2nd sung instance is a PERFECT match (score 1.0); the 1st is slightly garbled
+    ('proud' for 'loud', still >= LYRIC_MATCH_MIN_SCORE). Sorted by score, occurrence 2 would
+    lead — but each match's ``occurrence`` field must still reflect SUNG (temporal) order."""
+    lyrics = _transcript(
+        ("verse one opens quiet", 0.0),
+        ("sing it out proud", 3.0),  # occurrence 1 (garbled: proud, not loud)
+        ("verse two carries on", 6.0),
+        ("sing it out loud", 9.0),  # occurrence 2 (exact)
+    )
+
+    result = locate_lyric(lyrics, "sing it out loud")
+
+    assert result.low_confidence is False
+    assert len(result.matches) == 2
+    by_occurrence = {m.occurrence: m for m in result.matches}
+    assert set(by_occurrence) == {1, 2}
+    assert by_occurrence[1].start_s < by_occurrence[2].start_s  # occurrence 1 sung FIRST
+    assert by_occurrence[2].score == pytest.approx(1.0)
+    assert by_occurrence[1].score < by_occurrence[2].score  # occurrence 1 IS the lower score
+    # score-ranked list order: the higher-scoring (2nd sung) match leads the returned list
+    assert result.matches[0].occurrence == 2
+
+
+def test_locate_lyric_quote_spans_line_boundary():
+    """The window slides over the flat WORD stream, not line-by-line — a quote whose words
+    straddle two ``LyricLine``s (irrelevant here since this LyricsResult carries none) must
+    still match."""
+    lyrics = _transcript(("hold the line and carry the", 0.0), ("weight home tonight", 3.0))
+
+    result = locate_lyric(lyrics, "carry the weight home")
+
+    assert result.low_confidence is False
+    assert len(result.matches) == 1
+    m = result.matches[0]
+    assert m.score == pytest.approx(1.0)
+    assert m.matched_text == "carry the. weight home"  # raw transcript text (punctuation kept)
+    assert m.start_s < 3.0 < m.end_s  # genuinely straddles the line boundary
+
+
+def test_locate_lyric_masked_profanity_prefix_match():
+    """Whisper's asterisk-masked profanity ('f***') must match the user's actual word via the
+    shared visible prefix, not tank the edit distance."""
+    lyrics = _transcript(("this f*** rocks", 0.0))
+
+    result = locate_lyric(lyrics, "this fudge rocks")
+
+    assert result.low_confidence is False
+    best = result.matches[0]
+    assert best.score == pytest.approx(1.0)
+    assert best.matched_text == "this f*** rocks."  # last token in the line carries the period
+
+
+def test_locate_lyric_low_confidence_returns_top_3_candidates_flagged():
+    lyrics = _transcript(
+        ("morning light comes over the hill", 0.0),
+        ("walking on the open ground", 3.0),
+        ("hold the line and carry through", 6.0),
+        ("simple words will see us new", 9.0),
+    )
+
+    result = locate_lyric(lyrics, "completely unrelated phrase nobody sang")
+
+    assert result.status == "ok"
+    assert result.low_confidence is True
+    assert len(result.matches) == CFG.LYRIC_MATCH_TOP_N == 3
+    assert all(m.score < CFG.LYRIC_MATCH_MIN_SCORE for m in result.matches)
+
+
+def test_locate_lyric_on_no_vocals_file_is_defined_result_not_empty_list():
+    """A ``no_vocals`` ``LyricsResult`` must produce the DEFINED no-vocal ``LocateResult``
+    (``status="no_vocals"``) — never look like an ordinary "found nothing" ``"ok"`` result."""
+    no_vocals = LyricsResult(
+        status="no_vocals", language=None, aligned=False, words=[], lines=[], sections=[]
+    )
+
+    result = locate_lyric(no_vocals, "any quote at all")
+
+    assert result.status == "no_vocals"
+    assert result.matches == []
+    assert result.low_confidence is False
+    # distinguishable from a "found nothing" ok-result by STATUS, not by matches being empty
+    assert result.status != "ok"
+
+
+def test_locate_lyric_occurrence_filter_selects_one_match():
+    lyrics = _transcript(
+        ("sing it out loud", 0.0),
+        ("something else entirely", 3.0),
+        ("sing it out loud", 6.0),
+    )
+
+    only_second = locate_lyric(lyrics, "sing it out loud", occurrence=2)
+
+    assert len(only_second.matches) == 1
+    assert only_second.matches[0].occurrence == 2
+    assert only_second.matches[0].start_s == pytest.approx(6.0)
 
 
 # --------------------------------------------------------------------------- #
