@@ -279,10 +279,11 @@
     "sha256": "dd3b4043a87d4ec13df8082c0fcfee3fb5084151808e47e060987a95eabdd142",
     "vram_gb": 0.0,
     "rt_factor": null,
-    "benchmark": "Cnn14_DecisionLevelMax framewise SED, mAP 0.385 (AudioSet). Placeholder DecisionLevel variant - Task 2.2's \u00a715.6 script picks the final one (Max/Avg/Att) by frame-level F1 on the fixture set",
+    "benchmark": "Cnn14_DecisionLevelMax framewise SED, mAP 0.385 (AudioSet). Task 2.2's \u00a715.6 script (scripts/pick_sed_head.py) scored Max/Avg/Att frame-F1 on the desktop fixture set (docs/pins/2026-07-model-pins.md, pin run d); the three heads tied exactly (panns-inference only loads the DecisionLevelMax architecture regardless of head today) and the tie resolved to DecisionLevelAtt per \u00a715.6.",
     "license": "MIT",
     "rank": 1,
-    "tagger_classes": []
+    "tagger_classes": [],
+    "head": "DecisionLevelAtt"
   },
   {
     "id": "chord/btc-large-voca",
