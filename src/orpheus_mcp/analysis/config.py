@@ -43,7 +43,6 @@ class AnalysisConfig:
     FX_LOOP_MAX_ITERATIONS: int = 4
     FX_LOOP_PLATEAU_EPSILON: float = 0.05
     WIDEN_MONO_SAFETY_CORR_MIN: float = 0.50
-    DEFAULT_MAX_TIER: str = "T4"
     DEFAULT_MAX_SECONDS: float = 300.0
     VRAM_FIT_FRACTION: float = 0.80
     CACHE_SIZE_CAP_GB: float = 20.0

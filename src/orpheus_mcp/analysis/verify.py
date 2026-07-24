@@ -315,7 +315,7 @@ def overall_verdict(gates: Iterable[GateResult]) -> Literal["pass", "fail", "unv
     gate_list = list(gates)
     if any(g.verdict == "fail" for g in gate_list):
         return "fail"
-    if gate_list and all(g.verdict == "na" for g in gate_list):
+    if all(g.verdict == "na" for g in gate_list):
         return "unverifiable"
     return "pass"
 

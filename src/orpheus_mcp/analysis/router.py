@@ -217,10 +217,11 @@ def _ladder_kind(target: str, region: Window | None, max_tier: str) -> str:
     return f"ladder__{_safe(target)}__{span}__{max_tier}"
 
 
-def _ladder_meta() -> dict[str, str]:
+def _ladder_meta() -> dict[str, object]:
     return {
         "registry_version": _cachefs.registry_version(),
         "verify_config_hash": _cachefs.verify_config_hash(),
+        "schema_version": 1,
     }
 
 

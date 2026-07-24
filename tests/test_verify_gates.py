@@ -356,6 +356,7 @@ _NA = GateResult(verdict="na", value=None)
         pytest.param([_PASS, _NA, _PASS, _NA], "pass", id="mixed-pass-and-na-excluded"),
         pytest.param([_NA, _NA, _NA, _NA], "unverifiable", id="all-na"),
         pytest.param([_NA, _FAIL, _NA, _NA], "fail", id="fail-beats-na"),
+        pytest.param([], "unverifiable", id="empty-gate-list"),
     ],
 )
 def test_overall_verdict_truth_table(gates, expected):

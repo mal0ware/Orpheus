@@ -764,7 +764,10 @@ def _phonetic_enabled(language: str | None) -> bool:
     ``_tokens_match`` is explicitly gated here on the transcript's detected language being
     English ("en" or an "en-*" regional tag); ``language is None`` (undetectable) counts as
     non-English -- the honest default when the ASR couldn't even tell us."""
-    return language is not None and (language == "en" or language.startswith("en-"))
+    if language is None:
+        return False
+    folded = language.lower()
+    return folded == "en" or folded.startswith("en-")
 
 
 def locate_lyric(

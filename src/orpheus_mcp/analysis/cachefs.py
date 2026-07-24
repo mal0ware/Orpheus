@@ -376,7 +376,15 @@ artifacts only; a model checkpoint is never "stale" the way a cached recon/timel
 artifact is, and re-downloading ~10 GB because a user asked to free a few MB of analysis
 cache would be a silent, expensive surprise. NOTE: ``renders/`` (§7.1) is deliberately NOT in
 this set — render outputs are analysis-side artifacts §9's LRU already treats as ordinary,
-evictable/clearable entries, and must stay that way."""
+evictable/clearable entries, and must stay that way.
+
+``hash_memo.json`` (a FILE, not a directory) survives ``clear``/``evict_lru`` without being
+listed here: :meth:`CacheFS.entry_dirs` filters ``self.root.iterdir()`` down to ``d.is_dir()``
+entries only, so the memo file is never a candidate in the first place — its survival rides
+that ``is_dir()`` filter, not membership in this set. Any FUTURE reserved top-level cache-root
+entry that IS a directory (not a lone file like the memo) must be added here explicitly, or
+``entry_dirs``/``clear``/``evict_lru`` will silently treat it as an ordinary evictable/clearable
+analysis-cache entry."""
 
 
 class CacheFS:

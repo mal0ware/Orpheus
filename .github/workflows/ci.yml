@@ -20,7 +20,7 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Install (with dev + analysis extras)
+      - name: Install (dev extra only — proves base-install degradation)
         run: uv sync --extra dev
 
       - name: Lint

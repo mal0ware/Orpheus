@@ -433,6 +433,21 @@ def test_locate_lyric_non_english_probe_WOULD_phonetic_match_if_ungated():
     assert result.notes == []
 
 
+def test_locate_lyric_uppercase_EN_language_tag_enables_phonetic_matching():
+    """``lyrics.language`` case is case-folded before the English check (fix wave, final
+    sweep) -- an ASR/engine that reports "EN" (or any other casing) must still enable the
+    phonetic leg, not silently degrade to edit-distance-only like a non-English tag would."""
+    lyrics = _transcript(("elle est coiffé aujourd'hui", 0.0))
+    lyrics = lyrics.model_copy(update={"language": "EN"})
+
+    result = locate_lyric(lyrics, "café")
+
+    assert result.low_confidence is False
+    assert result.matches
+    assert result.matches[0].score == pytest.approx(1.0)
+    assert result.notes == []
+
+
 def test_locate_lyric_none_language_counts_as_non_english():
     """``lyrics.language is None`` (undetectable) must ALSO gate off the phonetic leg -- the
     honest default when the ASR couldn't even tell us a language, not a silent fall-through to
