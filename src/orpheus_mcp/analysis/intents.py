@@ -117,6 +117,73 @@ _NON_NUMERIC_DESCRIPTOR_KEYS: frozenset[str] = frozenset(
 
 _BAND_KEY_RE = re.compile(r"^band_(\d+)_(\d+)(?:_dyn)?_db$")
 
+# --------------------------------------------------------------------------- #
+# §9 contract: every ``diffs`` entry carries a ``unit`` alongside {a, b, delta} — this is the
+# ONE place that decides what unit a descriptor reads in (never re-derived per call site).
+# Spectral band_*_db keys are always "db" (matched via ``_BAND_KEY_RE``, not hand-listed here);
+# every other NUMERIC (non-band, non-string/bool) descriptor gets its unit from this map. The
+# module-load assertion below keeps this map from silently drifting out of sync with
+# ``_NON_BAND_DESCRIPTOR_KEYS`` the same way ``ALLOWED_DESCRIPTOR_KEYS`` stays in sync with
+# ``descriptors.py``'s own band-edge constants.
+# --------------------------------------------------------------------------- #
+
+_BAND_UNIT = "db"
+
+_DESCRIPTOR_UNITS: dict[str, str] = {
+    "centroid_hz": "hz",
+    "rolloff_hz": "hz",
+    "tilt_db_per_oct": "db_per_oct",
+    "hp_ratio": "ratio",
+    "lufs_i": "db",
+    "lufs_s_max": "db",
+    "crest_db": "db",
+    "attack_ms_p50": "ms",
+    "attack_ms_p90": "ms",
+    "env_kurtosis": "unitless",
+    "even_db": "db",
+    "odd_db": "db",
+    "inharmonicity": "unitless",
+    "width_low": "ratio",
+    "width_mid": "ratio",
+    "width_high": "ratio",
+    "corr": "ratio",
+    "delay_ms": "ms",
+    "delay_feedback": "ratio",
+    "delay_conf": "ratio",
+    "mod_rate_hz": "hz",
+    "mod_depth": "ratio",
+    "reverb_wet_dry": "ratio",
+    "reverb_early_late": "ratio",
+}
+
+_NUMERIC_NON_BAND_DESCRIPTOR_KEYS = _NON_BAND_DESCRIPTOR_KEYS - _NON_NUMERIC_DESCRIPTOR_KEYS
+assert set(_DESCRIPTOR_UNITS) == _NUMERIC_NON_BAND_DESCRIPTOR_KEYS, (
+    "_DESCRIPTOR_UNITS has drifted from the numeric non-band descriptor key set — every "
+    "numeric descriptor diff_characters can emit must have exactly one unit entry."
+)
+
+
+def _unit_for(descriptor: str) -> str:
+    """The §9 ``unit`` string for one ``diffs`` entry — ``"db"`` for any spectral
+    ``band_*_db``/``band_*_dyn_db`` key (regex-matched, never hand-listed), else a lookup in
+    :data:`_DESCRIPTOR_UNITS` (guaranteed complete by the module-load assertion above for every
+    key ``diff_characters`` can actually emit)."""
+    if _BAND_KEY_RE.match(descriptor):
+        return _BAND_UNIT
+    return _DESCRIPTOR_UNITS[descriptor]
+
+
+# Suffix stripped off a descriptor to get its paired confidence-field base name, e.g.
+# "delay_ms" -> "delay" -> "delay_conf" (§15.3 rule 11's ``present_in_a_only`` op) — derived
+# generically so a future present_in_a_only descriptor doesn't need an engine change, only a
+# JSON rule referencing its own ``<base>_conf`` sibling field.
+_UNIT_SUFFIX_RE = re.compile(r"_(?:ms|hz|db)$")
+
+
+def _descriptor_conf_key(descriptor: str) -> str:
+    return _UNIT_SUFFIX_RE.sub("", descriptor) + "_conf"
+
+
 _TOP_LEVEL_OPS = frozenset({"delta_gt", "delta_lt", "abs_delta_gt", "present_in_a_only", "joint"})
 # "differs" is only meaningful inside a "joint" sub-trigger (string-typed descriptors, e.g.
 # rule 12's decay-class check) — never a valid top-level op on its own.
@@ -132,7 +199,16 @@ _SUB_TRIGGER_OPS = frozenset(
 
 @dataclass(frozen=True)
 class Rule:
-    """One loaded, validated §15.3 rule row."""
+    """One loaded, validated §15.3 rule row.
+
+    ``tail_sensitive`` (data-driven, was engine-hardcoded ``_TAIL_SENSITIVE_RULE_IDS = {11,
+    12}``) marks a rule whose reading is discounted to recommend-only against a §6 R3
+    ``complement=True`` source (see :func:`fire_rules`). ``cfg_params`` (data-driven, was the
+    engine-hardcoded ``rule_id == 10`` special case) maps an ``apply`` key to a live
+    :data:`~orpheus_mcp.analysis.config.CFG` attribute name whose CURRENT value overrides
+    whatever literal the JSON embeds at fire time — e.g. rule 10's
+    ``{"mono_safety_corr_min": "WIDEN_MONO_SAFETY_CORR_MIN"}`` — so a recalibration takes effect
+    without an engine change, and any rule (not just rule 10) can opt in from the data file."""
 
     rule_id: int
     trigger: dict[str, Any]
@@ -140,6 +216,8 @@ class Rule:
     apply: dict[str, Any] | None
     explanation: str
     vocal_only: bool
+    tail_sensitive: bool = False
+    cfg_params: dict[str, str] = field(default_factory=dict)
     inventory_keywords: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)  # full source dict (requires_opt_in, ...)
 
@@ -188,12 +266,16 @@ def _validate_trigger(trigger: object, *, rule_id: int) -> None:
     _validate_descriptor(trigger.get("descriptor"), rule_id=rule_id, where="trigger")
 
 
+_SUPPORTED_SCHEMA_VERSION = 1
+
+
 def load_rules(path: str | Path | None = None) -> list[Rule]:
     """Parse + validate ``data/intent_rules.json`` (or an explicit ``path``) into
     :class:`Rule` objects. Raises :class:`RulesError` on any unknown trigger ``op``, any
-    descriptor key not in the locked §7 ``SoundCharacter`` contract, or a structurally
-    malformed rule — fail fast at load time, never a silently-inert rule (Task 6.1's
-    review-requested cross-check)."""
+    descriptor key not in the locked §7 ``SoundCharacter`` contract, a missing/unknown
+    top-level ``schema_version``, an invalid ``tail_sensitive``/``cfg_params`` flag, or a
+    structurally malformed rule — fail fast at load time, never a silently-inert rule (Task
+    6.1's review-requested cross-check)."""
     p = Path(path) if path is not None else _rules_path()
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
@@ -201,6 +283,13 @@ def load_rules(path: str | Path | None = None) -> list[Rule]:
         raise RulesError(f"cannot read rules file {p}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise RulesError(f"malformed JSON in rules file {p}: {exc}") from exc
+
+    schema_version = data.get("schema_version") if isinstance(data, dict) else None
+    if schema_version != _SUPPORTED_SCHEMA_VERSION:
+        raise RulesError(
+            f"{p}: missing or unsupported 'schema_version' (expected "
+            f"{_SUPPORTED_SCHEMA_VERSION}, got {schema_version!r})."
+        )
 
     raw_rules = data.get("rules") if isinstance(data, dict) else None
     if not isinstance(raw_rules, list) or not raw_rules:
@@ -236,6 +325,21 @@ def load_rules(path: str | Path | None = None) -> list[Rule]:
         if not isinstance(inventory_keywords, list):
             raise RulesError(f"rule {rule_id}: 'inventory_keywords' must be a list.")
 
+        tail_sensitive_raw = entry.get("tail_sensitive", False)
+        if not isinstance(tail_sensitive_raw, bool):
+            raise RulesError(f"rule {rule_id}: 'tail_sensitive' must be a boolean.")
+
+        cfg_params = entry.get("cfg_params", {})
+        if not isinstance(cfg_params, dict):
+            raise RulesError(f"rule {rule_id}: 'cfg_params' must be an object.")
+        for apply_key, cfg_attr in cfg_params.items():
+            if not isinstance(apply_key, str) or not isinstance(cfg_attr, str):
+                raise RulesError(f"rule {rule_id}: 'cfg_params' entries must be string -> string.")
+            if not hasattr(CFG, cfg_attr):
+                raise RulesError(
+                    f"rule {rule_id}: 'cfg_params' names unknown CFG attribute {cfg_attr!r}."
+                )
+
         rules.append(
             Rule(
                 rule_id=rule_id,
@@ -244,6 +348,8 @@ def load_rules(path: str | Path | None = None) -> list[Rule]:
                 apply=apply_block,
                 explanation=explanation,
                 vocal_only=vocal_only,
+                tail_sensitive=tail_sensitive_raw,
+                cfg_params={str(k): str(v) for k, v in cfg_params.items()},
                 inventory_keywords=[str(k) for k in inventory_keywords],
                 raw=entry,
             )
@@ -275,12 +381,13 @@ def _default_rules() -> list[Rule]:
 class Diff:
     """The internal (pre-tool) diff: both source characters (rules that need a non-numeric
     field — rule 12's decay class — read them straight off ``a``/``b``), the flattened numeric
-    diff dict, the applied band limit, and the notes accumulated so far (mutated further by
-    :func:`fire_rules` as vocal-only/complement caveats fire)."""
+    diff dict (§9: each entry is ``{"a", "b", "delta", "unit"}``), the applied band limit, and
+    the notes accumulated so far (mutated further by :func:`fire_rules` as vocal-only/
+    complement caveats fire)."""
 
     a: SoundCharacter
     b: SoundCharacter
-    diffs: dict[str, dict[str, float | None]]
+    diffs: dict[str, dict[str, float | str | None]]
     band_limit_hz: float
     notes: list[str]
 
@@ -301,7 +408,10 @@ def _as_float(value: object) -> float | None:
 def diff_characters(a: SoundCharacter, b: SoundCharacter) -> Diff:
     """§8-normalized diff of two already-measured :class:`SoundCharacter`\\ s. ``a`` is the
     REFERENCE, ``b`` is the USER/render — every returned ``delta`` is ``a − b`` (signed,
-    reference minus user, per §15.3's locked trigger convention).
+    reference minus user, per §15.3's locked trigger convention). Each ``diffs`` entry also
+    carries a ``unit`` string (§9 contract: ``{a, b, delta, unit}``), looked up per descriptor
+    from this module's :data:`_DESCRIPTOR_UNITS` map / :func:`_unit_for` — never inferred from
+    the value itself.
 
     ``band_limit_hz`` is ``min(a.source.bandwidth_hz, b.source.bandwidth_hz)`` (falling back to
     whichever side measured a bandwidth, or the Nyquist ceiling of :data:`CFG.ANALYSIS_SR` if
@@ -333,7 +443,7 @@ def diff_characters(a: SoundCharacter, b: SoundCharacter) -> Diff:
     blocks_b: dict[str, Any] = {**b.spectral, **b.dynamics, **b.harmonics, **b.stereo, **b.time_fx}
     spectral_keys = set(a.spectral) | set(b.spectral)
 
-    diffs: dict[str, dict[str, float | None]] = {}
+    diffs: dict[str, dict[str, float | str | None]] = {}
     for key in sorted(set(blocks_a) | set(blocks_b)):
         if key in _NON_NUMERIC_DESCRIPTOR_KEYS:
             continue
@@ -344,7 +454,7 @@ def diff_characters(a: SoundCharacter, b: SoundCharacter) -> Diff:
         va = _as_float(blocks_a.get(key))
         vb = _as_float(blocks_b.get(key))
         delta = va - vb if (va is not None and vb is not None) else None
-        diffs[key] = {"a": va, "b": vb, "delta": delta}
+        diffs[key] = {"a": va, "b": vb, "delta": delta, "unit": _unit_for(key)}
 
     return Diff(a=a, b=b, diffs=diffs, band_limit_hz=band_limit_hz, notes=notes)
 
@@ -372,14 +482,15 @@ def _eval_simple(sub: dict[str, Any], diff: Diff, *, joint: bool) -> tuple[bool,
 
     if op == "present_in_a_only":
         min_conf = float(sub.get("min_conf", 0.5))
+        conf_key = _descriptor_conf_key(descriptor)  # e.g. "delay_ms" -> "delay_conf"
         a_val = _as_float(_raw_value(diff.a, descriptor))
-        a_conf = _as_float(_raw_value(diff.a, "delay_conf"))
+        a_conf = _as_float(_raw_value(diff.a, conf_key))
         b_val = _as_float(_raw_value(diff.b, descriptor))
-        b_conf = _as_float(_raw_value(diff.b, "delay_conf"))
+        b_conf = _as_float(_raw_value(diff.b, conf_key))
         present_a = a_val is not None and a_conf is not None and a_conf >= min_conf
         present_b = b_val is not None and b_conf is not None and b_conf >= min_conf
         if present_a and not present_b:
-            return True, {"delay_ms": a_val, "delay_conf": a_conf}
+            return True, {descriptor: a_val, conf_key: a_conf}
         return False, {}
 
     if op == "differs":
@@ -390,9 +501,11 @@ def _eval_simple(sub: dict[str, Any], diff: Diff, *, joint: bool) -> tuple[bool,
         return False, {}
 
     entry = diff.diffs.get(descriptor)
-    delta = entry["delta"] if entry is not None else None
-    if delta is None:
+    delta_raw = entry["delta"] if entry is not None else None
+    if delta_raw is None:
         return False, {}
+    assert isinstance(delta_raw, float)  # "delta" is always float|None; "unit" is the str field
+    delta = delta_raw
     value = float(sub["value"])
     if op == "delta_gt":
         fired = delta > value
@@ -422,9 +535,6 @@ def _eval_trigger(trigger: dict[str, Any], diff: Diff) -> tuple[bool, dict[str, 
     return _eval_simple(trigger, diff, joint=False)
 
 
-_TAIL_SENSITIVE_RULE_IDS = frozenset({11, 12})
-
-
 def fire_rules(diff: Diff, rules: list[Rule] | None = None) -> list[Intent]:
     """Evaluate every loaded rule against ``diff`` (mutating ``diff.notes`` with vocal-only-skip
     and complement-discount honesty strings as they occur) and return the fired
@@ -434,13 +544,16 @@ def fire_rules(diff: Diff, rules: list[Rule] | None = None) -> list[Intent]:
     - **vocal_only rules** (rule 13) are skipped entirely — never evaluated, never fired — when
       either side's ``source.stem_type`` isn't ``"vocals"`` (§15.3 note); a plain skip note is
       appended to ``diff.notes`` instead.
-    - **Tail-sensitive rules** (11, 12) that DO fire against a §6 R3 ``complement=True`` source
-      on either side have their ``apply_path`` forced to ``None`` (recommend-only) with a
-      discount note appended — a complement/residual stem inherits the tails of everything
-      subtracted from it, so its delay/reverb reading is not trustworthy enough to auto-apply.
-    - **Rule 10** (widen)'s ``apply_path`` always carries the LIVE
-      ``CFG.WIDEN_MONO_SAFETY_CORR_MIN`` (not whatever static number the JSON happens to embed),
-      so a recalibration takes effect without touching the data file.
+    - **tail_sensitive rules** (data-driven per-rule flag — rules 11/12 in the shipped file)
+      that DO fire against a §6 R3 ``complement=True`` source on either side have their
+      ``apply_path`` forced to ``None`` (recommend-only) with a discount note appended — a
+      complement/residual stem inherits the tails of everything subtracted from it, so its
+      delay/reverb reading is not trustworthy enough to auto-apply.
+    - **cfg_params rules** (data-driven per-rule map — rule 10 in the shipped file, ``{"apply"
+      key: CFG attribute name}``) have those ``apply_path`` keys overridden with the LIVE
+      :data:`~orpheus_mcp.analysis.config.CFG` attribute's current value (not whatever static
+      number the JSON happens to embed), so a recalibration takes effect without an engine
+      change or touching the data file.
     """
     rules = rules if rules is not None else _default_rules()
     intents: list[Intent] = []
@@ -461,10 +574,11 @@ def fire_rules(diff: Diff, rules: list[Rule] | None = None) -> list[Intent]:
             continue
 
         apply_path = dict(rule.apply) if rule.apply is not None else None
-        if rule.rule_id == 10 and apply_path is not None:
-            apply_path["mono_safety_corr_min"] = CFG.WIDEN_MONO_SAFETY_CORR_MIN
+        if apply_path is not None:
+            for apply_key, cfg_attr in rule.cfg_params.items():
+                apply_path[apply_key] = getattr(CFG, cfg_attr)
         if (
-            rule.rule_id in _TAIL_SENSITIVE_RULE_IDS
+            rule.tail_sensitive
             and apply_path is not None
             and (diff.a.source.complement or diff.b.source.complement)
         ):

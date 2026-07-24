@@ -98,7 +98,8 @@
         "width_from": "delta",
         "mono_safety_corr_min": 0.5
       },
-      "explanation": "Mid-band M/S width differs by {delta:+.2f}; a band-scoped widener closes it (mono-safety checked post-apply).",
+      "cfg_params": {"mono_safety_corr_min": "WIDEN_MONO_SAFETY_CORR_MIN"},
+      "explanation": "Mid-band M/S width differs by {delta:+.2f}; a band-scoped width adjustment (widen when the reference is wider, narrow when yours is) closes it (mono-safety checked post-apply).",
       "vocal_only": false,
       "inventory_keywords": ["width", "widen", "wider", "polyverse"]
     },
@@ -112,6 +113,7 @@
         "feedback_from": "reference",
         "mix_from": "reference"
       },
+      "tail_sensitive": true,
       "explanation": "An echo (~{delay_ms:.0f} ms in the reference, confidence {delay_conf:.2f}) is absent from the user's track; ReaDelay, snapped to the nearest musical division of the user's project, closes it.",
       "vocal_only": false,
       "inventory_keywords": ["delay", "echo", "readelay", "supermassive"]
@@ -132,6 +134,7 @@
         "size_from": "reverb_rt60_class",
         "mix_from": "reverb_wet_dry"
       },
+      "tail_sensitive": true,
       "explanation": "The reference is {reverb_wet_dry_delta:+.2f} wetter with a different decay class ({reverb_rt60_class_a} vs {reverb_rt60_class_b}); ReaVerb with a matched bundled IR closes it.",
       "vocal_only": false,
       "inventory_keywords": ["reverb", "valhalla", "dragonfly", "verb"]

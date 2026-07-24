@@ -139,7 +139,7 @@ class Intent(BaseModel):
     explanation: str; vocal_only_skipped: bool = False
     installed_matches: list[str] = []   # §8 step 2.1 — user's own plugins serving this intent (name-matched)
 class CharacterDiff(BaseModel):
-    diffs: dict[str, dict[str, float | None]]  # descriptor -> {a, b, delta}
+    diffs: dict[str, dict[str, float | str | None]]  # descriptor -> {a, b, delta, unit}  # unit added per §9 (review fix)
     intents: list[Intent]; band_limit_hz: float; notes: list[str]
 class LyricWord(BaseModel):   word: str; start_s: float; end_s: float; conf: float
 class LyricLine(BaseModel):   text: str; start_s: float; end_s: float; word_idx_range: tuple[int, int]

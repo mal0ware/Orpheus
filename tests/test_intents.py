@@ -24,6 +24,7 @@ from orpheus_mcp.analysis.descriptors import AudioSource, compute_character
 from orpheus_mcp.analysis.intents import (
     ALLOWED_DESCRIPTOR_KEYS,
     RulesError,
+    _descriptor_conf_key,
     diff_characters,
     fire_rules,
     load_rules,
@@ -131,6 +132,81 @@ def test_unknown_top_level_op_raises_rules_error(tmp_path):
         load_rules(path)
 
 
+def _one_rule_file(tmp_path: Path, name: str, rule_extra: dict | None = None) -> Path:
+    """A minimal well-formed one-rule file for load-time validation tests, ``rule_extra``
+    merged into the single rule entry (e.g. ``tail_sensitive``/``cfg_params`` overrides)."""
+    rule = {
+        "rule_id": 1,
+        "trigger": {"descriptor": "crest_db", "op": "delta_lt", "value": -1.0},
+        "intent": "test_intent",
+        "apply": {"plugin": "Test"},
+        "explanation": "n/a {delta:+.1f}",
+        "vocal_only": False,
+    }
+    if rule_extra:
+        rule.update(rule_extra)
+    path = tmp_path / name
+    path.write_text(json.dumps({"schema_version": 1, "rules": [rule]}), encoding="utf-8")
+    return path
+
+
+def test_missing_schema_version_raises_rules_error(tmp_path):
+    path = tmp_path / "no_schema.json"
+    path.write_text(json.dumps({"rules": []}), encoding="utf-8")
+    with pytest.raises(RulesError, match="schema_version"):
+        load_rules(path)
+
+
+def test_unknown_schema_version_raises_rules_error(tmp_path):
+    path = tmp_path / "bad_schema.json"
+    path.write_text(json.dumps({"schema_version": 999, "rules": []}), encoding="utf-8")
+    with pytest.raises(RulesError, match="schema_version"):
+        load_rules(path)
+
+
+def test_unknown_cfg_params_attribute_raises_rules_error(tmp_path):
+    path = _one_rule_file(
+        tmp_path, "bad_cfg.json", {"cfg_params": {"foo": "NOT_A_REAL_CFG_ATTR"}}
+    )
+    with pytest.raises(RulesError, match="cfg_params"):
+        load_rules(path)
+
+
+def test_non_bool_tail_sensitive_raises_rules_error(tmp_path):
+    path = _one_rule_file(tmp_path, "bad_tail.json", {"tail_sensitive": "yes"})
+    with pytest.raises(RulesError, match="tail_sensitive"):
+        load_rules(path)
+
+
+# --------------------------------------------------------------------------- #
+# §9 contract: every diffs entry carries {a, b, delta, unit}
+# --------------------------------------------------------------------------- #
+
+
+def test_diff_entry_carries_db_unit():
+    a, b = _pair("crest_db", 0.0, 4.1, "dynamics")
+    diff = diff_characters(a, b)
+    assert diff.diffs["crest_db"]["unit"] == "db"
+
+
+def test_diff_entry_carries_ms_unit():
+    a, b = _pair("attack_ms_p50", 5.1, 0.0, "dynamics")
+    diff = diff_characters(a, b)
+    assert diff.diffs["attack_ms_p50"]["unit"] == "ms"
+
+
+def test_diff_entry_carries_ratio_unit():
+    a, b = _pair("width_mid", 0.11, 0.0, "stereo")
+    diff = diff_characters(a, b)
+    assert diff.diffs["width_mid"]["unit"] == "ratio"
+
+
+def test_diff_entry_carries_db_unit_for_spectral_band():
+    a, b = _pair("band_2000_5000_db", 3.1, 0.0, "spectral")
+    diff = diff_characters(a, b)
+    assert diff.diffs["band_2000_5000_db"]["unit"] == "db"
+
+
 # --------------------------------------------------------------------------- #
 # The 14 exact-boundary rule tests (§10/§12 slice-10 bar)
 # --------------------------------------------------------------------------- #
@@ -212,6 +288,23 @@ def test_rule10_widen_boundary_and_mono_safety_from_cfg():
 
     no_a, no_b = _pair("width_mid", 0.09, 0.0, "stereo")
     assert 10 not in _fired_ids(no_a, no_b)
+
+
+def test_rule10_widen_explanation_is_direction_aware():
+    """Review fix: rule 10's explanation used to unconditionally say "a widener closes it"
+    even when the USER's track is the wider one (negative delta) — direction-blind. It must
+    now hedge on direction the same way rule 6's transient-snap explanation does (mentions
+    both directions rather than asserting one)."""
+    # reference NARROWER than user -> delta = a - b is NEGATIVE (the user is the wider side).
+    a, b = _pair("width_mid", 0.0, 0.11, "stereo")
+    intents = fire_rules(diff_characters(a, b))
+    fired = {i.rule_id: i for i in intents}
+    assert 10 in fired
+    assert fired[10].params["delta"] == pytest.approx(-0.11)
+    explanation = fired[10].explanation.lower()
+    # a direction-blind explanation would only ever say "widen" — this must hedge both ways.
+    assert "widen" in explanation
+    assert "narrow" in explanation
 
 
 def test_rule11_delay_present_in_reference_only_boundary():
@@ -309,6 +402,88 @@ def test_complement_forces_rule11_and_rule12_recommend_only():
     assert fired[12].apply_path is None
     assert any("complement" in n and "rule 11" in n for n in diff.notes)
     assert any("complement" in n and "rule 12" in n for n in diff.notes)
+
+
+# --------------------------------------------------------------------------- #
+# Review fix: tail_sensitive / cfg_params are DATA-DRIVEN per-rule flags now, not engine-
+# hardcoded rule-id special cases — a fabricated rules file exercises both on a rule id other
+# than the shipped file's 10/11/12, proving the engine reads the flags, not the id.
+# --------------------------------------------------------------------------- #
+
+
+def test_tail_sensitive_flag_is_data_driven(tmp_path):
+    custom = {
+        "schema_version": 1,
+        "rules": [
+            {
+                "rule_id": 1,
+                "trigger": {"descriptor": "crest_db", "op": "delta_lt", "value": -1.0},
+                "intent": "custom_tail_sensitive",
+                "apply": {"plugin": "Test"},
+                "explanation": "n/a {delta:+.1f}",
+                "vocal_only": False,
+                "tail_sensitive": True,
+            }
+        ],
+    }
+    path = tmp_path / "tail_rules.json"
+    path.write_text(json.dumps(custom), encoding="utf-8")
+    rules = load_rules(path)
+
+    a = _char(complement=True, dynamics={"crest_db": 0.0})
+    b = _char(dynamics={"crest_db": 5.0})
+    diff = diff_characters(a, b)
+    intents = fire_rules(diff, rules=rules)
+    fired = {i.rule_id: i for i in intents}
+    assert 1 in fired
+    assert fired[1].apply_path is None
+    assert any("complement" in n and "rule 1" in n for n in diff.notes)
+
+    # without complement=True on either side, the same rule applies normally.
+    a2 = _char(dynamics={"crest_db": 0.0})
+    b2 = _char(dynamics={"crest_db": 5.0})
+    intents2 = fire_rules(diff_characters(a2, b2), rules=rules)
+    assert intents2[0].apply_path is not None
+
+
+def test_cfg_params_flag_is_data_driven(tmp_path):
+    custom = {
+        "schema_version": 1,
+        "rules": [
+            {
+                "rule_id": 1,
+                "trigger": {"descriptor": "width_mid", "op": "abs_delta_gt", "value": 0.10},
+                "intent": "custom_widen",
+                "apply": {"plugin": "Test", "mono_safety_corr_min": 0.0},
+                "explanation": "n/a {delta:+.2f}",
+                "vocal_only": False,
+                "cfg_params": {"mono_safety_corr_min": "WIDEN_MONO_SAFETY_CORR_MIN"},
+            }
+        ],
+    }
+    path = tmp_path / "cfg_rules.json"
+    path.write_text(json.dumps(custom), encoding="utf-8")
+    rules = load_rules(path)
+
+    a, b = _pair("width_mid", 0.11, 0.0, "stereo")
+    intents = fire_rules(diff_characters(a, b), rules=rules)
+    fired = {i.rule_id: i for i in intents}
+    assert 1 in fired
+    # the JSON literal (0.0) must be overridden by the LIVE CFG value, not passed through.
+    assert fired[1].apply_path["mono_safety_corr_min"] == CFG.WIDEN_MONO_SAFETY_CORR_MIN
+    assert fired[1].apply_path["mono_safety_corr_min"] != 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Review fix: present_in_a_only derives its confidence-field key from the trigger's own
+# descriptor, not a hardcoded "delay_conf" literal.
+# --------------------------------------------------------------------------- #
+
+
+def test_descriptor_conf_key_strips_unit_suffix():
+    assert _descriptor_conf_key("delay_ms") == "delay_conf"
+    assert _descriptor_conf_key("rolloff_hz") == "rolloff_conf"
+    assert _descriptor_conf_key("crest_db") == "crest_conf"
 
 
 # --------------------------------------------------------------------------- #

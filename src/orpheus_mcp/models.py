@@ -464,17 +464,19 @@ class CharacterDiff(BaseModel):
     both sides (excluding string/bool-typed fields like ``flavor``/``mod_class``/
     ``reverb_rt60_class``/``delay_approx``/``reverb_approx``, which the fixed §15.3 rules read
     directly off the source :class:`SoundCharacter` objects instead) to ``{"a": ..., "b": ...,
-    "delta": a - b}`` — spectral (``band_*_db``) keys whose upper edge exceeds
-    ``band_limit_hz`` are excluded entirely (§8 mandatory normalization: comparing a
-    full-bandwidth render against a codec-limited reference outside their common band reads
-    the render as systematically 'darker', misfiring rules 3/5). ``intents`` are every §15.3
-    rule that fired, in rule-id order. ``band_limit_hz`` is ``min(a.source.bandwidth_hz,
-    b.source.bandwidth_hz)`` (or whichever side measured a bandwidth, or the Nyquist ceiling
-    if neither did) — always recorded, per §8, so Claude can say 'compared up to 16 kHz
-    (mp3-limited)'. ``notes`` carries the band-limit statement plus any vocal-only-skip /
-    complement-discount honesty strings the engine emitted."""
+    "delta": a - b, "unit": ...}`` (§9 contract) — spectral (``band_*_db``) keys whose upper
+    edge exceeds ``band_limit_hz`` are excluded entirely (§8 mandatory normalization: comparing
+    a full-bandwidth render against a codec-limited reference outside their common band reads
+    the render as systematically 'darker', misfiring rules 3/5). ``unit`` is a fixed string
+    (``"db"``/``"ms"``/``"hz"``/``"ratio"``/``"unitless"``/``"db_per_oct"``) looked up per
+    descriptor by ``analysis.intents``'s module-level unit map — never inferred from the value.
+    ``intents`` are every §15.3 rule that fired, in rule-id order. ``band_limit_hz`` is
+    ``min(a.source.bandwidth_hz, b.source.bandwidth_hz)`` (or whichever side measured a
+    bandwidth, or the Nyquist ceiling if neither did) — always recorded, per §8, so Claude can
+    say 'compared up to 16 kHz (mp3-limited)'. ``notes`` carries the band-limit statement plus
+    any vocal-only-skip / complement-discount honesty strings the engine emitted."""
 
-    diffs: dict[str, dict[str, float | None]] = Field(default_factory=dict)
+    diffs: dict[str, dict[str, float | str | None]] = Field(default_factory=dict)
     intents: list[Intent] = Field(default_factory=list)
     band_limit_hz: float
     notes: list[str] = Field(default_factory=list)
@@ -556,9 +558,7 @@ class FeatureDelta(BaseModel):
     measured: float | str | None = Field(
         default=None, description="What the project actually measures."
     )
-    target: float | str | None = Field(
-        default=None, description="What the fingerprint expects."
-    )
+    target: float | str | None = Field(default=None, description="What the fingerprint expects.")
     matches: bool
     explanation: str = Field(..., description="The delta in plain English, numbers included.")
 
@@ -617,7 +617,7 @@ class ProposedEdit(BaseModel):
 class EditPlan(BaseModel):
     """The output of `recommend_changes` (read-only) and the input to `apply_changes` (gated)."""
 
-    intent: str = Field(..., description="e.g. \"make this sound Classical\".")
+    intent: str = Field(..., description='e.g. "make this sound Classical".')
     target_style: str | None = None
     edits: list[ProposedEdit] = Field(default_factory=list)
     caveats: list[str] = Field(
