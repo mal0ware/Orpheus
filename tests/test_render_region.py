@@ -107,11 +107,31 @@ def test_render_settings_restored_after_render(client, project, tmp_path):
 
 def test_second_concurrent_render_errors_busy(client, project, tmp_path):
     # Simulate a render already in flight (the bridge-side non-reentrant mutex is held).
+    # NOTE: this presets the flag rather than actually overlapping two concurrent calls —
+    # the fake bridge is synchronous (no threading), so true overlap isn't reachable here.
+    # The unit under test is the boolean guard itself (`if project.render_mutex_held: raise`),
+    # which this preset exercises directly; this is a disclosure, not a redesign.
     project.render_mutex_held = True
     with pytest.raises(BridgeError, match="render busy"):
         _render(client, tmp_path)
     # The in-flight render's mutex must NOT have been cleared by the refused call.
     assert project.render_mutex_held is True
+
+
+def test_unresolved_track_fails_before_any_state_mutation(client, project, tmp_path):
+    # An invalid track reference must fail BEFORE the solo-clear loop or any other render
+    # state mutation (§15.2) — resolving the track is now checked (tuple-form) ahead of the
+    # clear-all-solos step rather than discarded, so a bad track name can't leave stray state.
+    t1, t2, t3 = project.tracks
+    before_solos = (t1.i_solo, t2.i_solo, t3.i_solo)
+    before_master_fxen = project.master_fxen
+    before_time_sel = project.time_sel
+    with pytest.raises(BridgeError, match="no track named"):
+        _render(client, tmp_path, track="does-not-exist")
+    assert (t1.i_solo, t2.i_solo, t3.i_solo) == before_solos
+    assert project.master_fxen == before_master_fxen
+    assert project.time_sel == before_time_sel
+    assert project.render_mutex_held is False
 
 
 def test_silent_render_raises_and_still_restores(client, project, tmp_path):

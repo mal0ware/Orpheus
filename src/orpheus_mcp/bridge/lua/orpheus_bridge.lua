@@ -721,14 +721,36 @@ end
 -- Step 7: the render must have produced a real, non-silent file. Digital silence
 -- (all-zero samples) is the tell-tale of a render that captured nothing — the exact
 -- symptom of a botched solo/routing setup, which is why §15.2 demands this assertion.
+--
+-- Data-chunk-aware, NOT a fixed 44-byte header skip: a canonical 16-byte-fmt PCM WAV
+-- happens to put "data" right at byte 45, but REAPER's real 32-bit-float render carries
+-- an extra "fact" chunk (and often a larger fmt chunk) BEFORE "data", pushing the payload
+-- further out. A fixed skip would then scan into tail bytes of the header/fact chunk as
+-- if it were audio — which could read a genuinely silent render as non-silent and defeat
+-- this exact assertion. So we scan for the "data" marker itself, read its 4-byte
+-- little-endian size, and only inspect that declared payload.
+-- verify live: confirm this chunk walk against a real REAPER "WAV / 32 bit FP" render —
+-- the fake/lupa tests exercise the parser logic but never touch a real REAPER file.
 local function assert_rendered_nonsilent(path)
   local f = io.open(path, "rb")
   if not f then err("render produced no file: " .. path) end
   local data = f:read("*a")
   f:close()
   if not data or #data == 0 then err("render produced an empty file: " .. path) end
-  -- Skip the 44-byte canonical WAV header; scan the PCM payload for any non-zero byte.
-  local payload = data:sub(45)
+  -- Search from byte 13 — past the fixed 12-byte "RIFF"<size>"WAVE" preamble — so we don't
+  -- match a stray "data" substring inside that fixed region (there isn't one, but be precise).
+  local marker_pos = data:find("data", 13, true)
+  if not marker_pos then
+    err("unrecognized WAV layout (no 'data' chunk found): " .. path)
+  end
+  local size_pos = marker_pos + 4
+  local b1, b2, b3, b4 = data:byte(size_pos, size_pos + 3)
+  if not (b1 and b2 and b3 and b4) then
+    err("unrecognized WAV layout (truncated 'data' chunk size): " .. path)
+  end
+  local data_size = b1 + b2 * 256 + b3 * 65536 + b4 * 16777216
+  local payload_start = size_pos + 4
+  local payload = data:sub(payload_start, payload_start + data_size - 1)
   if #payload == 0 then err("render is silent (no audio payload): " .. path) end
   for i = 1, #payload do
     if payload:byte(i) ~= 0 then return end
@@ -741,9 +763,10 @@ HANDLERS.render_track_region = function(p)
   if RENDER_MUTEX_HELD then return err("render busy") end          -- §15.2 serialization
   RENDER_MUTEX_HELD = true
   local ok, result = pcall(function()
-    if reaper.GetPlayState() ~= 0 then error("transport is playing/recording") end  -- step 1
+    if reaper.GetPlayState() ~= 0 then error("transport is playing/recording", 0) end  -- step 1
     local snap = snapshot_render_state()   -- RENDER_* via GetSetProjectInfo(+_String), ALL track I_SOLO, master FX bypass
-    local tr = resolve_track(p.track)
+    local tr, rerr = resolve_track(p.track)                         -- fail BEFORE any state mutation below
+    if not tr then error(rerr, 0) end
     for i = 0, reaper.CountTracks(0) - 1 do                         -- step 3: clear ALL solos first
       reaper.SetMediaTrackInfo_Value(reaper.GetTrack(0, i), "I_SOLO", 0)
     end

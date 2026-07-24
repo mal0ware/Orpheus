@@ -57,10 +57,40 @@ local function find_track(t)
   for _, tr in ipairs(proj.tracks) do if tr == t then return tr end end
 end
 
+local function u32le(n)
+  return string.char(n % 256, math.floor(n / 256) % 256,
+    math.floor(n / 65536) % 256, math.floor(n / 16777216) % 256)
+end
+
+-- A canonical 16-byte-fmt PCM WAV: RIFF/WAVE + "fmt " (16 bytes) + "data" right at byte 37,
+-- i.e. the payload starts at the fixed byte 45 a naive header-skip assumes AND where the
+-- data-chunk-aware scan finds it too — this is the case where both approaches agree.
 local function write_fake_wav(path, nonsilent)
+  local payload = nonsilent and string.rep("\1", 128) or string.rep("\0", 128)
+  local fmt_data = string.rep("F", 16)   -- fmt chunk body — contents irrelevant to the scan
   local f = assert(io.open(path, "wb"))
-  f:write(string.rep("H", 44))                                  -- 44-byte header (skipped by the assert)
-  f:write(nonsilent and string.rep("\1", 128) or string.rep("\0", 128))  -- payload / digital silence
+  f:write("RIFF")
+  f:write(u32le(4 + (8 + #fmt_data) + (8 + #payload)))
+  f:write("WAVE")
+  f:write("fmt "); f:write(u32le(#fmt_data)); f:write(fmt_data)
+  f:write("data"); f:write(u32le(#payload)); f:write(payload)
+  f:close()
+end
+
+-- A REAPER-realistic 32-bit-float WAV layout: RIFF/WAVE + "fmt " (18-byte IEEE-float fmt
+-- chunk) + a "fact" chunk BEFORE "data" — i.e. "data" is NOT at the fixed byte 45 a naive
+-- 44-byte header skip assumes. Proves the data-chunk-aware scan finds "data" regardless.
+local function write_fake_wav_ext(path, nonsilent)
+  local payload = nonsilent and string.rep("\1", 128) or string.rep("\0", 128)
+  local fmt_data = string.rep("F", 18)   -- fmt chunk body — contents irrelevant to the scan
+  local fact_data = string.rep("N", 4)   -- fact chunk body — contents irrelevant to the scan
+  local f = assert(io.open(path, "wb"))
+  f:write("RIFF")
+  f:write(u32le(4 + (8 + #fmt_data) + (8 + #fact_data) + (8 + #payload)))
+  f:write("WAVE")
+  f:write("fmt "); f:write(u32le(#fmt_data)); f:write(fmt_data)
+  f:write("fact"); f:write(u32le(#fact_data)); f:write(fact_data)
+  f:write("data"); f:write(u32le(#payload)); f:write(payload)
   f:close()
 end
 
@@ -118,7 +148,11 @@ reaper = {
       local target
       for _, tr in ipairs(proj.tracks) do if tr.i_solo == 2 then target = tr end end
       local path = (proj.render.RENDER_FILE or TMP) .. "/" .. (proj.render.RENDER_PATTERN or "out") .. ".wav"
-      write_fake_wav(path, target ~= nil and target.has_items)
+      if proj.use_ext_header then
+        write_fake_wav_ext(path, target ~= nil and target.has_items)
+      else
+        write_fake_wav(path, target ~= nil and target.has_items)
+      end
     end
   end,
 }
@@ -208,6 +242,48 @@ local pe = call("render_track_region", { track = "1", start_s = 0.0, end_s = 1.0
 eq(pe.ok, false, "render while playing -> ok=false")
 ok(tostring(pe.error):find("playing"), "error mentions transport playing")
 proj.play_state = 0
+
+-- --------------------------------------------------------------------------- --
+-- 4. Extended-header WAV (fake "fact" chunk before "data", as REAPER's real 32-bit-float
+--    render produces) with a SILENT payload -> the data-chunk-aware scan must still find
+--    the real "data" marker and trip the silence error, not misread fmt/fact bytes as audio
+--    (the exact bug a fixed 44-byte header skip has: it would land inside the fact chunk's
+--    non-zero filler and could read a genuinely silent render as non-silent).
+-- --------------------------------------------------------------------------- --
+proj.commands = {}
+proj.use_ext_header = true
+local bn4 = "render_ext_silent_" .. tostring(os.time())
+local e4 = call("render_track_region", { track = "3", start_s = 0.0, end_s = 1.0,
+  out_dir = TMP, basename = bn4 })
+eq(e4.ok, false, "extended-header silent render -> ok=false")
+ok(tostring(e4.error):find("silent"), "extended-header error message mentions 'silent'")
+proj.use_ext_header = false
+os.remove(TMP .. "/" .. bn4 .. ".wav")
+
+-- --------------------------------------------------------------------------- --
+-- 5. Unresolved track: must fail BEFORE any state mutation (§15.2) — the tuple-checked
+--    resolve_track() now runs (and errors) before the solo-clear loop, master-FX bypass,
+--    render-target write, and Main_OnCommand dispatch, so nothing below it ever executes.
+-- --------------------------------------------------------------------------- --
+proj.commands = {}
+local pre_solos = {}
+for i, tr in ipairs(proj.tracks) do pre_solos[i] = tr.i_solo end
+local pre_master_fxen = proj.master.i_fxen
+local pre_render_file = proj.render.RENDER_FILE
+local pre_time_sel_s, pre_time_sel_e = proj.time_sel_s, proj.time_sel_e
+
+local ue = call("render_track_region", { track = "does-not-exist", start_s = 0.0, end_s = 1.0,
+  out_dir = TMP, basename = "should_not_write2" })
+eq(ue.ok, false, "unresolved track -> ok=false")
+ok(tostring(ue.error):find("no track"), "error mentions unresolved track")
+ok(not has_command(42230), "unresolved track: render was never dispatched")
+for i, tr in ipairs(proj.tracks) do
+  eq(tr.i_solo, pre_solos[i], "unresolved track: solo state untouched on track " .. i)
+end
+eq(proj.master.i_fxen, pre_master_fxen, "unresolved track: master FX untouched")
+eq(proj.render.RENDER_FILE, pre_render_file, "unresolved track: RENDER_FILE untouched")
+eq(proj.time_sel_s, pre_time_sel_s, "unresolved track: time selection start untouched")
+eq(proj.time_sel_e, pre_time_sel_e, "unresolved track: time selection end untouched")
 
 print(string.format("lua render handlers: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

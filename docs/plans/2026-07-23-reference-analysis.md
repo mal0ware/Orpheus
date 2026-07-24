@@ -684,9 +684,10 @@ handlers.render_track_region = function(p)
   if RENDER_MUTEX_HELD then return err("render busy") end          -- §15.2 serialization
   RENDER_MUTEX_HELD = true
   local ok, result = pcall(function()
-    if reaper.GetPlayState() ~= 0 then error("transport is playing/recording") end  -- step 1 (default: error)
+    if reaper.GetPlayState() ~= 0 then error("transport is playing/recording", 0) end  -- step 1 (default: error)
     local snap = snapshot_render_state()   -- RENDER_* via GetSetProjectInfo(+_String), ALL track I_SOLO, master FX bypass
-    local tr = resolve_track(p.track)
+    local tr, rerr = resolve_track(p.track)  -- (fixed in review: tuple check + fail-before-mutation)
+    if not tr then error(rerr, 0) end
     for i = 0, reaper.CountTracks(0) - 1 do                         -- step 3: clear ALL solos first
       reaper.SetMediaTrackInfo_Value(reaper.GetTrack(0, i), "I_SOLO", 0)
     end
