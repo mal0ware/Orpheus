@@ -120,7 +120,9 @@ class BeatGrid(BaseModel):
     between the winning {3,4}-group correlation and the runner-up, i.e. how decisively the
     meter itself (not the grid alignment) was picked — a track can have a rock-solid grid
     (high ``confidence``) with an ambiguous meter (low ``meter_confidence``), e.g. an
-    unaccented uniform click train."""
+    unaccented uniform click train. Calibration caveat: on real mixes this margin reads
+    low (~0.05-0.16 measured on the fixture set) even when the picked meter is correct —
+    treat it as a decisiveness signal, never a correctness signal."""
 
     times_s: list[float]
     downbeats_s: list[float]
