@@ -49,6 +49,23 @@ class FakeTake:
 
 
 @dataclass
+class FakeFxInstance:
+    """One FX loaded on a track's chain, for the Task 11.1 add/set/get FX verbs.
+
+    ``params`` holds only EXPLICITLY-SET normalized (0..1) values, keyed by param index —
+    a fresh FX reports no params set yet (mirrors a real plugin's compiled-in defaults,
+    which this fake does not model). ``num_params`` is a floor on how many params
+    ``get_fx_params`` enumerates; it grows automatically to cover any index that has been
+    set (see ``get_fx_params`` below), the same way a real FX's param count is fixed at
+    load time but this fake doesn't need to know it up front.
+    """
+
+    name: str
+    params: dict[int, float] = field(default_factory=dict)
+    num_params: int = 4
+
+
+@dataclass
 class FakeTrack:
     guid: str
     name: str = ""
@@ -58,6 +75,10 @@ class FakeTrack:
     solo: bool = False
     takes: list[FakeTake] = field(default_factory=list)
     fx: list[str] = field(default_factory=list)
+    # The Task 11.1 FX chain (add_fx_by_name / set_fx_param / get_fx_params) — kept
+    # separate from `fx` (which add_instrument/list_tracks use) so this task's additions
+    # never touch that established behavior.
+    fx_chain: list[FakeFxInstance] = field(default_factory=list)
     # I_SOLO as REAPER models it: 0=off, 1=solo, 2=solo-in-place (SIP). Kept distinct from
     # the `solo` bool (which list_tracks reports) because render_track_region round-trips
     # the exact 0/1/2 value and asserts SIP (=2) on the target during a render (§15.2).
@@ -322,6 +343,38 @@ def make_handlers(project: FakeReaperProject) -> dict:
         project.markers.append(entry)
         return {"name": entry["name"], "bar": entry["bar"], "index": len(project.markers)}
 
+    # -- FX verbs (§8 step 3, Task 11.1) -- the executable spec for the Lua handlers ---- #
+
+    def add_fx_by_name(p):
+        tr = project.resolve_track(p["track"])
+        name = p["name"]
+        for i, existing_fx in enumerate(tr.fx_chain):
+            if existing_fx.name == name:
+                return {"track": tr.guid, "fx_index": i, "already_present": True}
+        tr.fx_chain.append(FakeFxInstance(name=name))
+        return {"track": tr.guid, "fx_index": len(tr.fx_chain) - 1, "already_present": False}
+
+    def set_fx_param(p):
+        tr = project.resolve_track(p["track"])
+        fx_index = int(p["fx_index"])
+        if not (0 <= fx_index < len(tr.fx_chain)):
+            raise ValueError(f"fx index out of range: {fx_index}")
+        tr.fx_chain[fx_index].params[int(p["param_index"])] = float(p["value"])
+        return {"ok": True}
+
+    def get_fx_params(p):
+        tr = project.resolve_track(p["track"])
+        fx_index = int(p["fx_index"])
+        if not (0 <= fx_index < len(tr.fx_chain)):
+            raise ValueError(f"fx index out of range: {fx_index}")
+        fx = tr.fx_chain[fx_index]
+        count = max(fx.num_params, (max(fx.params) + 1) if fx.params else 0)
+        params = [
+            {"index": i, "name": f"param{i}", "value": fx.params.get(i, 0.0)}
+            for i in range(count)
+        ]
+        return {"fx_name": fx.name, "params": params}
+
     # -- render_track_region (§15.2) — the executable spec for the Lua handler ------ #
 
     def _render_snapshot():
@@ -414,6 +467,9 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "list_installed_fx": list_installed_fx,
         "add_instrument": add_instrument,
         "add_marker": add_marker,
+        "add_fx_by_name": add_fx_by_name,
+        "set_fx_param": set_fx_param,
+        "get_fx_params": get_fx_params,
         "render_track_region": render_track_region,
     }
 

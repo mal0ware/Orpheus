@@ -41,7 +41,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
     "default": (
         "bridge", "project", "transport", "tracks", "midi",
         "theory", "analyze", "style", "apply", "render",
-        "instruments", "compose", "arrange", "reference",
+        "instruments", "compose", "arrange", "reference", "mix",
     ),
     "full": tuple(_CATEGORY_IMPORTS.keys()),
 }

@@ -579,6 +579,55 @@ HANDLERS.add_instrument = function(p)
   return { track = reaper.GetTrackGUID(tr), loaded = p.name, already_present = false }
 end
 
+-- --------------------------------------------------------------------------- --
+-- FX verbs (§8 step 3, Task 11.1) — add_fx_by_name / set_fx_param / get_fx_params.
+-- Locked contracts (docs/plans/2026-07-23-reference-analysis.md Task 11.1): unit/range
+-- mapping lives PYTHON-side (tools/mix.py + data/fx_param_maps.json); these handlers only
+-- speak REAPER's native 0..1 normalized param space.
+-- --------------------------------------------------------------------------- --
+
+-- Add an FX to a track BY NAME, probe-first (idempotent) — the exact same
+-- find-then-add pattern as add_instrument's drumkit fix above, generalized to any FX.
+HANDLERS.add_fx_by_name = function(p)
+  local tr, err = resolve_track(p.track)
+  if not tr then error(err) end
+  local existing = reaper.TrackFX_AddByName(tr, p.name, false, 0)  -- 0 = find only
+  if existing >= 0 then
+    return { track = reaper.GetTrackGUID(tr), fx_index = existing, already_present = true }
+  end
+  local added = reaper.TrackFX_AddByName(tr, p.name, false, -1)  -- -1 = add
+  if added < 0 then error("could not add fx: " .. tostring(p.name)) end
+  return { track = reaper.GetTrackGUID(tr), fx_index = added, already_present = false }
+end
+
+-- Set one FX param, NORMALIZED 0..1 (REAPER native). All dB/Hz/ms/ratio translation
+-- happens python-side, via data/fx_param_maps.json — this handler never sees real units.
+HANDLERS.set_fx_param = function(p)
+  local tr, err = resolve_track(p.track)
+  if not tr then error(err) end
+  local ok = reaper.TrackFX_SetParamNormalized(tr, p.fx_index, p.param_index, p.value)
+  if ok == false then
+    error("could not set fx " .. tostring(p.fx_index) .. " param " .. tostring(p.param_index))
+  end
+  return { ok = true }
+end
+
+-- Read back an FX's full param list, NORMALIZED 0..1 — name + value only; the
+-- unit/min/max/native-value mapping is applied python-side against the param map.
+HANDLERS.get_fx_params = function(p)
+  local tr, err = resolve_track(p.track)
+  if not tr then error(err) end
+  local _, fx_name = reaper.TrackFX_GetFXName(tr, p.fx_index, "")
+  local n = reaper.TrackFX_GetNumParams(tr, p.fx_index)
+  local params = {}
+  for i = 0, n - 1 do
+    local _, pname = reaper.TrackFX_GetParamName(tr, p.fx_index, i, "")
+    local val = reaper.TrackFX_GetParamNormalized(tr, p.fx_index, i)
+    params[#params + 1] = { index = i, name = pname, value = val }
+  end
+  return { fx_name = fx_name or "", params = params }
+end
+
 -- Place a named project marker at the start of a bar.
 HANDLERS.add_marker = function(p)
   -- NOTE (verify live): AddProjectMarker2(proj, isrgn, pos, rgnend, name, wantidx, color)

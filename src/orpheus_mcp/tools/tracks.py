@@ -36,19 +36,5 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         'L50', 'center')."""
         raise NotImplementedError("M1 (FX/mix) — see docs/roadmap.md")
 
-    @mcp.tool(annotations=_DESTRUCTIVE)
-    def add_fx_by_name(track: str, fx_name: str) -> dict:
-        """[NOT IMPLEMENTED] Add an FX by fuzzy name, VALIDATED against the
-        installed-plugin inventory.
-
-        On a no-match returns a graceful "not found — here's how to install it" message
-        rather than silently loading the wrong plugin (the bug all three live servers have).
-        Orpheus never auto-installs plugins.
-        """
-        raise NotImplementedError("M1 (FX) — see docs/roadmap.md")
-
-    @mcp.tool(annotations=_DESTRUCTIVE)
-    def set_fx_param(track: str, fx: str, param: str, value: float) -> dict:
-        """[NOT IMPLEMENTED] Set an FX parameter with name→index resolution (so 'ratio'
-        works, not just index 7)."""
-        raise NotImplementedError("M1 (FX) — see docs/roadmap.md")
+    # add_fx_by_name / set_fx_param graduated to real implementations in
+    # orpheus_mcp.tools.mix (Task 11.1, §8 step 3) — no longer stubbed here.

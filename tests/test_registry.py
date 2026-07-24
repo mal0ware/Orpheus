@@ -73,6 +73,10 @@ IMPLEMENTED = {
     "compare_character",
     "transcribe_lyrics",
     "locate_lyric",
+    # mix (Task 11.1 — §8 step 3 FX apply verbs)
+    "add_fx_by_name",
+    "set_fx_param",
+    "get_fx_params",
 }
 
 
@@ -169,6 +173,21 @@ def test_reference_in_default_and_full_not_explain():
     assert "reference" in register_tools(m_full, profile="full")
     m_explain = FastMCP(name="t")
     assert "reference" not in register_tools(m_explain, profile="explain")
+
+
+def test_mix_in_default_profile():
+    from fastmcp import FastMCP
+
+    from orpheus_mcp.registry import register_tools
+
+    mcp = FastMCP(name="t")
+    cats = register_tools(mcp, profile="default")
+    assert "mix" in cats
+
+
+async def test_mix_tools_registered_and_implemented():
+    names = {t.name for t in await _tool_list("default")}
+    assert {"add_fx_by_name", "set_fx_param", "get_fx_params"} <= names
 
 
 def test_reference_skipped_with_warning_when_librosa_missing(monkeypatch):

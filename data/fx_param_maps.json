@@ -1,0 +1,69 @@
+{
+  "_notes": "v1 param map for the §8 step 3 FX apply loop (Task 11.1). Every entry's index/unit/min/max is the BEST DOCUMENTED value from REAPER's public ReaPlugs/JSFX param-order conventions -- none of it has been confirmed against a live REAPER instance yet, hence 'live_verified': false throughout (the <PIN_BEFORE_SHIP> lesson). The Task 11.1/15 HUMAN live smoke flips confirmed entries to true one at a time; an entry that turns out wrong gets corrected in place, not silently trusted. JSFX plugin NAMES (not just their param indices) are also unverified against a real REAPER install -- TrackFX_AddByName may need a different exact string (e.g. a 'JS: ' prefix or a category-qualified path) once checked live. Unmapped plugins/params never get a guessed index -- tools/mix.py routes them to the human-instructions path instead.",
+  "_to_normalized_formulas": {
+    "linear": "norm = (value - min) / (max - min)",
+    "log": "norm = log(value / min) / log(max / min)  -- for frequency-type (Hz) params, which are perceived/tapered in octaves, not linearly"
+  },
+  "ReaEQ": {
+    "notes": "ReaEQ's params are PER-BAND and dynamically added (band N adds a new {type, freq, gain, Q} quad) -- there is no fixed global param list. This map covers ONLY band 1 (params 0-2 below) and assumes band 1 is already present and configured as a bell/peak filter (type is left alone, never set by the apply layer). Applying an intent to ReaEQ via this map means: add the FX (band 1 exists by default on a fresh ReaEQ instance), then set band 1's freq/gain/Q. Multi-band chains are out of scope for v1.",
+    "params": {
+      "freq": {"index": 0, "unit": "hz", "min": 20.0, "max": 20000.0, "to_normalized": "log", "live_verified": false},
+      "gain": {"index": 1, "unit": "db", "min": -24.0, "max": 24.0, "to_normalized": "linear", "live_verified": false},
+      "q": {"index": 2, "unit": "q", "min": 0.1, "max": 10.0, "to_normalized": "linear", "live_verified": false}
+    }
+  },
+  "ReaComp": {
+    "notes": "Single-band stock compressor. Params below cover the core dynamics knobs the §8 apply loop needs (rule 7: crest-factor-driven ratio/attack).",
+    "params": {
+      "threshold": {"index": 0, "unit": "db", "min": -60.0, "max": 12.0, "to_normalized": "linear", "live_verified": false},
+      "ratio": {"index": 1, "unit": "ratio", "min": 1.0, "max": 20.0, "to_normalized": "linear", "live_verified": false},
+      "attack": {"index": 2, "unit": "ms", "min": 0.01, "max": 500.0, "to_normalized": "linear", "live_verified": false},
+      "release": {"index": 3, "unit": "ms", "min": 10.0, "max": 5000.0, "to_normalized": "linear", "live_verified": false},
+      "makeup_gain": {"index": 4, "unit": "db", "min": -24.0, "max": 24.0, "to_normalized": "linear", "live_verified": false}
+    }
+  },
+  "ReaDelay": {
+    "notes": "ReaDelay is a multi-tap stutter/echo effect in its full UI; this map covers only the single primary tap's time/feedback/level -- enough for a plain slap/echo intent (§8 rule apply: {\"plugin\": \"ReaDelay\", \"time_ms\": 28, \"feedback\": 0.25}).",
+    "params": {
+      "time": {"index": 0, "unit": "ms", "min": 0.0, "max": 3000.0, "to_normalized": "linear", "live_verified": false},
+      "feedback": {"index": 1, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": false},
+      "level": {"index": 2, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": false}
+    }
+  },
+  "ReaVerb": {
+    "notes": "ReaVerb is convolution-based (impulse-response driven) in its full UI, not a simple algorithmic reverb -- this map exposes only the wet/dry mix knob, which is the one control the §8 apply loop needs (reverb intents recommend a curated free algorithmic reverb -- §8.1 -- for anything beyond a wet-level nudge on an already-loaded IR).",
+    "params": {
+      "wet": {"index": 0, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": false}
+    }
+  },
+  "ReaXcomp": {
+    "notes": "Multiband compressor -- params are PER-BAND like ReaEQ. This map covers only band 1's core dynamics (index base 0), assuming a default single-band ReaXcomp instance -- the same band-1-only caveat as ReaEQ above. Used for rule 13 (de-ess): a band 1 narrowed to the 5-9 kHz range via the ReaXcomp UI, then threshold/ratio driven through this map.",
+    "params": {
+      "threshold": {"index": 0, "unit": "db", "min": -60.0, "max": 12.0, "to_normalized": "linear", "live_verified": false},
+      "ratio": {"index": 1, "unit": "ratio", "min": 1.0, "max": 20.0, "to_normalized": "linear", "live_verified": false},
+      "attack": {"index": 2, "unit": "ms", "min": 0.01, "max": 500.0, "to_normalized": "linear", "live_verified": false},
+      "release": {"index": 3, "unit": "ms", "min": 10.0, "max": 5000.0, "to_normalized": "linear", "live_verified": false},
+      "gain": {"index": 4, "unit": "db", "min": -24.0, "max": 24.0, "to_normalized": "linear", "live_verified": false}
+    }
+  },
+  "Transient Control": {
+    "notes": "Stock JSFX transient shaper. TrackFX_AddByName string AND param indices are both unverified (see top-level _notes) -- confirm the exact bundled name against a real REAPER FX browser during the live smoke.",
+    "params": {
+      "attack": {"index": 0, "unit": "db", "min": -24.0, "max": 24.0, "to_normalized": "linear", "live_verified": false},
+      "sustain": {"index": 1, "unit": "db", "min": -24.0, "max": 24.0, "to_normalized": "linear", "live_verified": false}
+    }
+  },
+  "Saturation": {
+    "notes": "Stock JSFX saturator. TrackFX_AddByName string AND param indices are both unverified (see top-level _notes) -- confirm the exact bundled name against a real REAPER FX browser during the live smoke.",
+    "params": {
+      "drive": {"index": 0, "unit": "db", "min": 0.0, "max": 24.0, "to_normalized": "linear", "live_verified": false},
+      "mix": {"index": 1, "unit": "pct", "min": 0.0, "max": 100.0, "to_normalized": "linear", "live_verified": false}
+    }
+  },
+  "Stereo Width": {
+    "notes": "Stock JSFX mid/side widener. TrackFX_AddByName string AND param index are both unverified (see top-level _notes) -- confirm the exact bundled name against a real REAPER FX browser during the live smoke.",
+    "params": {
+      "width": {"index": 0, "unit": "pct", "min": 0.0, "max": 200.0, "to_normalized": "linear", "live_verified": false}
+    }
+  }
+}
