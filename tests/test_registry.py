@@ -58,6 +58,8 @@ IMPLEMENTED = {
     "build_section",
     "arrange_song",
     "place_lyric_markers",
+    # render (Task 7.1 — §15.2 bridge verb)
+    "render_track_region",
     # reference (Task 1.3 — T1 recon; Task 2.1 — T2 instrument timeline; Task 3.2 — §13
     # chords; Task 4.2 — §5 verification gates 1-3 + separate_region; Task 5.3 — verify_stem;
     # Task 6.1 — §7 SoundCharacter descriptors + characterize)

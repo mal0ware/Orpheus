@@ -590,6 +590,179 @@ HANDLERS.add_marker = function(p)
   return { name = p.name or "", bar = p.bar or 1, index = idx }
 end
 
+-- --------------------------------------------------------------------------- --
+-- render_track_region (§15.2) — the "bridge verb" that bounces ONE track's region
+-- to a WAV for the audio analyzer. It mutates GLOBAL project state (render settings,
+-- every track's solo, master-FX enable) and MUST leave every bit of it exactly as it
+-- found it. The §15.2 failure this guards against: corrupting the user's render
+-- settings or solo states permanently. Hence: a non-reentrant bridge-side mutex, a
+-- FULL snapshot before any mutation, and restore in BOTH the success and error paths.
+-- --------------------------------------------------------------------------- --
+
+-- Bridge-side, non-reentrant. A render is a long, global-state-mutating operation;
+-- a second render arriving mid-flight must be refused, never interleaved. Cleared in
+-- EVERY path by the handler below (the pcall's `false` assignment runs unconditionally).
+local RENDER_MUTEX_HELD = false
+
+-- The last full snapshot taken by snapshot_render_state(). Held at module scope (not just
+-- in the handler's pcall closure) so restore_render_state_best_effort() — invoked from the
+-- error path OUTSIDE that closure, where the closure's `snap` local is invisible — can
+-- still find it. Consumed (set nil) by a restore so a later best-effort restore no-ops
+-- rather than re-applying a stale snapshot.
+local LAST_RENDER_SNAPSHOT = nil
+
+-- Signal a handler-level error through the static dispatcher. dispatch() pcalls each
+-- handler and reports a raise as { ok = false, error = <msg> }; err() raises at level 0
+-- so the clean message (matched by the Python tests, e.g. "render busy"/"silent") is not
+-- prefixed with this file:line.
+local function err(msg) error(msg, 0) end
+
+-- Numeric + string RENDER_* project keys we snapshot and restore. Numeric keys go through
+-- GetSetProjectInfo; string keys (paths, the format blob) through GetSetProjectInfo_String.
+-- The set covers every field set_render_target() touches PLUS the custom-bounds positions,
+-- so nothing the user configured leaks out of a render.
+local RENDER_NUM_KEYS = {
+  "RENDER_SRATE", "RENDER_CHANNELS", "RENDER_SETTINGS", "RENDER_BOUNDSFLAG",
+  "RENDER_TAILFLAG", "RENDER_TAILMS", "RENDER_ADDTOPROJ", "RENDER_STARTPOS", "RENDER_ENDPOS",
+}
+local RENDER_STR_KEYS = { "RENDER_FILE", "RENDER_PATTERN", "RENDER_FORMAT" }
+
+-- WAV, 32-bit float. RENDER_FORMAT is a base64 "evaw" (='wave' reversed) config blob; the
+-- bytes below encode the WAV sink at 32-bit float.
+-- NOTE (verify live, Task 11): this base64 MUST be confirmed by copying it out of a real
+-- REAPER "WAV / 32 bit FP" render preset (Preferences never exposes the raw blob) — the
+-- fake + lua-stub tests do NOT decode it (they only prove it is snapshotted/restored and
+-- that a .wav is produced), so a wrong blob here would pass CI yet render the wrong depth.
+local WAV_32F_RENDER_FORMAT = "ZXZhdxwAAAABAAAAAAAAAAIAAAAAAAAAABAAAAMAAAAgAAAA"
+
+-- The project's audio sample rate. NOTE (verify live, Task 11): PROJECT_SRATE only reflects
+-- a project-forced rate when PROJECT_SRATE_USE is on; otherwise REAPER renders at the audio
+-- device rate. We fall back to 44100 so a render never requests srate 0.
+local function get_project_srate()
+  local sr = reaper.GetSetProjectInfo(0, "PROJECT_SRATE", 0, false)
+  if not sr or sr <= 0 then sr = 44100 end
+  return math.floor(sr)
+end
+
+-- Master-FX enable toggle. I_FXEN on the master track is REAPER's master-FX-chain bypass
+-- (0 = bypassed, !0 = active). NOTE (verify live, Task 11): confirm on the target build that
+-- I_FXEN on GetMasterTrack bypasses the master chain for the render (vs. only the UI).
+local function set_master_fx_bypass(bypass)
+  local master = reaper.GetMasterTrack(0)
+  reaper.SetMediaTrackInfo_Value(master, "I_FXEN", bypass and 0 or 1)
+end
+
+-- Snapshot EVERYTHING a render mutates: the RENDER_* keys, every track's I_SOLO, the master
+-- I_FXEN, and the current time selection (which render bounds=time-sel will overwrite).
+local function snapshot_render_state()
+  local snap = { num = {}, str = {}, solos = {}, master_fxen = nil, loop_s = nil, loop_e = nil }
+  for _, k in ipairs(RENDER_NUM_KEYS) do
+    snap.num[k] = reaper.GetSetProjectInfo(0, k, 0, false)
+  end
+  for _, k in ipairs(RENDER_STR_KEYS) do
+    local _, v = reaper.GetSetProjectInfo_String(0, k, "", false)
+    snap.str[k] = v
+  end
+  for i = 0, reaper.CountTracks(0) - 1 do
+    snap.solos[i] = reaper.GetMediaTrackInfo_Value(reaper.GetTrack(0, i), "I_SOLO")
+  end
+  snap.master_fxen = reaper.GetMediaTrackInfo_Value(reaper.GetMasterTrack(0), "I_FXEN")
+  local s, e = reaper.GetSet_LoopTimeRange(false, false, 0, 0, false)  -- isLoop=false => time selection
+  snap.loop_s, snap.loop_e = s, e
+  LAST_RENDER_SNAPSHOT = snap
+  return snap
+end
+
+-- Restore a snapshot field-for-field. Nil-safe (a nil snap — e.g. an error before the
+-- snapshot was taken — is a no-op) and idempotent; consumes LAST_RENDER_SNAPSHOT so a
+-- follow-up best-effort restore does not re-apply a now-stale snapshot.
+local function restore_render_state(snap)
+  if not snap then return end
+  for _, k in ipairs(RENDER_NUM_KEYS) do
+    if snap.num[k] ~= nil then reaper.GetSetProjectInfo(0, k, snap.num[k], true) end
+  end
+  for _, k in ipairs(RENDER_STR_KEYS) do
+    if snap.str[k] ~= nil then reaper.GetSetProjectInfo_String(0, k, snap.str[k], true) end
+  end
+  for i = 0, reaper.CountTracks(0) - 1 do
+    if snap.solos[i] ~= nil then
+      reaper.SetMediaTrackInfo_Value(reaper.GetTrack(0, i), "I_SOLO", snap.solos[i])
+    end
+  end
+  if snap.master_fxen ~= nil then
+    reaper.SetMediaTrackInfo_Value(reaper.GetMasterTrack(0), "I_FXEN", snap.master_fxen)
+  end
+  if snap.loop_s ~= nil then
+    reaper.GetSet_LoopTimeRange(true, false, snap.loop_s, snap.loop_e, false)
+  end
+  LAST_RENDER_SNAPSHOT = nil
+end
+
+-- Error-path restore: never raises (wrapped in pcall) — a failure here must not mask the
+-- original render error the caller needs to see.
+local function restore_render_state_best_effort()
+  pcall(restore_render_state, LAST_RENDER_SNAPSHOT)
+end
+
+-- Point the render at out_dir/basename.wav, 32-bit-float WAV, project sample rate, master-mix
+-- source, bounds = the time selection we set in step 5.
+local function set_render_target(out_dir, basename)
+  reaper.GetSetProjectInfo_String(0, "RENDER_FILE", out_dir, true)
+  reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", basename, true)
+  reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", WAV_32F_RENDER_FORMAT, true)
+  reaper.GetSetProjectInfo(0, "RENDER_SRATE", get_project_srate(), true)
+  reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", 2, true)
+  reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, true)    -- 0 = master mix (no stems)
+  reaper.GetSetProjectInfo(0, "RENDER_BOUNDSFLAG", 2, true)  -- 2 = time selection
+  reaper.GetSetProjectInfo(0, "RENDER_TAILFLAG", 0, true)    -- no render tail
+  reaper.GetSetProjectInfo(0, "RENDER_ADDTOPROJ", 0, true)   -- do NOT import the result into the project
+end
+
+-- Step 7: the render must have produced a real, non-silent file. Digital silence
+-- (all-zero samples) is the tell-tale of a render that captured nothing — the exact
+-- symptom of a botched solo/routing setup, which is why §15.2 demands this assertion.
+local function assert_rendered_nonsilent(path)
+  local f = io.open(path, "rb")
+  if not f then err("render produced no file: " .. path) end
+  local data = f:read("*a")
+  f:close()
+  if not data or #data == 0 then err("render produced an empty file: " .. path) end
+  -- Skip the 44-byte canonical WAV header; scan the PCM payload for any non-zero byte.
+  local payload = data:sub(45)
+  if #payload == 0 then err("render is silent (no audio payload): " .. path) end
+  for i = 1, #payload do
+    if payload:byte(i) ~= 0 then return end
+  end
+  err("render is silent (digital silence): " .. path)
+end
+
+-- §15.2 steps 1–8, in the locked order. See the module header for why each guard exists.
+HANDLERS.render_track_region = function(p)
+  if RENDER_MUTEX_HELD then return err("render busy") end          -- §15.2 serialization
+  RENDER_MUTEX_HELD = true
+  local ok, result = pcall(function()
+    if reaper.GetPlayState() ~= 0 then error("transport is playing/recording") end  -- step 1
+    local snap = snapshot_render_state()   -- RENDER_* via GetSetProjectInfo(+_String), ALL track I_SOLO, master FX bypass
+    local tr = resolve_track(p.track)
+    for i = 0, reaper.CountTracks(0) - 1 do                         -- step 3: clear ALL solos first
+      reaper.SetMediaTrackInfo_Value(reaper.GetTrack(0, i), "I_SOLO", 0)
+    end
+    reaper.SetMediaTrackInfo_Value(tr, "I_SOLO", 2)                 -- SIP (§15.2: keeps sends, deliberate)
+    set_master_fx_bypass(true)                                      -- step 4
+    reaper.GetSet_LoopTimeRange(true, false, p.start_s, p.end_s, false)  -- step 5 (seconds; caller converted via project tempo map)
+    set_render_target(p.out_dir, p.basename)                        -- step 6: RENDER_FILE=dir, RENDER_PATTERN=basename,
+                                                                    --   WAV 32f, RENDER_SRATE=project, source=master, bounds=time sel
+    reaper.Main_OnCommand(42230, 0)                                 -- step 6: render using most recent settings (NEVER 40015)
+    local path = p.out_dir .. "/" .. p.basename .. ".wav"
+    assert_rendered_nonsilent(path)                                 -- step 7: exists, non-empty, not digital silence
+    restore_render_state(snap)                                      -- step 8
+    return { path = path, start_s = p.start_s, end_s = p.end_s, sr = get_project_srate() }
+  end)
+  RENDER_MUTEX_HELD = false
+  if not ok then pcall(restore_render_state_best_effort); return err(result) end   -- restore in error path too (§15.2)
+  return result
+end
+
 local function dispatch(fn, params)
   if fn == "__batch__" then
     local results = {}

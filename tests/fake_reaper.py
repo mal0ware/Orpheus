@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
+import struct
 import threading
 import time
+import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -55,6 +58,10 @@ class FakeTrack:
     solo: bool = False
     takes: list[FakeTake] = field(default_factory=list)
     fx: list[str] = field(default_factory=list)
+    # I_SOLO as REAPER models it: 0=off, 1=solo, 2=solo-in-place (SIP). Kept distinct from
+    # the `solo` bool (which list_tracks reports) because render_track_region round-trips
+    # the exact 0/1/2 value and asserts SIP (=2) on the target during a render (§15.2).
+    i_solo: int = 0
 
 
 @dataclass
@@ -69,6 +76,18 @@ class FakeReaperProject:
     installed_fx: list[str] = field(default_factory=list)
     markers: list[dict] = field(default_factory=list)
     _guid_seq: int = 0
+
+    # -- render state (§15.2 render_track_region) -------------------------- #
+    srate: int = 48000
+    master_fxen: int = 1  # master-FX-chain enable (I_FXEN on the master track): 0=bypassed
+    render_settings: dict = field(default_factory=dict)  # RENDER_* keys (dir/pattern/format/...)
+    render_mutex_held: bool = False  # bridge-side non-reentrant render lock
+    time_sel: tuple[float, float] = (0.0, 0.0)  # the current time selection (loop range)
+    _render_snapshot: dict | None = None  # last full pre-render snapshot (for best-effort restore)
+    # What was in effect at the instant the render wrote its file — lets a test prove the SIP
+    # solo (=2) and master-FX bypass (=0) were ACTIVE *during* the render, not merely before.
+    render_observed_master_fxen: int | None = None
+    render_observed_target_solo: int | None = None
 
     # -- identity / lookup ------------------------------------------------- #
 
@@ -109,6 +128,33 @@ class FakeReaperProject:
     @staticmethod
     def ppq_to_qn(ppq: float) -> float:
         return ppq / PPQ_PER_QN
+
+
+def _write_wav(path: Path, *, nonsilent: bool, sample_rate: int) -> None:
+    """Write a real, tiny mono WAV so render_track_region's non-silent assertion is
+    testable end-to-end. A track with items renders a 440 Hz sine (non-zero samples); an
+    empty track renders digital silence (all-zero samples) — exactly the §15.2 failure the
+    assertion catches. 16-bit PCM here for simplicity; the real render is 32-bit float."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    n = 512
+    if nonsilent:
+        frames = b"".join(
+            struct.pack("<h", int(10000 * math.sin(2 * math.pi * 440 * i / sample_rate)))
+            for i in range(n)
+        )
+    else:
+        frames = b"\x00\x00" * n
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes(frames)
+
+
+def _wav_is_silent(path: Path) -> bool:
+    with wave.open(str(path), "rb") as w:
+        data = w.readframes(w.getnframes())
+    return all(b == 0 for b in data)
 
 
 def make_handlers(project: FakeReaperProject) -> dict:
@@ -276,6 +322,82 @@ def make_handlers(project: FakeReaperProject) -> dict:
         project.markers.append(entry)
         return {"name": entry["name"], "bar": entry["bar"], "index": len(project.markers)}
 
+    # -- render_track_region (§15.2) — the executable spec for the Lua handler ------ #
+
+    def _render_snapshot():
+        """Full pre-render snapshot: RENDER_* keys, every track's I_SOLO, master I_FXEN,
+        and the time selection — everything a render mutates. Stored on the project so the
+        error path can best-effort restore it (mirrors LAST_RENDER_SNAPSHOT in the Lua)."""
+        snap = {
+            "render_settings": dict(project.render_settings),
+            "solos": {tr.guid: tr.i_solo for tr in project.tracks},
+            "master_fxen": project.master_fxen,
+            "time_sel": project.time_sel,
+        }
+        project._render_snapshot = snap
+        return snap
+
+    def _render_restore(snap):
+        if snap is None:
+            return
+        project.render_settings = dict(snap["render_settings"])
+        for tr in project.tracks:
+            if tr.guid in snap["solos"]:
+                tr.i_solo = snap["solos"][tr.guid]
+        project.master_fxen = snap["master_fxen"]
+        project.time_sel = snap["time_sel"]
+        project._render_snapshot = None
+
+    def render_track_region(p):
+        # Step 1 (serialization): a render already in flight refuses a new one — and must
+        # NOT touch the in-flight render's mutex on the way out (early return, no acquire).
+        if project.render_mutex_held:
+            raise ValueError("render busy")
+        project.render_mutex_held = True
+        try:
+            if project.play_state != 0:
+                raise ValueError("transport is playing/recording")
+            snap = _render_snapshot()
+            tr = project.resolve_track(p["track"])
+            for t in project.tracks:  # step 3: clear ALL solos first
+                t.i_solo = 0
+            tr.i_solo = 2  # SIP on the target (§15.2, deliberate — keeps sends)
+            project.master_fxen = 0  # step 4: bypass master FX
+            project.time_sel = (float(p["start_s"]), float(p["end_s"]))  # step 5
+            # step 6: point the render at out_dir/basename.wav, WAV/32f, project srate, master mix
+            project.render_settings.update(
+                {
+                    "RENDER_FILE": p["out_dir"],
+                    "RENDER_PATTERN": p["basename"],
+                    "RENDER_FORMAT": "wav-32f",
+                    "RENDER_SRATE": project.srate,
+                    "RENDER_CHANNELS": 2,
+                    "RENDER_SETTINGS": 0,
+                    "RENDER_BOUNDSFLAG": 2,
+                }
+            )
+            path = Path(p["out_dir"]) / f"{p['basename']}.wav"
+            # Record what is in effect at render time so a test can prove SIP + master bypass
+            # were ACTIVE during the render (not merely set then immediately reverted).
+            project.render_observed_target_solo = tr.i_solo
+            project.render_observed_master_fxen = project.master_fxen
+            _write_wav(path, nonsilent=bool(tr.takes), sample_rate=project.srate)
+            # step 7: the render must exist and not be digital silence.
+            if _wav_is_silent(path):
+                raise ValueError(f"render is silent (digital silence): {path}")
+            _render_restore(snap)  # step 8
+            return {
+                "path": str(path),
+                "start_s": p["start_s"],
+                "end_s": p["end_s"],
+                "sr": project.srate,
+            }
+        except Exception:
+            _render_restore(project._render_snapshot)  # restore in the error path too (§15.2)
+            raise
+        finally:
+            project.render_mutex_held = False  # cleared in EVERY path
+
     return {
         "get_connection_status": get_connection_status,
         "get_project_info": get_project_info,
@@ -292,6 +414,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "list_installed_fx": list_installed_fx,
         "add_instrument": add_instrument,
         "add_marker": add_marker,
+        "render_track_region": render_track_region,
     }
 
 
