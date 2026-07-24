@@ -16,12 +16,13 @@ import contextlib
 import json
 import math
 import os
-import struct
 import threading
 import time
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import numpy as np
 
 # REAPER's MIDI takes use 960 ticks per quarter note by default. The conversion the
 # bridge performs is beats(QN) -> PPQ and back; we mirror it exactly here.
@@ -151,20 +152,101 @@ class FakeReaperProject:
         return ppq / PPQ_PER_QN
 
 
-def _write_wav(path: Path, *, nonsilent: bool, sample_rate: int) -> None:
-    """Write a real, tiny mono WAV so render_track_region's non-silent assertion is
-    testable end-to-end. A track with items renders a 440 Hz sine (non-zero samples); an
-    empty track renders digital silence (all-zero samples) — exactly the §15.2 failure the
-    assertion catches. 16-bit PCM here for simplicity; the real render is 32-bit float."""
+# --------------------------------------------------------------------------- #
+# Task 11.2 (§12 slice-11): the closed FX-loop test needs a render whose SPECTRUM actually
+# reflects the track's FX state, not just its presence — this is that mechanism.
+#
+# ``_synthesize_track_audio`` is the deterministic "track audio" every non-silent render is
+# built from: 8 fixed sine partials, 1 kHz apart, 500 Hz–7.5 kHz — fixed content, fixed
+# params, no seeds needed. At 1 s / 48 kHz every one of those frequencies lands exactly on an
+# FFT bin (1 Hz resolution), so there is zero spectral leakage to muddy a band measurement.
+# Three partials (2500/3500/4500 Hz) sit inside rule 1's 2–5 kHz band, so a peaking EQ
+# centered at 3.5 kHz (rule 1's apply recipe) produces a REAL, measurable, closable delta.
+# --------------------------------------------------------------------------- #
+
+_TRACK_TONES_HZ: tuple[float, ...] = (500.0, 1500.0, 2500.0, 3500.0, 4500.0, 5500.0, 6500.0, 7500.0)
+_TRACK_AUDIO_SECONDS = 1.0
+_TRACK_TONE_AMPLITUDE = 0.08
+
+
+def _synthesize_track_audio(sample_rate: int) -> np.ndarray:
+    n = int(sample_rate * _TRACK_AUDIO_SECONDS)
+    t = np.arange(n) / sample_rate
+    sig = np.zeros(n, dtype=np.float64)
+    for freq in _TRACK_TONES_HZ:
+        sig += _TRACK_TONE_AMPLITUDE * np.sin(2.0 * math.pi * freq * t)
+    return sig
+
+
+def _apply_peaking_eq(
+    x: np.ndarray, sr: int, freq_hz: float, gain_db: float, q: float
+) -> np.ndarray:
+    """Hand-rolled RBJ audio-EQ-cookbook peaking/bell biquad — the mechanism that makes a
+    fake render REFLECT a track's ReaEQ band-1 FX state (not merely note that FX exists).
+    Direct Form I, sample-by-sample: this only ever runs over a ~1 s clip a handful of times
+    per test, so a plain Python loop is fine — scipy.signal.lfilter is deliberately avoided
+    to keep this fake numpy-only/dependency-light."""
+    a = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * math.pi * freq_hz / sr
+    alpha = math.sin(w0) / (2.0 * q)
+    cos_w0 = math.cos(w0)
+    b0, b1, b2 = 1.0 + alpha * a, -2.0 * cos_w0, 1.0 - alpha * a
+    a0, a1, a2 = 1.0 + alpha / a, -2.0 * cos_w0, 1.0 - alpha / a
+    b0, b1, b2, a1, a2 = b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0
+    y = np.zeros_like(x, dtype=np.float64)
+    x1 = x2 = y1 = y2 = 0.0
+    for i in range(x.shape[0]):
+        xn = float(x[i])
+        yn = b0 * xn + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        y[i] = yn
+        x2, x1 = x1, xn
+        y2, y1 = y1, yn
+    return y
+
+
+def _reaeq_band1_params(tr: FakeTrack) -> tuple[float, float, float] | None:
+    """Band-1 bell freq/gain/Q in REAL units for ``tr``'s ReaEQ instance (if any), converted
+    from the fake FX chain's stored NORMALIZED values via the SAME ``data/fx_param_maps.json``
+    map ``tools/mix.py`` reads (Task 11.1's locked normalized-wire contract) — imported, not
+    duplicated, so this can never silently drift from the real translation. Returns ``None``
+    when the track carries no ReaEQ instance with ALL THREE band-1 params explicitly set (a
+    fresh ReaEQ with no ``set_fx_param`` calls yet must not filter at some guessed default)."""
+    from orpheus_mcp.tools.mix import from_normalized, load_param_maps
+
+    fx = next((f for f in tr.fx_chain if f.name == "ReaEQ"), None)
+    if fx is None or not {0, 1, 2} <= set(fx.params):
+        return None
+    params = load_param_maps()["ReaEQ"]["params"]
+    freq = from_normalized(fx.params[0], params["freq"])
+    gain = from_normalized(fx.params[1], params["gain"])
+    q = from_normalized(fx.params[2], params["q"])
+    return freq, gain, q
+
+
+def _write_wav(
+    path: Path, *, nonsilent: bool, sample_rate: int, eq: tuple[float, float, float] | None = None
+) -> None:
+    """Write a real WAV so render_track_region's non-silent assertion is testable end-to-end,
+    and (Task 11.2) so its SPECTRUM reflects the track's FX state. A track with items renders
+    the deterministic multi-tone ``_synthesize_track_audio`` — passed through
+    ``_apply_peaking_eq`` first when ``eq`` (this track's ReaEQ band-1 freq/gain/Q) is given;
+    an empty track renders digital silence (all-zero samples) — exactly the §15.2 failure the
+    non-silent assertion catches. 16-bit PCM here for simplicity; the real render is 32-bit
+    float."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    n = 512
     if nonsilent:
-        frames = b"".join(
-            struct.pack("<h", int(10000 * math.sin(2 * math.pi * 440 * i / sample_rate)))
-            for i in range(n)
-        )
+        sig = _synthesize_track_audio(sample_rate)
+        if eq is not None:
+            sig = _apply_peaking_eq(sig, sample_rate, *eq)
+        # Full-scale int16 (not an arbitrary attenuated sub-range): the offline reference
+        # WAV (Task 11.2's ``reference_wav`` fixture) is written float32 at nominal
+        # amplitude, so a render written at a different effective scale would inject a
+        # spurious overall-level delta into every band, on top of whatever the FX state
+        # actually did — this keeps the two directly comparable.
+        pcm16 = np.clip(np.round(sig * 32767.0), -32760.0, 32760.0).astype("<i2")
+        frames = pcm16.tobytes()
     else:
-        frames = b"\x00\x00" * n
+        frames = b"\x00\x00" * 512
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -434,7 +516,8 @@ def make_handlers(project: FakeReaperProject) -> dict:
             # were ACTIVE during the render (not merely set then immediately reverted).
             project.render_observed_target_solo = tr.i_solo
             project.render_observed_master_fxen = project.master_fxen
-            _write_wav(path, nonsilent=bool(tr.takes), sample_rate=project.srate)
+            eq = _reaeq_band1_params(tr)  # Task 11.2: render REFLECTS ReaEQ band-1, if set
+            _write_wav(path, nonsilent=bool(tr.takes), sample_rate=project.srate, eq=eq)
             # step 7: the render must exist and not be digital silence.
             if _wav_is_silent(path):
                 raise ValueError(f"render is silent (digital silence): {path}")
