@@ -32,7 +32,11 @@ process-wide ``GPU_SEMAPHORE`` with the §15.5 VRAM guard (entry that does not f
 CPU-capable last; the fallback + reason is recorded in ``StemResult.notes``) → trim outputs back to
 the exact requested region (§3.1d) → resample + length-align to the input (§5 gate precondition) →
 mono input is fed dual-mono to stereo-only engines, with a §7 note that stereo descriptors stay
-N/A downstream.
+N/A downstream. When the chosen entry declares a verified ``ModelEntry.native_sr`` (Task 4.1
+follow-up) that differs from the input rate, the cropped feed is resampled UP to ``native_sr``
+before the engine runs — off-rate input can hit slow/degraded code paths (SCNet-XL fed 22.05 kHz
+hit torch's experimental ComplexHalf istft path: 185.8 s for 17 s of audio) — and the existing
+output resample step brings results back down to the input rate.
 """
 
 from __future__ import annotations
@@ -351,12 +355,27 @@ def separate_region(
             "(width/correlation) stay N/A downstream (§7)."
         )
 
+    # -- native-SR resample (Task 4.1 follow-up) -------------------------------- #
+    # A model with a verified native_sr fed off-rate audio can hit slow/degraded code paths
+    # (SCNet-XL + 22.05 kHz hit torch's experimental ComplexHalf istft: 185.8 s for 17 s of
+    # audio). Resample the CROPPED feed up/down to the model's native rate before the engine;
+    # the existing raw→sr resample below (§5 alignment precondition) already brings the output
+    # back to the input rate, so no change is needed there.
+    engine_sr = sr
+    if chosen.native_sr and chosen.native_sr != sr:
+        feed = _resample_to(feed, sr, chosen.native_sr)
+        engine_sr = chosen.native_sr
+        notes.append(
+            f"resampled {sr} Hz → {chosen.native_sr} Hz (native_sr) for {chosen.id}; output "
+            f"resampled back to {sr} Hz."
+        )
+
     finals_dir = Path(tempfile.mkdtemp(prefix="orpheus_stems_"))
     results: dict[str, StemResult] = {}
     with tempfile.TemporaryDirectory(prefix="orpheus_sep_") as work:
         work_dir = Path(work)
         in_wav = work_dir / "region.wav"
-        sf.write(str(in_wav), feed, sr, subtype="FLOAT")
+        sf.write(str(in_wav), feed, engine_sr, subtype="FLOAT")
 
         raw_out = work_dir / "raw"
         raw_out.mkdir(parents=True, exist_ok=True)

@@ -100,12 +100,36 @@ def test_resolve_multi_stem_vocals_filters_over_vram_budget():
     results = resolve("multi-stem", "vocals", vram_free_gb=9.0)
     ids = [e.id for e in results]
     assert "4stem-b/scnet-xl" not in ids  # 8.0 GB > 7.2 GB threshold, filtered
-    assert "4stem-a/bsroformer" in ids
+    # 4stem-a/bsroformer fits the VRAM budget (6.5 GB) but carries engine_status "no-engine"
+    # (D12: audio-separator cannot load ZFTurbo's ep_17 checkpoint) — resolve() must skip it.
+    assert "4stem-a/bsroformer" not in ids
     assert "4stem-c/htdemucs-ft" in ids
-    # rank order preserved among survivors
-    assert ids.index("4stem-a/bsroformer") < ids.index("4stem-c/htdemucs-ft")
     for entry in results:
         assert entry.vram_gb <= CFG.VRAM_FIT_FRACTION * 9.0
+
+
+def test_resolve_skips_no_engine_entries():
+    # 4stem-a/bsroformer ranks 3 (below scnet-xl and htdemucs-ft) AND is marked "no-engine" —
+    # both-sides: it must never appear in resolve() results (regardless of VRAM headroom)...
+    results = resolve("multi-stem", "vocals", vram_free_gb=100.0)
+    ids = [e.id for e in results]
+    assert "4stem-a/bsroformer" not in ids
+    # ...while ordinary (non-"no-engine") 4-stem entries for the same slot are unaffected, and
+    # keep their new rank order (SCNet-XL rank 1, htdemucs-ft rank 2).
+    four_stem_ids = [i for i in ids if i.startswith("4stem-")]
+    assert four_stem_ids == ["4stem-b/scnet-xl", "4stem-c/htdemucs-ft"]
+
+
+def test_engine_status_no_engine_entry_still_loads():
+    # The registry loader itself must not reject/hide a "no-engine" entry — its pin/hash stay
+    # intact (D12: kept for a future vendored BS-RoFormer path); only resolve() routing skips it.
+    entries = {e.id: e for e in load_registry(allow_unpinned=True)}
+    bsroformer = entries["4stem-a/bsroformer"]
+    assert bsroformer.engine_status == "no-engine"
+    assert bsroformer.engine_status_note
+    assert bsroformer.checkpoint_url is not None
+    assert bsroformer.sha256 is not None
+    assert bsroformer.rank == 3
 
 
 def test_resolve_multi_stem_vocals_no_cuda_keeps_only_cpu_capable():

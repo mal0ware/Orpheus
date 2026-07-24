@@ -186,6 +186,47 @@ def test_gpu_semaphore_serializes_engine_calls():
 
 
 # --------------------------------------------------------------------------- #
+# 6. native_sr resample — entry.native_sr=44100 + 22050 kHz input: stub receives 44100 Hz
+#    audio, results return at the original 22050 Hz with a consistent sample count (Task 4.1
+#    follow-up: SCNet-XL fed off-rate audio hit torch's slow ComplexHalf istft path).
+# --------------------------------------------------------------------------- #
+
+
+def test_native_sr_resamples_engine_input_and_restores_output_rate():
+    entry = _entry("4stem-b/scnet-xl")
+    assert entry.native_sr == 44100  # verified from the vendored SCNet config (§ this test)
+
+    sr_in = 22050
+    pcm = _ramp_pcm(4.0, sr=sr_in)
+    engine = StubEngine(FOUR_STEM)
+    out = separate_region(pcm, entry, Window(start_s=1.0, end_s=3.0), engine=engine)
+
+    # The stub engine received audio resampled UP to native_sr, not the original 22050 Hz.
+    assert engine.last_call["sr"] == 44100
+
+    assert set(out) == set(FOUR_STEM)
+    result = out["vocals"]
+    assert result.sample_rate == sr_in  # output rides back down to the input rate
+    expected_len = int(round(2.0 * sr_in))  # region [1,3] = 2 s at the input rate
+    stem = _read(result.stem_path)
+    assert stem.shape[0] == expected_len
+    joined = " ".join(result.notes).lower()
+    assert "native_sr" in joined or "44100" in joined
+
+
+def test_native_sr_is_a_noop_when_input_already_matches():
+    entry = _entry("4stem-b/scnet-xl")
+    pcm = _ramp_pcm(4.0, sr=44100)
+    engine = StubEngine(FOUR_STEM)
+    out = separate_region(pcm, entry, Window(start_s=1.0, end_s=3.0), engine=engine)
+
+    assert engine.last_call["sr"] == 44100
+    result = out["vocals"]
+    assert result.sample_rate == 44100
+    assert not any("native_sr" in note.lower() for note in result.notes)
+
+
+# --------------------------------------------------------------------------- #
 # real-engine end-to-end smoke (desktop + GPU): audio-separator AND vendored SCNet
 # --------------------------------------------------------------------------- #
 

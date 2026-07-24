@@ -15,7 +15,9 @@
     "rt_factor": null,
     "benchmark": "MUSDB test avg SDR 9.65 (bass 8.48, drums 11.61, vocals 11.08, other 7.44) - ZFTurbo MSST-Training, BS-RoFormer ep17, 4-stem",
     "license": "MIT",
-    "rank": 1,
+    "rank": 3,
+    "engine_status": "no-engine",
+    "engine_status_note": "audio-separator cannot load ZFTurbo's ep_17 4-stem BS-RoFormer checkpoint - no compatible entry in audio-separator's own model registry (audio_separator_model is null here too). Evidence: Task 4.1 pin-run findings (task-4.1-report.md carried problem 2). Pin/hash kept for a future vendored BS-RoFormer inference path (post-v1 registry TODO, D12) - resolve() skips this entry until then.",
     "tagger_classes": [
       "Singing",
       "Speech",
@@ -42,7 +44,8 @@
     "rt_factor": 0.076,
     "benchmark": "MUSDB test avg SDR 9.80 (bass 9.23, drums 11.51, vocals 11.05, other 7.41) - ZFTurbo MSST-Training, SCNet-XL, 4-stem",
     "license": "MIT",
-    "rank": 2,
+    "rank": 1,
+    "native_sr": 44100,
     "tagger_classes": [
       "Singing",
       "Speech",
@@ -80,7 +83,7 @@
     "rt_factor": null,
     "benchmark": "Hybrid Transformer Demucs, fine-tuned 4-source. htdemucs_ft is upstream a bag-of-4 single-source models; checkpoint_url is the list of all 4 .th files @ dl.fbaipublicfiles.com/demucs/hybrid_transformer/ (Task 0.2 review flag \u2014 the registry schema accepts a list here). Run via the audio-separator env, which also resolves htdemucs_ft by name.",
     "license": "MIT",
-    "rank": 3,
+    "rank": 2,
     "tagger_classes": [
       "Singing",
       "Speech",

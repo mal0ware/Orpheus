@@ -83,6 +83,28 @@ class ModelEntry(BaseModel):
     # than silently substituting a different model. Only meaningful on ``audio-separator`` engine
     # entries; irrelevant (and always None) for msst/panns/btc/... engines.
     audio_separator_model: str | None = None
+    # The model's native training sample rate (Hz), where verified from a vendored inference
+    # config (e.g. ``_vendor/msst/config_scnet_large.yaml``'s ``audio.sample_rate: 44100`` for
+    # SCNet-XL). Off-rate input can hit slow/degraded code paths — feeding SCNet-XL 22.05 kHz
+    # audio (ci_sparse's native rate) hit torch's experimental ComplexHalf istft path: 185.8 s
+    # for 17 s of audio vs. a real-time-factor budget under 1 s (Task 4.1 follow-up finding).
+    # ``None`` => no verified constraint: either the checkpoint has no confirmed native rate,
+    # or (all current ``audio-separator`` entries) the isolated subprocess CLI resolves and
+    # applies its own model's expected rate internally with no observed slowdown, so
+    # constraining it from our side would be unverified guessing. When set and the input rate
+    # differs, ``separate_region`` resamples the CROPPED input up to ``native_sr`` before the
+    # engine and back down to the input rate afterward.
+    native_sr: int | None = None
+    # "no-engine" (Task 4.1 follow-up / D12): no engine this registry actually drives can load
+    # this checkpoint — e.g. audio-separator refuses ZFTurbo's ep_17 4-stem BS-RoFormer
+    # checkpoint (no compatible entry in ITS OWN model registry; hence
+    # ``audio_separator_model=None`` on this entry too). ``resolve()`` skips these: ranking an
+    # entry no engine can actually run would silently promote a non-functional candidate.
+    # ``None`` (the default) means "runs normally". The pin/hash and rank are kept regardless —
+    # this is an honest status flag, not a deletion — so a future engine (e.g. a vendored
+    # BS-RoFormer inference path) can pick the entry back up without re-verifying the checkpoint.
+    engine_status: str | None = None
+    engine_status_note: str | None = None
 
     @model_validator(mode="after")
     def _url_hash_shapes_agree(self) -> ModelEntry:
@@ -181,6 +203,10 @@ def resolve(
     entries = load_registry(allow_unpinned=True)
 
     candidates = [e for e in entries if e.task == task and target in e.targets]
+
+    # engine_status "no-engine" (D12): no engine we actually drive can load this checkpoint —
+    # never route to it, regardless of how good its rank/benchmark looks on paper.
+    candidates = [e for e in candidates if e.engine_status != "no-engine"]
 
     if not allow_nc:
         candidates = [e for e in candidates if not _is_nc_licensed(e.license)]
