@@ -35,6 +35,8 @@ class AnalysisConfig:
     # --- plan-added (allowed by §16's normative rule; NOT in the spec table) ---
     SEPARATION_CONTEXT_PAD_S: float = 5.0           # §3.1 T3 crop pad
     CHORD_SELF_TRANSITION: float = 0.90             # §13.1 Viterbi stay-probability
+    CHORD_EMISSION_SHARPNESS: float = 8.0           # §13.1 emission temperature (harmony.py)
+    CHORD_QUIET_ENERGY_RATIO: float = 0.15          # §13.1 no-chord below this x median energy
     EXPOSURE_MIN_WINDOW_S: float = 3.0              # shortest usable exposed window (§3.1b)
     ANALYSIS_SR: int = 44100                        # §8 common analysis rate
     CACHE_DIR_ENV: str = "ORPHEUS_CACHE_DIR"        # test override hook

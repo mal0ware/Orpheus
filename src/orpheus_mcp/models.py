@@ -178,6 +178,43 @@ class Timeline(BaseModel):
     frames: list[list[float]]
 
 
+class ChordSegment(BaseModel):
+    """One chord in the §13 baseline lane. ``root``/``quality`` are the base triad reading
+    (``quality`` stays the plain triad quality — maj/min/7/maj7/min7/sus2/sus4/dim/aug or
+    ``"N"`` for no-chord); ``extensions`` carries §13.3 upgrades (``"add9"``, ``"maj7"``,
+    ``"7"``, ``"6"``, ``"#11"``, ``"13"``, ``"pedal"``) and ``bass`` the §13.2 slash bass
+    pitch (``None`` in root position). ``label`` is the composed spelling (``"Cadd9"``,
+    ``"C/E"``, ``"Em7"``). ``roman``/``key_context`` come from the §13.4 theory layer (both
+    ``None`` until it runs). ``start_beat``/``end_beat`` are ``None`` in fixed-grid mode
+    (rubato fallback — the lane rides on ``start_s``/``end_s`` then). ``produced_by`` is
+    ``"baseline"`` for every segment this lane writes."""
+
+    start_beat: float | None
+    end_beat: float | None
+    start_s: float
+    end_s: float
+    root: str
+    bass: str | None
+    quality: str
+    extensions: list[str] = Field(default_factory=list)
+    label: str
+    roman: str | None = None
+    key_context: str | None = None
+    confidence: float
+    produced_by: str
+
+
+class ChordsLane(BaseModel):
+    """The §13 chord lane (§9 ``chords.json``). ``grid`` is ``"beat"`` on a confident recon
+    grid, ``"fixed"`` when recon's grid confidence fell below
+    ``CFG.BEAT_GRID_CONFIDENCE_MIN`` and the lane switched to fixed 1 s windows (§13.4
+    rubato fallback)."""
+
+    schema_version: int = 1
+    grid: Literal["beat", "fixed"]
+    segments: list[ChordSegment]
+
+
 # --------------------------------------------------------------------------- #
 # Analysis outputs
 # --------------------------------------------------------------------------- #
