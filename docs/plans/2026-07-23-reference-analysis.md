@@ -39,6 +39,7 @@
 | D7 | §15.1 "freeze thresholds in verify.py config" | Calibration emits `data/calibrated_thresholds.json` (+ fixture_set_hash); `config.py` loads it as overrides at import. `verify_config_hash` (§9 cache meta) is computed AFTER overrides apply, so a re-calibration correctly busts stale gate artifacts | One home for tunables (§16) + data-not-code updates |
 | D8 | §10/§12 slice-8 bar "self-recorded or synthesized vocal" fixture | `ci_vocal`'s vocal lane = Windows SAPI TTS reading known lyric lines (script-generated once, committed as FLAC + truth lyrics in `truth.json`) — deterministic, real words, Whisper-transcribable, rights-clean | Makes the 5/5-quotes bar runnable by machine on any box |
 | D9 (exec-discovered) | §4: `python-audio-separator` as an in-env inference engine | audio-separator runs in an **isolated uv env** (same pattern as basic-pitch/§9) invoked via its CLI with `--model_file_dir` = our checkpoint dir; it is NOT in the `separation` extra. `AudioSeparatorEngine` (Phase 4) is a subprocess adapter. Also: `fastmcp` floor raised to `>=3.4` (the version the shipped code targets) | Discovered at Task 0.1: every audio-separator release (0.30–0.44.5) transitively caps fastmcp<3.4 — one env cannot hold both the MCP server and audio-separator. Vendored MSST + ASR stack coexist fine and stay in `[separation]` |
+| D10 (exec-discovered) | Plan conflated two confidences into BeatGrid.confidence | BeatGrid gains additive meter_confidence (margin ratio of the {3,4}-group argmax); confidence stays grid-alignment (feeds BEAT_GRID_CONFIDENCE_MIN rubato fallback) | Review of Task 1.3 found the §T1 margin-ratio formula dropped; two signals, two fields |
 
 ---
 
@@ -88,7 +89,8 @@ class Window(BaseModel):      start_s: float; end_s: float
 # never crosses a tool boundary): Pcm(samples: np.ndarray float32 (frames, ch),
 # sample_rate: int, path: str, pcm_hash: str, duration_s: float)
 class BeatGrid(BaseModel):    times_s: list[float]; downbeats_s: list[float]
-                              meter: tuple[int, int]; confidence: float; kind: Literal["beat","fixed"]
+                              meter: tuple[int, int]; confidence: float; meter_confidence: float
+                              kind: Literal["beat","fixed"]
 class KeyEstimate(BaseModel): root: str; mode: str; confidence: float
 class Recon(BaseModel):
     schema_version: int = 1

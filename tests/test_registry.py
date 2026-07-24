@@ -8,6 +8,9 @@ the full profile may keep stubs but must label them "[NOT IMPLEMENTED]" up front
 
 from __future__ import annotations
 
+import importlib.util
+
+import pytest
 from fastmcp import Client, FastMCP
 
 from orpheus_mcp.registry import PROFILES, register_tools
@@ -153,3 +156,24 @@ def test_reference_in_default_and_full_not_explain():
     assert "reference" in register_tools(m_full, profile="full")
     m_explain = FastMCP(name="t")
     assert "reference" not in register_tools(m_explain, profile="explain")
+
+
+def test_reference_skipped_with_warning_when_librosa_missing(monkeypatch):
+    """Registry-honesty probe (review finding): ``tools.reference.register`` must raise
+    ImportError when librosa isn't importable, so ``register_tools``'s existing
+    ``except ImportError`` skips the whole ``reference`` category with a warning instead
+    of registering tools that would raise at call time."""
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == "librosa":
+            return None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    mcp = FastMCP(name="t")
+    with pytest.warns(UserWarning, match="reference"):
+        registered = register_tools(mcp, profile="default")
+
+    assert "reference" not in registered

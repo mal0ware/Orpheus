@@ -57,6 +57,40 @@ def make_click_track(
     return path
 
 
+def make_accented_click_track(
+    path: Path,
+    *,
+    bpm: float = 120.0,
+    seconds: float = 16.0,
+    sr: int = 22050,
+    accent_every: int = 4,
+    offbeat_gain: float = 0.04,
+) -> Path:
+    """A click track where every ``accent_every``-th beat is louder than the rest — unlike
+    ``make_click_track``'s uniform clicks, this gives the {3,4}-group correlation an
+    unambiguous winner (high ``meter_confidence``, D10)."""
+    interval = 60.0 / bpm
+    n_samples = int(seconds * sr)
+    audio = np.zeros(n_samples, dtype=np.float32)
+    click_len = int(0.02 * sr)
+    envelope = np.exp(-np.linspace(0.0, 15.0, click_len)).astype(np.float32)
+    tone = (np.sin(2 * np.pi * 1000.0 * np.arange(click_len) / sr) * envelope).astype(np.float32)
+
+    t = 0.0
+    beat_idx = 0
+    while t < seconds:
+        start = int(t * sr)
+        end = min(start + click_len, n_samples)
+        gain = 1.0 if beat_idx % accent_every == 0 else offbeat_gain
+        audio[start:end] += gain * tone[: end - start]
+        t += interval
+        beat_idx += 1
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(path), audio, sr, subtype="PCM_16")
+    return path
+
+
 def make_chord_progression(
     path: Path,
     chords: list[list[float]],
@@ -114,6 +148,29 @@ def test_click_track_tempo_and_grid_confidence(tmp_path):
     recon = run_recon(pcm)
 
     assert 118.0 <= recon.tempo_bpm <= 122.0
+    assert recon.grid.confidence > 0.8
+
+
+def test_accented_click_track_meter_confidence_high(tmp_path):
+    """D10: an unambiguous 4/4 accent pattern (every 4th beat louder) must produce a high
+    margin ratio between the winning group-{3,4} correlation and the runner-up."""
+    path = make_accented_click_track(tmp_path / "accented.wav", bpm=120.0, accent_every=4)
+    pcm = decode(str(path))
+    recon = run_recon(pcm)
+
+    assert recon.grid.meter == (4, 4)
+    assert recon.grid.meter_confidence > 0.3
+
+
+def test_uniform_click_meter_confidence_low_while_grid_confidence_stays_high(tmp_path):
+    """D10: an unaccented, perfectly uniform click train has a near-tied 3-vs-4 grouping
+    (every beat equal strength) — ``meter_confidence`` must read low even though the grid
+    itself (``confidence``, a different signal) is rock-solid."""
+    path = make_click_track(tmp_path / "uniform.wav", bpm=120.0, seconds=16.0)
+    pcm = decode(str(path))
+    recon = run_recon(pcm)
+
+    assert recon.grid.meter_confidence < 0.15
     assert recon.grid.confidence > 0.8
 
 
@@ -222,11 +279,21 @@ def test_desktop_fixture_recon_has_every_field(fixture):
 
 
 def test_band_energy_sketch_names_are_locked():
+    """Weak-lock fix (review finding): pin the EXACT full 8-key set, not just one member —
+    these are ``geomspace(60, 16000, 9)`` edges, `f"{int(lo)}-{int(hi)}"` per adjacent pair."""
     pcm = decode(str(FIXTURES / "ci_sparse" / "mix.flac"))
     recon = run_recon(pcm)
 
-    assert len(recon.band_energy_db) == 8
-    assert "60-120" in recon.band_energy_db
+    assert set(recon.band_energy_db.keys()) == {
+        "60-120",
+        "120-242",
+        "242-487",
+        "487-979",
+        "979-1969",
+        "1969-3959",
+        "3959-7959",
+        "7959-16000",
+    }
     assert all(isinstance(v, float) for v in recon.band_energy_db.values())
 
 

@@ -116,12 +116,17 @@ class BeatGrid(BaseModel):
     is the mean beat-onset alignment score, normalized [0, 1]; below
     ``CFG.BEAT_GRID_CONFIDENCE_MIN`` downstream consumers switch to a fixed grid — the flag
     rides on this field, this module never switches itself (``kind`` is always ``"beat"``
-    coming out of recon)."""
+    coming out of recon). ``meter_confidence`` is a DIFFERENT signal (D10): the margin ratio
+    between the winning {3,4}-group correlation and the runner-up, i.e. how decisively the
+    meter itself (not the grid alignment) was picked — a track can have a rock-solid grid
+    (high ``confidence``) with an ambiguous meter (low ``meter_confidence``), e.g. an
+    unaccented uniform click train."""
 
     times_s: list[float]
     downbeats_s: list[float]
     meter: tuple[int, int]
     confidence: float
+    meter_confidence: float
     kind: Literal["beat", "fixed"]
 
 

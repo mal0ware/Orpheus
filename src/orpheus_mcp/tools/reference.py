@@ -54,6 +54,16 @@ def recon_reference(file: str, *, cache: CacheFS | None = None) -> Recon:
 
 
 def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG001 - uniform signature
+    """Registers the ``reference`` category. Probes for librosa BEFORE registering any
+    tool: every tool in this category needs it, and ``registry.register_tools``'s
+    ``except ImportError`` contract is how optional-dependency categories are skipped
+    (with a warning) instead of being advertised and then raising at call time (house
+    registry-honesty rule, see registry.py's HONESTY RULE docstring)."""
+    import importlib.util
+
+    if importlib.util.find_spec("librosa") is None:
+        raise ImportError("reference toolset needs the [analysis] extra (librosa)")
+
     @mcp.tool(name="recon_reference", annotations=_RO)
     def recon_reference_tool(file: str) -> Recon:
         """T1 recon: LUFS, tempo/beat grid + downbeat/meter + grid confidence, tuning

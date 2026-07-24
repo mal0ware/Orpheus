@@ -51,6 +51,21 @@ _DOWNBEAT_MIN_BEATS = 6
 _DOWNBEAT_GROUPS = (3, 4)
 _NOVELTY_KERNEL_RADIUS = 8
 
+# §T1: below this many detected beats, the mean-inter-beat-interval tempo estimate is too
+# noisy to trust over librosa's own scalar tempo (Task 1.3 brief, `_tempo_from_beats`).
+_MIN_BEATS_FOR_TEMPO = 4
+
+# Foote checkerboard-novelty peak-picking (librosa.util.peak_pick) — named per Task 1.3
+# review (minor finding: bare literals at the call site). Kept as individual constants
+# (not a single dict) so librosa's typed stub for peak_pick's per-arg int/bool params
+# stays mypy-clean at the call site.
+_PEAK_PICK_PRE_MAX = 3
+_PEAK_PICK_POST_MAX = 3
+_PEAK_PICK_PRE_AVG = 3
+_PEAK_PICK_POST_AVG = 3
+_PEAK_PICK_DELTA = 0.05
+_PEAK_PICK_WAIT = 4
+
 
 def run_recon(pcm: Pcm) -> Recon:
     """The T1 pass: everything ``recon_reference`` caches under kind ``"recon"``."""
@@ -66,13 +81,16 @@ def run_recon(pcm: Pcm) -> Recon:
     beat_times = librosa.frames_to_time(beat_frames, sr=sr).tolist()
     tempo_bpm = _normalize_tempo(_tempo_from_beats(beat_times, float(np.atleast_1d(tempo_raw)[0])))
 
-    meter, downbeat_idx, alignment_score = _meter_and_confidence(beat_frames, onset_env)
+    meter, downbeat_idx, alignment_score, meter_confidence = _meter_and_confidence(
+        beat_frames, onset_env
+    )
     downbeats_s = [beat_times[i] for i in downbeat_idx if i < len(beat_times)]
     grid = BeatGrid(
         times_s=beat_times,
         downbeats_s=downbeats_s,
         meter=meter,
         confidence=alignment_score,
+        meter_confidence=meter_confidence,
         kind="beat",
     )
 
@@ -132,7 +150,7 @@ def _tempo_from_beats(beat_times: list[float], fallback_bpm: float) -> float:
     long around the true period (e.g. 21 vs 22 frames for a period that isn't an integer
     number of hops) — the scalar tempo picks up that bias, the mean interval cancels it.
     Falls back to librosa's own estimate when there are too few beats to average."""
-    if len(beat_times) < 4:
+    if len(beat_times) < _MIN_BEATS_FOR_TEMPO:
         return fallback_bpm
     diffs = np.diff(beat_times)
     mean_interval = float(np.mean(diffs))
@@ -155,15 +173,22 @@ def _normalize_tempo(bpm: float) -> float:
 # Downbeats/meter: onset-strength periodicity over beat groups {3, 4}, argmax correlation.
 # Grid confidence = mean beat-onset alignment score (onset strength at each detected beat,
 # normalized by the track's peak onset strength), independent of the meter pick.
+#
+# meter_confidence (D10, controller decision) is a SEPARATE signal from grid confidence: the
+# margin ratio between the winning {3,4}-group's best-phase correlation and the runner-up's,
+# i.e. `(best - second) / max(best, eps)`, bounded [0, 1]. A rock-solid grid (every beat
+# lands exactly on an onset) can still have an ambiguous METER (grouping by 3 vs 4 scores
+# nearly identically, e.g. an unaccented uniform click) — the two fields must not be
+# conflated into one.
 # --------------------------------------------------------------------------- #
 
 
 def _meter_and_confidence(
     beat_frames: np.ndarray, onset_env: np.ndarray
-) -> tuple[tuple[int, int], list[int], float]:
+) -> tuple[tuple[int, int], list[int], float, float]:
     n = len(beat_frames)
     if n == 0 or len(onset_env) == 0:
-        return (4, 4), [], 0.0
+        return (4, 4), [], 0.0, 0.0
 
     idx = np.clip(beat_frames, 0, len(onset_env) - 1)
     strengths = onset_env[idx]
@@ -171,22 +196,34 @@ def _meter_and_confidence(
     alignment_score = float(np.clip(np.mean(strengths) / peak, 0.0, 1.0)) if peak > _EPS else 0.0
 
     if n < _DOWNBEAT_MIN_BEATS:
-        return (4, 4), [], alignment_score
+        return (4, 4), [], alignment_score, 0.0
 
     best_group = _DOWNBEAT_GROUPS[0]
     best_phase = 0
     best_score = -np.inf
+    group_best_scores: dict[int, float] = {}
     for group in _DOWNBEAT_GROUPS:
+        group_score = -np.inf
+        group_phase = 0
         for phase in range(group):
             phase_idx = np.arange(phase, n, group)
             score = float(np.mean(strengths[phase_idx]))
-            if score > best_score:
-                best_score = score
-                best_group = group
-                best_phase = phase
+            if score > group_score:
+                group_score = score
+                group_phase = phase
+        group_best_scores[group] = group_score
+        if group_score > best_score:
+            best_score = group_score
+            best_group = group
+            best_phase = group_phase
+
+    ranked_scores = sorted(group_best_scores.values(), reverse=True)
+    best = ranked_scores[0]
+    second = ranked_scores[1] if len(ranked_scores) > 1 else ranked_scores[0]
+    meter_confidence = float(np.clip((best - second) / max(best, _EPS), 0.0, 1.0))
 
     downbeat_idx = list(range(best_phase, n, best_group))
-    return (best_group, 4), downbeat_idx, alignment_score
+    return (best_group, 4), downbeat_idx, alignment_score, meter_confidence
 
 
 # --------------------------------------------------------------------------- #
@@ -254,7 +291,13 @@ def _estimate_sections(
         return whole_file
 
     peaks = librosa.util.peak_pick(
-        novelty, pre_max=3, post_max=3, pre_avg=3, post_avg=3, delta=0.05, wait=4
+        novelty,
+        pre_max=_PEAK_PICK_PRE_MAX,
+        post_max=_PEAK_PICK_POST_MAX,
+        pre_avg=_PEAK_PICK_PRE_AVG,
+        post_avg=_PEAK_PICK_POST_AVG,
+        delta=_PEAK_PICK_DELTA,
+        wait=_PEAK_PICK_WAIT,
     )
     if len(peaks) == 0:
         return whole_file
