@@ -431,6 +431,56 @@ class SoundCharacter(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# §15.3 descriptor→intent rules — the typed contract ``analysis/intents.py`` (Task 10.1)
+# produces and ``tools/reference.py::compare_character`` returns. Intent generation lives
+# in the rules engine ONLY (§9): Claude reads these, never computes them.
+# --------------------------------------------------------------------------- #
+
+
+class Intent(BaseModel):
+    """One fired §15.3 rule. ``apply_path`` is the stock (ReaPlugs/JSFX) apply recipe from
+    ``data/intent_rules.json``'s ``"apply"`` block, verbatim, or ``None`` for a recommend-only
+    intent — either because the rule itself never auto-applies (rule 14: master-bus loudness
+    needs explicit user opt-in) or because a §6 R3 complement/residual source made a
+    tail-sensitive rule (11, 12) recommend-only for this particular diff (the discount note
+    rides on :class:`CharacterDiff.notes`, not here). ``vocal_only_skipped`` is reserved for a
+    partially-evaluated vocal-only rule; Task 10.1's engine instead skips vocal-only rules
+    entirely (with a note) when the stem isn't vocals on both sides, so it stays ``False`` in
+    practice today. ``installed_matches`` (§8 step 2.1) are the caller's own
+    ``list_installed_fx`` names whose text substring-matched (case-insensitive) this rule's
+    ``inventory_keywords`` — empty when no ``inventory`` was passed to ``compare_character``."""
+
+    rule_id: int
+    intent: str
+    params: dict[str, float | str] = Field(default_factory=dict)
+    apply_path: dict[str, str | int | float] | None
+    explanation: str
+    vocal_only_skipped: bool = False
+    installed_matches: list[str] = Field(default_factory=list)
+
+
+class CharacterDiff(BaseModel):
+    """The §9 ``compare_character`` result: ``diffs`` maps every numeric descriptor present on
+    both sides (excluding string/bool-typed fields like ``flavor``/``mod_class``/
+    ``reverb_rt60_class``/``delay_approx``/``reverb_approx``, which the fixed §15.3 rules read
+    directly off the source :class:`SoundCharacter` objects instead) to ``{"a": ..., "b": ...,
+    "delta": a - b}`` — spectral (``band_*_db``) keys whose upper edge exceeds
+    ``band_limit_hz`` are excluded entirely (§8 mandatory normalization: comparing a
+    full-bandwidth render against a codec-limited reference outside their common band reads
+    the render as systematically 'darker', misfiring rules 3/5). ``intents`` are every §15.3
+    rule that fired, in rule-id order. ``band_limit_hz`` is ``min(a.source.bandwidth_hz,
+    b.source.bandwidth_hz)`` (or whichever side measured a bandwidth, or the Nyquist ceiling
+    if neither did) — always recorded, per §8, so Claude can say 'compared up to 16 kHz
+    (mp3-limited)'. ``notes`` carries the band-limit statement plus any vocal-only-skip /
+    complement-discount honesty strings the engine emitted."""
+
+    diffs: dict[str, dict[str, float | None]] = Field(default_factory=dict)
+    intents: list[Intent] = Field(default_factory=list)
+    band_limit_hz: float
+    notes: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
 # Analysis outputs
 # --------------------------------------------------------------------------- #
 

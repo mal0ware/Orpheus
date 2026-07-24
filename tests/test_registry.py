@@ -70,6 +70,7 @@ IMPLEMENTED = {
     "separate_region",
     "verify_stem",
     "characterize",
+    "compare_character",
     "transcribe_lyrics",
     "locate_lyric",
 }

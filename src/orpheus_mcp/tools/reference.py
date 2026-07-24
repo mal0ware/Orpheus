@@ -24,6 +24,7 @@ from orpheus_mcp.analysis.config import CFG
 from orpheus_mcp.analysis.separation import SeparationError
 from orpheus_mcp.analysis.separation import separate_region as _run_separation_core
 from orpheus_mcp.models import (
+    CharacterDiff,
     ChordsLane,
     GateResult,
     GateSet,
@@ -53,6 +54,7 @@ __all__ = [
     "separate_region",
     "verify_stem",
     "characterize",
+    "compare_character",
     "transcribe_lyrics",
     "locate_lyric",
     "register",
@@ -731,6 +733,50 @@ def characterize(
     return character
 
 
+def compare_character(
+    a: str | StemHandle,
+    b: str | StemHandle,
+    inventory: list[str] | None = None,
+    *,
+    cache: CacheFS | None = None,
+) -> CharacterDiff:
+    """§9/§15.3 ``compare_character``: measure (via :func:`characterize`, cache-first) both
+    ``a`` (the REFERENCE) and ``b`` (the USER/render) sources, then run the §15.3 rules engine
+    (``analysis.intents``) over the §8-normalized diff. Intent generation lives in the rules
+    engine ONLY — this tool returns whatever it fired, Claude reads them but never re-derives
+    them (§9 contract).
+
+    Every signed descriptor delta is ``a − b`` (reference minus user). Spectral band diffs are
+    restricted to ``min(a, b)``'s measured bandwidth (§8 mandatory normalization — recorded in
+    the result's ``band_limit_hz``/``notes`` so a codec-limited reference is never misread as
+    the render being 'darker'). ``vocal_only`` rules (rule 13, de-ess) are skipped, with a note,
+    unless BOTH sides are a ``"vocals"`` stem. A §6 R3 ``complement=True`` source on either side
+    forces the tail-sensitive rules (11 delay, 12 reverb) to recommend-only, with a discount
+    note, even if they otherwise fired.
+
+    ``inventory`` (optional — pass ``list_installed_fx``'s result), when given, fills each
+    fired intent's ``installed_matches`` with the caller's own plugins whose name substring-
+    matches (case-insensitive) that intent's keyword table, so recommendations name the user's
+    own gear before the stock/catalog fallback (§8 step 2.1). ``inventory=None`` leaves every
+    intent's ``installed_matches`` empty — the stock apply path is unaffected either way.
+
+    Does not modify the input audio or any REAPER project (``readOnlyHint``) — it does write to
+    the local analysis cache (``~/.orpheus_cache``), via the same ``characterize`` cache both
+    sides go through.
+    """
+    from orpheus_mcp.analysis.intents import diff_characters, fire_rules, match_inventory
+
+    fs = cache if cache is not None else CacheFS()
+    char_a = characterize(a, cache=fs)
+    char_b = characterize(b, cache=fs)
+    diff = diff_characters(char_a, char_b)
+    intents = fire_rules(diff)
+    match_inventory(intents, inventory)
+    return CharacterDiff(
+        diffs=diff.diffs, intents=intents, band_limit_hz=diff.band_limit_hz, notes=diff.notes
+    )
+
+
 def _default_dereverb_engine() -> SeparatorEngine | None:
     """The default engine for the rank-1 dereverb registry entry, or ``None`` when no entry
     exists or [separation] cannot build one — constructing the engine is cheap (heavy deps load
@@ -1092,6 +1138,24 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
         (``~/.orpheus_cache``).
         """
         return characterize(source, region)
+
+    @mcp.tool(name="compare_character", annotations=_RO)
+    def compare_character_tool(
+        a: str, b: str, inventory: list[str] | None = None
+    ) -> CharacterDiff:
+        """§15.3 compare two characterized sources: ``a`` (the REFERENCE) vs ``b`` (the USER/
+        render), §8-normalized (spectral diffs restricted to the narrower source's measured
+        bandwidth — recorded in ``band_limit_hz``/``notes``), and run the 14-rule §15.3 engine
+        over the diff. Every signed delta is ``a − b`` (reference minus user). ``vocal_only``
+        rules skip (with a note) unless both sides are a ``"vocals"`` stem; a §6 R3
+        ``complement=True`` source forces the tail-sensitive delay/reverb rules to
+        recommend-only. Pass ``inventory`` (``list_installed_fx``'s result) to have fired
+        intents name the user's own plugins first (§8 step 2.1) — omit it for the stock-only
+        path. Intent generation lives in this rules engine ONLY; Claude reads the result, it
+        does not re-derive intents. Does not modify the input audio or any REAPER project
+        (``readOnlyHint``) — it does write to the local analysis cache (``~/.orpheus_cache``).
+        """
+        return compare_character(a, b, inventory)
 
     @mcp.tool(name="locate_lyric", annotations=_RO)
     def locate_lyric_tool(
