@@ -158,6 +158,26 @@ class Recon(BaseModel):
     band_energy_db: dict[str, float]
 
 
+class Timeline(BaseModel):
+    """The T2 instrument-activity timeline (§9 ``timeline.json``): raw, un-thresholded
+    tagger activations, mapped down to the union of ``data/model_registry.json``'s
+    ``tagger_classes`` (§9 tool contract) so a 4-minute song stays tool-result-sized
+    (~240 x |mapped| floats) instead of the tagger's full ~527-class AudioSet output.
+
+    ``hop_s`` is LOCKED to 1.0: ``build_timeline`` max-pools the tagger's native (~10 ms)
+    frames up to a 1 s hop — a spike anywhere within a second makes that second read the
+    spike's value, never an average that would wash out a short hit. Every gate/exposure
+    computation downstream (``most_exposed_window``, ``target_absent``, the §5.2 bleed
+    gate) consumes these same 1 s frames. No threshold is baked in here — CFG.
+    TIMELINE_ACTIVITY_THRESHOLD / EXPOSURE_THRESHOLD are applied by consumers, never by
+    this model or ``build_timeline`` itself."""
+
+    schema_version: int = 1
+    classes: list[str]
+    hop_s: float
+    frames: list[list[float]]
+
+
 # --------------------------------------------------------------------------- #
 # Analysis outputs
 # --------------------------------------------------------------------------- #

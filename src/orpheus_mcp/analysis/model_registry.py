@@ -183,6 +183,29 @@ def resolve(
     return sorted(candidates, key=lambda e: e.rank)
 
 
+def mapped_tagger_classes(*, allow_unpinned: bool = True) -> list[str]:
+    """The union of every registry entry's ``tagger_classes`` (§4/§9), sorted for a
+    deterministic column order. This is the "mapped subset" ``build_timeline`` (§9 tool
+    contract) subsets the tagger's full AudioSet output down to — entries whose
+    ``tagger_classes`` is empty (the tagger entry itself, chord/lyrics/transcription
+    entries) contribute nothing, which is correct: they have no bleed/exposure target."""
+    entries = load_registry(allow_unpinned=allow_unpinned)
+    seen: set[str] = set()
+    for entry in entries:
+        seen.update(entry.tagger_classes)
+    return sorted(seen)
+
+
+def entries_for_task(task: str, *, allow_unpinned: bool = True) -> list[ModelEntry]:
+    """Registry entries for ``task``, unfiltered by target/VRAM/license.
+
+    ``resolve()`` requires a non-empty ``targets`` match, which the tagger entry
+    (``tagger/panns-sed``, ``targets=[]``) can never satisfy — task-keyed (not
+    target-keyed) lookups, like "give me the tagger entry", use this instead.
+    """
+    return [e for e in load_registry(allow_unpinned=allow_unpinned) if e.task == task]
+
+
 def free_vram_gb() -> float | None:
     """Free VRAM on the default CUDA device, in GiB — or None if there is no CUDA to ask.
 

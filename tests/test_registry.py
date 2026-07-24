@@ -58,8 +58,9 @@ IMPLEMENTED = {
     "build_section",
     "arrange_song",
     "place_lyric_markers",
-    # reference (Task 1.3 — T1 recon)
+    # reference (Task 1.3 — T1 recon; Task 2.1 — T2 instrument timeline)
     "recon_reference",
+    "instrument_timeline",
 }
 
 
