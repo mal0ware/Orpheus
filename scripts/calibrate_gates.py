@@ -51,6 +51,21 @@ import numpy as np
 # is already on the path (pythonpath=["."]); inserting it here is a harmless no-op there.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _ensure_tests_on_path() -> None:
+    """--ci-smoke ONLY: make the bare ``from stub_engines import ...`` below resolve when this
+    script is run standalone (``uv run python scripts/calibrate_gates.py --ci-smoke``).
+
+    Under pytest, collecting ``tests/test_calibration.py`` (no ``tests/__init__.py``) makes
+    pytest prepend ``tests/`` to ``sys.path`` itself, which is the only reason the bare import
+    works there today. Standalone execution gets none of that, so it must be done explicitly
+    here — derived from the repo root the same way as the ``sys.path.insert`` above."""
+    tests_dir = str(_REPO_ROOT / "tests")
+    if tests_dir not in sys.path:
+        sys.path.insert(0, tests_dir)
+
 from scripts.pick_sed_head import (  # noqa: E402
     ROLE_CLASS_MAP,
     activity_frames_from_mono,
@@ -628,6 +643,8 @@ def format_fit_table(fits: Sequence[ConstantFit]) -> str:
 
 def _ci_smoke_engine_pairs() -> list[tuple[ModelEntry, SeparatorEngine]]:
     from orpheus_mcp.analysis.model_registry import ModelEntry
+
+    _ensure_tests_on_path()
     from stub_engines import StubEngine
 
     targets = ["vocals", "drums", "bass", "other"]
@@ -752,6 +769,7 @@ def main(argv: list[str] | None = None) -> int:
         ci_root = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "audio"
         manifest = verify_manifest_integrity(ci_root)
         fixture_dirs = sorted(ci_root / n for n in {r.split("/", 1)[0] for r in manifest["files"]})
+        _ensure_tests_on_path()
         from stub_engines import StubTagger
         samples = collect_samples(fixture_dirs, _ci_smoke_engine_pairs(), StubTagger())
         fits = fit_all(samples)

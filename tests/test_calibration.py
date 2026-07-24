@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import math
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -233,6 +235,59 @@ def test_load_overrides_malformed_file_is_noop(tmp_path: Path) -> None:
     assert config.load_calibration_overrides(f) == []
 
 
+def test_load_overrides_unknown_key_warns_and_applies_nothing_for_it(
+    tmp_path: Path, cfg_cal_snapshot: None
+) -> None:
+    # A typo'd constant name: not a # cal field, not a field at all -> must warn (naming the
+    # key) and be skipped, rather than silently dropped.
+    payload = {"constants": {"GATE_BLEED_PSAS": {"value": 0.5}}}
+    f = tmp_path / "c.json"
+    f.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.warns(UserWarning, match="GATE_BLEED_PSAS"):
+        applied = config.load_calibration_overrides(f)
+    assert applied == []
+
+
+def test_load_overrides_malformed_value_warns_skips_and_continues(
+    tmp_path: Path, cfg_cal_snapshot: None
+) -> None:
+    # A malformed "value" for a known # cal constant (a string that can't coerce to float) must
+    # not raise and must not abort the rest of the file's constants.
+    before = CFG.GATE_BLEED_PASS
+    payload = {
+        "constants": {
+            "GATE_BLEED_PASS": {"value": "not-a-number"},
+            "GATE_SILENCE_PASS_DB": {"value": -30.0},
+        }
+    }
+    f = tmp_path / "c.json"
+    f.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.warns(UserWarning, match="GATE_BLEED_PASS"):
+        applied = config.load_calibration_overrides(f)
+
+    assert applied == ["GATE_SILENCE_PASS_DB"]
+    assert pytest.approx(-30.0) == CFG.GATE_SILENCE_PASS_DB
+    assert before == CFG.GATE_BLEED_PASS  # malformed constant left untouched, not raised
+
+
+def test_load_overrides_malformed_value_never_raises_at_import_call_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cfg_cal_snapshot: None
+) -> None:
+    # Mirrors the exact call shape used at module import (`load_calibration_overrides()` with no
+    # explicit path, resolved via `calibrated_thresholds_path()`) so the "never raise, the whole
+    # import graph depends on this" contract is pinned against the real entry point, not just the
+    # explicit-path test helper above.
+    f = tmp_path / "calibrated_thresholds.json"
+    f.write_text(json.dumps({"constants": {"GATE_AGREEMENT_PASS": {"value": []}}}), "utf-8")
+    monkeypatch.setattr(config, "calibrated_thresholds_path", lambda: f)
+
+    with pytest.warns(UserWarning, match="GATE_AGREEMENT_PASS"):
+        applied = config.load_calibration_overrides()  # must not raise
+    assert applied == []
+
+
 def test_override_busts_verify_config_hash(tmp_path: Path, cfg_cal_snapshot: None) -> None:
     before = cachefs.verify_config_hash()
     f = tmp_path / "c.json"
@@ -325,6 +380,26 @@ def test_ci_smoke_collects_samples_and_emits_constants(_plenty_of_vram: None) ->
         assert spec.constant in payload["constants"]
     assert "TIMELINE_ACTIVITY_THRESHOLD" in payload["constants"]
     assert "EXPOSURE_THRESHOLD" in payload["constants"]
+
+
+def test_ci_smoke_standalone_subprocess_matches_ci_argv() -> None:
+    """Pins the standalone import path (not just the pytest-side-effect one): invokes the script
+    exactly as CI does (`.github/workflows/ci.yml`'s "Gate-calibration smoke" step runs
+    `uv run python scripts/calibrate_gates.py --ci-smoke`) in a fresh subprocess with the repo
+    root as cwd, so the bare `from stub_engines import ...` imports must resolve on their own —
+    with no help from pytest's tests/-on-sys.path collection side-effect."""
+    repo_root = Path(__file__).resolve().parent.parent
+    result = subprocess.run(
+        [sys.executable, "scripts/calibrate_gates.py", "--ci-smoke"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"standalone --ci-smoke failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "ZERO downloads" in result.stdout
 
 
 def test_subset_covers_all_genres() -> None:

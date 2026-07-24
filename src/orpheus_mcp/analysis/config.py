@@ -16,6 +16,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+import warnings
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -111,9 +112,13 @@ def load_calibration_overrides(
                                            "fixture_set_hash": "…", "fallback": false}, …}}
 
     A bare scalar is also accepted in place of the ``{"value": …}`` object (forward tolerance).
-    Unknown / non-``# cal`` keys are ignored; a missing, empty, or malformed file applies
+    Unknown / non-``# cal`` keys warn (naming the key) and are skipped rather than applied; a
+    malformed ``value`` for a known constant (e.g. one that can't coerce to the field's runtime
+    type) also warns (naming the constant + offending value) and is skipped, WITHOUT aborting the
+    rest of the file. A missing, empty, or fully malformed (unparseable JSON) file applies
     nothing (returns ``[]``) rather than raising — a box with no calibration simply runs the
-    §16 initials."""
+    §16 initials. This function must never raise: it runs at import time on everything's import
+    graph."""
     target = cfg if cfg is not None else CFG
     p = Path(path) if path is not None else calibrated_thresholds_path()
     if not p.is_file():
@@ -132,14 +137,28 @@ def load_calibration_overrides(
     applied: list[str] = []
     for name, spec in constants.items():
         if name not in cal or name not in allowed:
+            warnings.warn(
+                f"load_calibration_overrides: skipping unknown/non-calibration key {name!r} "
+                f"in {p}", stacklevel=2,
+            )
             continue
         value = spec.get("value") if isinstance(spec, dict) else spec
         if value is None:
             continue
         current = getattr(target, name)
         # Preserve the field's runtime type (every # cal field is a float today; an int-typed
-        # one would coerce cleanly rather than smuggle a float in).
-        setattr(target, name, type(current)(value))
+        # one would coerce cleanly rather than smuggle a float in). A malformed value (e.g. a
+        # string that doesn't parse as a number) must never take down every importer of this
+        # module — warn (naming the constant + offending value) and skip it, keeping the box on
+        # its safe §16 initial for that one constant while the rest of the file still applies.
+        try:
+            setattr(target, name, type(current)(value))
+        except (ValueError, TypeError) as exc:
+            warnings.warn(
+                f"load_calibration_overrides: skipping malformed value {value!r} for "
+                f"calibration constant {name!r} in {p}: {exc}", stacklevel=2,
+            )
+            continue
         applied.append(name)
     return applied
 
