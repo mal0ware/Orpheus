@@ -138,8 +138,12 @@ def test_shipped_param_maps_load_and_cover_the_required_plugins():
         if plugin.startswith("_"):
             continue
         for param_name, param_entry in entry["params"].items():
-            assert param_entry["live_verified"] is False, (
-                f"{plugin}.{param_name} must ship live_verified=false (unverified map)"
+            # Live-verified 2026-07-25 against REAPER 7.78 (the <PIN_BEFORE_SHIP> smoke):
+            # every entry must carry the flag as an explicit bool — and having done the
+            # verification, shipping an UNverified entry again would be a regression.
+            assert param_entry["live_verified"] is True, (
+                f"{plugin}.{param_name} lost its live_verified=true status "
+                "(indices were read back from a real REAPER 7.78 instance)"
             )
 
 

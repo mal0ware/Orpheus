@@ -214,12 +214,18 @@ def _reaeq_band1_params(tr: FakeTrack) -> tuple[float, float, float] | None:
     from orpheus_mcp.tools.mix import from_normalized, load_param_maps
 
     fx = next((f for f in tr.fx_chain if f.name == "ReaEQ"), None)
-    if fx is None or not {0, 1, 2} <= set(fx.params):
+    if fx is None:
         return None
     params = load_param_maps()["ReaEQ"]["params"]
-    freq = from_normalized(fx.params[0], params["freq"])
-    gain = from_normalized(fx.params[1], params["gain"])
-    q = from_normalized(fx.params[2], params["q"])
+    # Indices come FROM the map too (live-verified 7.78: the bell is Band 2 at 3/4/5, not
+    # band 1 at 0/1/2) — hardcoding them here once let this helper silently drift from the
+    # exact contract it exists to mirror.
+    idx = {k: params[k]["index"] for k in ("freq", "gain", "q")}
+    if not set(idx.values()) <= set(fx.params):
+        return None
+    freq = from_normalized(fx.params[idx["freq"]], params["freq"])
+    gain = from_normalized(fx.params[idx["gain"]], params["gain"])
+    q = from_normalized(fx.params[idx["q"]], params["q"])
     return freq, gain, q
 
 
