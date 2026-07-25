@@ -733,19 +733,25 @@ def _overlap(truth_line: str, transcript: str) -> float:
 
 
 def _ctranslate2_cuda_usable() -> bool:
-    """Probe ctranslate2's CUDA path in a THROWAWAY subprocess: on this box a cuDNN 8-vs-9
-    mismatch makes it abort natively (exit 127) — uncatchable in-process, so probing inline
-    would kill the whole pytest run (it ate an entire ``-m gpu`` batch once). The child
-    process contains the crash; any nonzero exit or zero devices means skip."""
+    """Ground-truth probe: attempt the EXACT operation that fails — a CUDA WhisperModel
+    construction via ``FasterWhisperAsr._load()`` — in a throwaway subprocess. On this box
+    ctranslate2 aborts natively at cuDNN-ops load (exit 127, uncatchable in-process: it once
+    ate an entire ``-m gpu`` batch; ``get_cuda_device_count()==1`` and torch's bundled cuDNN 9
+    DLLs both LIE about usability, since ctranslate2 links the cuDNN 8 family). The child
+    contains any abort; "OK cuda" means the real load genuinely works on GPU."""
     import subprocess
     import sys
 
-    probe = subprocess.run(
-        [sys.executable, "-c",
-         "import ctranslate2; print(ctranslate2.get_cuda_device_count())"],
-        capture_output=True, text=True, timeout=120,
+    probe_code = (
+        "from orpheus_mcp.analysis.lyrics import FasterWhisperAsr\n"
+        "a = FasterWhisperAsr()\n"
+        "a._load()\n"
+        "print('OK', a._device)\n"
     )
-    return probe.returncode == 0 and probe.stdout.strip().isdigit() and int(probe.stdout) > 0
+    probe = subprocess.run(
+        [sys.executable, "-c", probe_code], capture_output=True, text=True, timeout=300
+    )
+    return probe.returncode == 0 and "OK cuda" in probe.stdout
 
 
 @pytest.mark.desktop
