@@ -742,10 +742,19 @@ def _ctranslate2_cuda_usable() -> bool:
     import subprocess
     import sys
 
+    # Load alone is NOT enough: WhisperModel construction succeeds without cuDNN-ops, and
+    # the fast-fail (0xC0000409, "Cannot locate cudnn_ops_infer64_8.dll") only fires at
+    # TRANSCRIBE time — so the child must run a real (tiny) inference to prove the path.
     probe_code = (
+        "import numpy as np, soundfile as sf, tempfile, os\n"
         "from orpheus_mcp.analysis.lyrics import FasterWhisperAsr\n"
+        "from orpheus_mcp.models import Window\n"
+        "t = np.arange(16000) / 16000.0\n"
+        "wav = (0.3 * np.sin(2 * np.pi * 220.0 * t)).astype('float32')\n"
+        "f = os.path.join(tempfile.mkdtemp(), 'probe.wav')\n"
+        "sf.write(f, wav, 16000)\n"
         "a = FasterWhisperAsr()\n"
-        "a._load()\n"
+        "a.transcribe(f, [Window(start_s=0.0, end_s=1.0)])\n"
         "print('OK', a._device)\n"
     )
     probe = subprocess.run(
