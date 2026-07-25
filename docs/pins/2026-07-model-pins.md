@@ -128,3 +128,23 @@ repo, `Systran/faster-whisper-large-v3`) — no re-download was needed to record
 | Master I_FXEN render effect | STILL OPEN: resolve_track has no master-track addressing (clean typed error) — needs a master verb before this can be live-verified; bypass logic remains fake+lua-tested only |
 
 Ear-checks (stem quality, chords, lyrics on owned songs) remain the user's.
+
+## First real-music run — 2026-07-25 ("help herself" mp4, 200 s, user-owned)
+
+- **mp4 ingest (D17)**: decode 0.5 s; recon 21.1 s (T1); PANNs timeline 4.3 s GPU (T2);
+  SCNet-XL full-song 4-stem 44.2 s → **real rt_factor 0.221** (vs 0.076 synthetic pin);
+  CPU int8 Whisper+align 170 s for 152 s of vocal audio.
+- **Calibration evidence (owned-audio, supersedes synthetic-only caveats):**
+  (a) PANNs under-fires on a real loud master too — Singing peaked 0.064 on a vocal-heavy
+  song (threshold 0.30): TIMELINE_ACTIVITY_THRESHOLD must be re-fit per-domain or the
+  absent-target pre-gate false-fires on real music;
+  (b) gate 1 mix-consistency read −14.2 dB on SCNet stems of a dense master (pass ≤ −20) —
+  real-audio threshold evidence for the ear-panel refit.
+- **Working end-to-end on real music**: VAD found 152.3 s of vocals; 327 words transcribed;
+  `locate_lyric("help herself")` → 3 occurrences (61.6/118.7/144.4 s) all score 1.00;
+  hook-vocal SoundCharacter computed (warm-even, vibrato detected, long-reverb class).
+- **New issues from the run**: FasterWhisperAsr needs a runtime cuDNN guard or
+  ORPHEUS_ASR_DEVICE=cpu escape hatch (production auto-CUDA aborts on this box — the test
+  probe protects pytest only); a cp1252 UnicodeDecodeError in a subprocess reader thread
+  (cosmetic); section naming merged everything into "verse 1" (line clustering too coarse
+  on sparse real-song ASR lines).
