@@ -1220,7 +1220,8 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
         """T1 recon: LUFS, tempo/beat grid + downbeat/meter + grid confidence, tuning
         offset, key + alternates, structure sections, and an 8-band energy sketch.
 
-        Decodes ``file`` (mp3/wav/flac/m4a/ogg/aiff), caches the result under the
+        Decodes ``file`` (mp3/wav/flac/m4a/ogg/aiff, or an .mp4 music video — the
+        audio stream is extracted, video discarded), caches the result under the
         decoded-PCM hash so repeat calls on the same audio never re-run librosa. Does not
         modify the input file or any REAPER project (``readOnlyHint``) — it does write to
         the local analysis cache (``~/.orpheus_cache``).

@@ -362,3 +362,26 @@ def test_evict_lru_never_evicts_checkpoints(tmp_path, monkeypatch):
     assert fs.read_json(h, "recon", meta=meta) is None
     assert weights.is_file()  # but checkpoints/ was never even a candidate
     assert weights.read_bytes() == payload
+
+
+@requires_ffmpeg
+def test_mp4_music_video_decodes_audio_stream(tmp_path):
+    """An .mp4 music video decodes like any lossy audio file: ffmpeg (already invoked with
+    -vn) extracts the audio stream, and the result is analysis-ready Pcm. Built as a REAL
+    video file — sine audio + a black video track — so the video-container path is genuine."""
+    import subprocess
+
+    wav = make_sine(tmp_path / "src.wav", seconds=2.0)
+    mp4 = tmp_path / "video.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", "color=black:s=64x64:d=2", "-i", str(wav),
+         "-c:v", "libx264", "-c:a", "aac", "-shortest", str(mp4)],
+        capture_output=True, check=True,
+    )
+
+    pcm = decode(str(mp4))
+    assert pcm.decoder.startswith("ffmpeg")
+    assert pcm.sample_rate > 0
+    assert 1.5 < pcm.duration_s < 2.5
+    assert float(abs(pcm.samples).max()) > 0.05  # the sine survived, not silence
+    assert pcm.pcm_hash == pcm_hash(str(mp4))  # hash path agrees with decode path

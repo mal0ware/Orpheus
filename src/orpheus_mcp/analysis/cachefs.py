@@ -67,7 +67,8 @@ class DecodeError(Exception):
 
 
 _NATIVE_EXTS = {".wav", ".flac", ".ogg", ".aiff", ".aif"}
-_FFMPEG_EXTS = {".mp3", ".m4a"}
+# .mp4: music videos — ffmpeg (already invoked with -vn) extracts the audio stream.
+_FFMPEG_EXTS = {".mp3", ".m4a", ".mp4"}
 _DRM_EXTS = {".m4p"}
 
 _STDERR_TAIL_LINES = 15
@@ -80,7 +81,8 @@ _STDERR_TAIL_LINES = 15
 
 def decode(path: str) -> Pcm:
     """Decode ``path`` to canonical Pcm. soundfile handles wav/flac/ogg/aiff natively;
-    mp3/m4a go through an ffmpeg subprocess (list argv, no shell) to a temp wav first.
+    mp3/m4a/mp4 (incl. music videos — the audio stream is extracted, video discarded) go
+    through an ffmpeg subprocess (list argv, no shell) to a temp wav first.
 
     Raises :class:`DecodeError` — never a raw soundfile/subprocess exception — for DRM
     (``.m4p``, checked before any subprocess), a missing/corrupt/truncated file, a missing
