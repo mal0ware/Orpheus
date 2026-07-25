@@ -732,9 +732,30 @@ def _overlap(truth_line: str, transcript: str) -> float:
     return sum(1 for t in truth if t in trans) / len(truth)
 
 
+def _ctranslate2_cuda_usable() -> bool:
+    """Probe ctranslate2's CUDA path in a THROWAWAY subprocess: on this box a cuDNN 8-vs-9
+    mismatch makes it abort natively (exit 127) — uncatchable in-process, so probing inline
+    would kill the whole pytest run (it ate an entire ``-m gpu`` batch once). The child
+    process contains the crash; any nonzero exit or zero devices means skip."""
+    import subprocess
+    import sys
+
+    probe = subprocess.run(
+        [sys.executable, "-c",
+         "import ctranslate2; print(ctranslate2.get_cuda_device_count())"],
+        capture_output=True, text=True, timeout=120,
+    )
+    return probe.returncode == 0 and probe.stdout.strip().isdigit() and int(probe.stdout) > 0
+
+
 @pytest.mark.desktop
 @pytest.mark.gpu
 def test_real_faster_whisper_recovers_truth_lines():
+    if not _ctranslate2_cuda_usable():
+        pytest.skip(
+            "ctranslate2 CUDA unusable on this box (known cuDNN 8-vs-9 mismatch — see "
+            "infra-whisper-fix-report); CPU path is covered by the desktop-marked test"
+        )
     """Run the REAL FasterWhisperAsr on the ci_vocal vocal STEM (SAPI TTS reading 6 known
     lines from truth.json). Assert status ok, English, and ≥4 of 6 truth lines fuzzy-
     recoverable (normalized token overlap ≥ 0.6) — TTS through separation is imperfect, so
