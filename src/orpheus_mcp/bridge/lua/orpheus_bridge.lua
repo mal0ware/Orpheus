@@ -682,7 +682,9 @@ local RENDER_STR_KEYS = { "RENDER_FILE", "RENDER_PATTERN", "RENDER_FORMAT" }
 -- REAPER "WAV / 32 bit FP" render preset (Preferences never exposes the raw blob) — the
 -- fake + lua-stub tests do NOT decode it (they only prove it is snapshotted/restored and
 -- that a .wav is produced), so a wrong blob here would pass CI yet render the wrong depth.
-local WAV_32F_RENDER_FORMAT = "ZXZhdxwAAAABAAAAAAAAAAIAAAAAAAAAABAAAAMAAAAgAAAA"
+local WAV_32F_RENDER_FORMAT = "ZXZhdyAAAAA="  -- 'evaw' + depth byte 32: REAPER's minimal
+-- WAV config, depth 32 == 32-bit FP. LIVE-VERIFIED 7.78 (the previous 36-byte blob was a
+-- fabricated guess that rendered PCM_24 -- caught by the 2026-07-25 live smoke).
 
 -- The project's audio sample rate. NOTE (verify live, Task 11): PROJECT_SRATE only reflects
 -- a project-forced rate when PROJECT_SRATE_USE is on; otherwise REAPER renders at the audio

@@ -114,3 +114,17 @@ repo, `Systran/faster-whisper-large-v3`) — no re-download was needed to record
 (non-`--pin` mode) will now download-and-verify all 5 files for this entry instead of just
 `model.bin`, so a clean install produces a loadable CT2 snapshot without an ad hoc fetch.
 
+
+## Live-REAPER smoke — 2026-07-25, REAPER 7.78/x64 (driven via the bridge)
+
+| Check | Result |
+|---|---|
+| FX param maps (all 8 plugins) | READ BACK from real instances; 3 had wrong indices (ReaEQ bell=Band 2; ReaDelay tap params; ReaXcomp per-band layout) + Saturation "mix" pointed at BYPASS — all corrected, `live_verified: true` throughout (commit 63d362e) |
+| ReaComp param order | threshold/ratio/attack/release CONFIRMED as originally mapped (the review's suspected reorder was wrong) |
+| JSFX AddByName strings | all 3 resolve as-is ("JS: Transient Controller" / "JS: Saturation" / "JS: Stereo Width") |
+| WAV_32F render format | original 36-byte blob was wrong (rendered PCM_24); minimal 8-byte 'evaw'+32 blob renders WAV FLOAT — verified via soundfile on real output |
+| render_track_region | non-silent 8 s + regional 1 s renders, exact durations, sr 44100 (= project), solos restored after every call, mutex released between calls |
+| Silence assertion (data-chunk scan) | survived real REAPER float-WAV headers AND correctly REFUSED a genuinely silent region — the §15.2 step-7 guarantee works on real output |
+| Master I_FXEN render effect | STILL OPEN: resolve_track has no master-track addressing (clean typed error) — needs a master verb before this can be live-verified; bypass logic remains fake+lua-tested only |
+
+Ear-checks (stem quality, chords, lyrics on owned songs) remain the user's.
