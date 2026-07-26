@@ -30,6 +30,8 @@ IMPLEMENTED = {
     "insert_midi_notes",
     "create_midi_item",
     "transpose_notes",
+    # tracks — the opt-in local-audio import verb (drag-and-drop, programmatically)
+    "import_audio_files",
     # instruments (pulled forward from Slice 2)
     "list_installed_fx",
     "add_instrument",

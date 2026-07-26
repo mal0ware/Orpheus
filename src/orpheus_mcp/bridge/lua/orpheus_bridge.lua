@@ -837,6 +837,105 @@ HANDLERS.render_track_region = function(p)
   return result
 end
 
+-- --------------------------------------------------------------------------- --
+-- import_audio_files — the OPT-IN local-audio import verb: the programmatic
+-- equivalent of dragging files the USER owns onto the timeline (motivating case:
+-- laying Orpheus-separated stems onto tracks for A/B).
+--
+-- Boundary (§1 "owned audio only" / §14.3): this handler inserts exactly the paths the
+-- Python tool was given — it never discovers, fetches, or embeds anything on its own.
+--
+-- The WHOLE import is ONE undo block: one Ctrl+Z removes every track/item it created
+-- (the README's product promise). A per-file failure is RECORDED, never silent: the
+-- structured result reports {imported, failed} and the undo block is still closed
+-- properly, so the project is never left half-imported with the block hanging open.
+-- --------------------------------------------------------------------------- --
+
+-- "C:\stems\vocals.wav" / "/stems/vocals.wav" -> "vocals". Handles both separators
+-- because a REAPER session on Windows happily accepts either in a path.
+local function basename_sans_ext(p)
+  local base = tostring(p):match("([^/\\]+)$") or tostring(p)
+  return (base:gsub("%.[^%.]+$", ""))   -- parens: drop gsub's replacement count
+end
+
+-- Import ONE file as a new appended track carrying one media item at at_s. Raises (via
+-- err) on ANY failure so the caller records it under `failed` and continues with the
+-- remaining files — a nil/zero-length source is a reported error, never a silent skip.
+local function import_one_audio_file(file, at_s, prefix)
+  -- Create + validate the source BEFORE touching the project, so an unreadable path
+  -- leaves NO stray empty track behind (same "fail before any state mutation" rule
+  -- render_track_region follows). Note this reorders the create-track/create-source
+  -- steps relative to a naive drag-and-drop recipe, deliberately.
+  local src = reaper.PCM_Source_CreateFromFile(file)
+  if not src then err("could not open audio file: " .. tostring(file)) end
+  -- verify live: GetMediaSourceLength(src) returns (length, lengthIsQN). For a PCM/audio
+  -- source the units are SECONDS and lengthIsQN is false; only MIDI sources report QN.
+  -- If a live source ever reports lengthIsQN=true here, D_LENGTH would need
+  -- TimeMap2_QNToTime conversion instead of the raw value. The stub cannot prove this.
+  local len, len_is_qn = reaper.GetMediaSourceLength(src)
+  if not len or len <= 0 or len_is_qn then
+    if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(src) end
+    err("audio file is empty or not a readable audio source: " .. tostring(file))
+  end
+
+  local count = reaper.CountTracks(0)
+  reaper.InsertTrackAtIndex(count, true)   -- append at the end
+  local tr = reaper.GetTrack(0, count)
+  if not tr then
+    if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(src) end
+    err("could not create a track for: " .. tostring(file))
+  end
+  local name = tostring(prefix or "") .. basename_sans_ext(file)
+  reaper.GetSetMediaTrackInfo_String(tr, "P_NAME", name, true)
+
+  local item = reaper.AddMediaItemToTrack(tr)
+  if not item then err("could not create a media item for: " .. tostring(file)) end
+  local take = reaper.AddTakeToMediaItem(item)
+  if not take then err("could not create a take for: " .. tostring(file)) end
+  -- The take takes OWNERSHIP of src from here on — do not PCM_Source_Destroy it below.
+  reaper.SetMediaItemTake_Source(take, src)
+  reaper.SetMediaItemInfo_Value(item, "D_POSITION", at_s)
+  reaper.SetMediaItemInfo_Value(item, "D_LENGTH", len)
+  -- verify live: the take-name setter is GetSetMediaItemTakeInfo_String(take, "P_NAME",
+  -- name, true) on REAPER 7.x. The stub only proves we call it with those arguments; if
+  -- the live build ignores it, the item will still be correct but unnamed.
+  reaper.GetSetMediaItemTakeInfo_String(take, "P_NAME", name, true)
+
+  return { file = tostring(file), track_guid = reaper.GetTrackGUID(tr), length_s = len }
+end
+
+HANDLERS.import_audio_files = function(p)
+  local files = p.files or {}
+  if #files == 0 then err("import_audio_files: no files given") end
+  local at_s = tonumber(p.at_s) or 0.0
+  local prefix = p.name_prefix or ""
+  local desc = string.format("Orpheus: import %d audio files", #files)
+
+  -- verify live: Undo_BeginBlock/Undo_EndBlock(desc, -1) nesting. The bridge dispatches
+  -- from a defer() tick, so this block may open inside whatever undo scope REAPER is in;
+  -- the live smoke must confirm ONE Ctrl+Z reverses the whole import (all N tracks and
+  -- items) rather than one track at a time. -1 == "all undo flags" (full state capture).
+  reaper.Undo_BeginBlock()
+  local imported, failed = {}, {}
+  -- The loop runs inside a pcall so NO raise — expected or not — can escape with the
+  -- undo block still open. Per-file failures are caught one level in and recorded.
+  local ok_all, loop_err = pcall(function()
+    for _, file in ipairs(files) do
+      local one_ok, one = pcall(import_one_audio_file, file, at_s, prefix)
+      if one_ok then
+        imported[#imported + 1] = one
+      else
+        failed[#failed + 1] = { file = tostring(file), error = tostring(one) }
+      end
+    end
+    reaper.UpdateArrange()   -- ONCE, after every file (not per item)
+  end)
+  reaper.Undo_EndBlock(desc, -1)
+  if not ok_all then err(tostring(loop_err)) end
+
+  return { imported = imported, failed = failed }
+end
+
 local function dispatch(fn, params)
   if fn == "__batch__" then
     local results = {}

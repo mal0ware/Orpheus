@@ -25,7 +25,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 LUA_DIR = REPO / "tests" / "lua"
 
-SUITES = ["test_m1_handlers.lua", "test_render_handlers.lua", "test_fx_handlers.lua"]
+SUITES = [
+    "test_m1_handlers.lua",
+    "test_render_handlers.lua",
+    "test_fx_handlers.lua",
+    "test_import_handlers.lua",
+]
 
 
 def run_suite(suite_path: Path) -> int:

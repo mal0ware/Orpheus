@@ -67,6 +67,21 @@ class FakeFxInstance:
 
 
 @dataclass
+class FakeMediaItem:
+    """One AUDIO media item on a track — what ``import_audio_files`` creates.
+
+    Kept separate from ``FakeTake`` (which models a MIDI take's notes) because the two
+    carry different state: an audio item is a source file pinned at a position for a
+    duration, with a named take, and no note list at all.
+    """
+
+    source_file: str
+    position: float = 0.0
+    length: float = 0.0
+    take_name: str = ""
+
+
+@dataclass
 class FakeTrack:
     guid: str
     name: str = ""
@@ -75,6 +90,9 @@ class FakeTrack:
     mute: bool = False
     solo: bool = False
     takes: list[FakeTake] = field(default_factory=list)
+    # Audio media items (import_audio_files). Distinct from `takes`, which models the
+    # MIDI side; `num_items` in list_tracks reports both, mirroring CountTrackMediaItems.
+    items: list[FakeMediaItem] = field(default_factory=list)
     fx: list[str] = field(default_factory=list)
     # The Task 11.1 FX chain (add_fx_by_name / set_fx_param / get_fx_params) — kept
     # separate from `fx` (which add_instrument/list_tracks use) so this task's additions
@@ -97,6 +115,11 @@ class FakeReaperProject:
     play_state: int = 0
     installed_fx: list[str] = field(default_factory=list)
     markers: list[dict] = field(default_factory=list)
+    # Undo blocks, as RECORDED EVENTS: ("begin", desc) / ("end", desc) appended in order.
+    # A real Undo_BeginBlock/EndBlock pair has no observable project state, so the only way
+    # to assert the "one Ctrl+Z undoes the whole import" promise from a test is to prove
+    # exactly one balanced pair wrapped the whole call — success AND partial-failure paths.
+    undo_events: list[tuple[str, str]] = field(default_factory=list)
     _guid_seq: int = 0
 
     # -- render state (§15.2 render_track_region) -------------------------- #
@@ -291,7 +314,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
                 "pan": tr.pan,
                 "mute": tr.mute,
                 "solo": tr.solo,
-                "num_items": len(tr.takes),
+                "num_items": len(tr.takes) + len(tr.items),
             }
             for i, tr in enumerate(project.tracks)
         ]
@@ -426,6 +449,67 @@ def make_handlers(project: FakeReaperProject) -> dict:
         tr.fx.append(name)
         return {"track": tr.guid, "loaded": name, "already_present": False}
 
+    # -- import_audio_files — the executable spec for the Lua handler ---------------- #
+
+    def _source_length_s(file: str) -> float:
+        """Model ``PCM_Source_CreateFromFile`` + ``GetMediaSourceLength`` over a REAL file.
+
+        The fake-repo pattern renders real WAVs, so the honest thing here is to read the
+        actual duration off disk rather than invent one. A missing path (or a file that is
+        not decodable audio) raises — the per-file error the Lua handler reports when the
+        source comes back nil/zero-length.
+        """
+        import soundfile as sf
+
+        p = Path(file)
+        if not p.is_file():
+            raise ValueError(f"could not open audio file: {file}")
+        try:
+            info = sf.info(str(p))
+        except Exception as exc:  # noqa: BLE001 — any decode failure is one per-file error
+            raise ValueError(
+                f"audio file is empty or not a readable audio source: {file}"
+            ) from exc
+        if info.frames <= 0 or info.samplerate <= 0:
+            raise ValueError(f"audio file is empty or not a readable audio source: {file}")
+        return info.frames / float(info.samplerate)
+
+    def import_audio_files(p):
+        files = list(p.get("files") or [])
+        if not files:
+            raise ValueError("import_audio_files: no files given")
+        at_s = float(p.get("at_s") or 0.0)
+        prefix = p.get("name_prefix") or ""
+        desc = f"Orpheus: import {len(files)} audio files"
+        # ONE undo block around the WHOLE import — opened after the empty-list guard
+        # (which errors before any project mutation), closed in every path below.
+        project.undo_events.append(("begin", desc))
+        imported: list[dict] = []
+        failed: list[dict] = []
+        try:
+            for file in files:
+                try:
+                    length_s = _source_length_s(file)
+                    name = f"{prefix}{Path(file).stem}"
+                    tr = FakeTrack(guid=project._next_guid(), name=name)
+                    tr.items.append(
+                        FakeMediaItem(
+                            source_file=str(file),
+                            position=at_s,
+                            length=length_s,
+                            take_name=name,
+                        )
+                    )
+                    project.tracks.append(tr)  # append at the end
+                    imported.append(
+                        {"file": str(file), "track_guid": tr.guid, "length_s": length_s}
+                    )
+                except Exception as exc:  # noqa: BLE001 — recorded, never a silent skip
+                    failed.append({"file": str(file), "error": str(exc)})
+        finally:
+            project.undo_events.append(("end", desc))
+        return {"imported": imported, "failed": failed}
+
     def add_marker(p):
         entry = {"name": p["name"], "bar": int(p["bar"])}
         project.markers.append(entry)
@@ -555,6 +639,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "clear_track_midi": clear_track_midi,
         "list_installed_fx": list_installed_fx,
         "add_instrument": add_instrument,
+        "import_audio_files": import_audio_files,
         "add_marker": add_marker,
         "add_fx_by_name": add_fx_by_name,
         "set_fx_param": set_fx_param,
