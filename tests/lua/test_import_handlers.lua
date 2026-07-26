@@ -37,6 +37,7 @@ local proj = {
     ["C:/stems/drums.wav"]  = { len = 30.25 },
     ["/stems/bass.flac"]    = { len = 7.0 },
     ["C:/stems/empty.wav"]  = { len = 0.0 },   -- zero-length -> clean per-file error
+    ["C:/stems/midi.wav"]   = { len = 4.0, is_qn = true },   -- musical-length source -> QN error
   },
   undo_begins = 0,
   undo_ends = 0,
@@ -45,6 +46,9 @@ local proj = {
   destroyed_sources = 0,
   calls = {},           -- every source/item/take API name, in order
   fail_update_arrange = false,
+  fail_add_item_for = nil,   -- track name; AddMediaItemToTrack returns nil for that track
+  fail_add_take_for = nil,   -- track name; AddTakeToMediaItem returns nil for that track
+  deleted_tracks = 0,
 }
 
 local function record(name) proj.calls[#proj.calls + 1] = name end
@@ -78,6 +82,15 @@ reaper = {
     if key == "P_NAME" and set then tr.name = val end
     return true, tr.name
   end,
+  DeleteTrack = function(tr)
+    for i, t in ipairs(proj.tracks) do
+      if t == tr then
+        table.remove(proj.tracks, i)
+        proj.deleted_tracks = proj.deleted_tracks + 1
+        return
+      end
+    end
+  end,
 
   -- PCM source: nil for an unknown path (the file REAPER cannot open).
   PCM_Source_CreateFromFile = function(file)
@@ -95,12 +108,14 @@ reaper = {
 
   AddMediaItemToTrack = function(tr)
     record("AddMediaItemToTrack")
+    if proj.fail_add_item_for and tr.name == proj.fail_add_item_for then return nil end
     local item = { track = tr, pos = 0, len = 0, takes = {} }
     tr.items[#tr.items + 1] = item
     return item
   end,
   AddTakeToMediaItem = function(item)
     record("AddTakeToMediaItem")
+    if proj.fail_add_take_for and item.track.name == proj.fail_add_take_for then return nil end
     local take = { item = item, name = "", source = nil }
     item.takes[#item.takes + 1] = take
     return take
@@ -154,6 +169,9 @@ local function reset()
   proj.destroyed_sources = 0
   proj.calls = {}
   proj.fail_update_arrange = false
+  proj.fail_add_item_for = nil
+  proj.fail_add_take_for = nil
+  proj.deleted_tracks = 0
 end
 
 -- --------------------------------------------------------------------------- --
@@ -283,6 +301,59 @@ ok(tostring(r6.error):find("no files given"), "empty list error message")
 eq(proj.undo_begins, 0, "empty list: no undo block was ever opened")
 eq(proj.undo_ends, 0, "empty list: no undo block to close")
 eq(#proj.tracks, 0, "empty list: no tracks created")
+
+-- --------------------------------------------------------------------------- --
+-- 7. A source that reports a MUSICAL (QN) length gets the distinct QN error message,
+--    not the generic "empty or not a readable audio source" one, and the source is
+--    still released.
+-- --------------------------------------------------------------------------- --
+reset()
+local r7 = call("import_audio_files", { files = { "C:/stems/midi.wav" } })
+eq(r7.ok, true, "QN-length source -> structured result, not a raise")
+eq(#r7.result.imported, 0, "nothing imported")
+eq(#r7.result.failed, 1, "the QN-length file is reported as failed")
+ok(tostring(r7.result.failed[1].error):find("musical %(QN%) length"),
+  "QN-length error message is the distinct musical-length one")
+ok(not tostring(r7.result.failed[1].error):find("empty or not a readable"),
+  "QN-length error message is NOT the generic empty/unreadable one")
+eq(#proj.tracks, 0, "no track created for a QN-length source")
+eq(proj.destroyed_sources, 1, "the rejected QN source handle was destroyed, not leaked")
+
+-- --------------------------------------------------------------------------- --
+-- 8. AddMediaItemToTrack returning nil (REAPER refuses to create the item): the
+--    already-created named track must NOT be left stranded, and the source handle
+--    must be released, not leaked. File is reported under `failed`.
+-- --------------------------------------------------------------------------- --
+reset()
+proj.fail_add_item_for = "vocals"
+local r8 = call("import_audio_files", { files = { "C:/stems/vocals.wav" } })
+eq(r8.ok, true, "AddMediaItemToTrack nil -> structured result, not a raise")
+eq(#r8.result.imported, 0, "nothing imported")
+eq(#r8.result.failed, 1, "the file is reported as failed")
+eq(r8.result.failed[1].file, "C:/stems/vocals.wav", "the failure names the offending path")
+ok(tostring(r8.result.failed[1].error):find("could not create a media item"),
+  "the failure carries the media-item error message")
+eq(#proj.tracks, 0, "the stranded track was cleaned up — none remains")
+eq(proj.deleted_tracks, 1, "DeleteTrack was called exactly once")
+eq(proj.destroyed_sources, 1, "the source handle was destroyed, not leaked")
+proj.fail_add_item_for = nil
+
+-- --------------------------------------------------------------------------- --
+-- 9. AddTakeToMediaItem returning nil: same invariant — no stranded track, no leaked
+--    source handle.
+-- --------------------------------------------------------------------------- --
+reset()
+proj.fail_add_take_for = "drums"
+local r9 = call("import_audio_files", { files = { "C:/stems/drums.wav" } })
+eq(r9.ok, true, "AddTakeToMediaItem nil -> structured result, not a raise")
+eq(#r9.result.imported, 0, "nothing imported")
+eq(#r9.result.failed, 1, "the file is reported as failed")
+ok(tostring(r9.result.failed[1].error):find("could not create a take"),
+  "the failure carries the take error message")
+eq(#proj.tracks, 0, "the stranded track was cleaned up — none remains")
+eq(proj.deleted_tracks, 1, "DeleteTrack was called exactly once")
+eq(proj.destroyed_sources, 1, "the source handle was destroyed, not leaked")
+proj.fail_add_take_for = nil
 
 print(string.format("lua import handlers: %d passed, %d failed", passed, failed_count))
 os.exit(failed_count == 0 and 0 or 1)

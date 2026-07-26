@@ -873,7 +873,11 @@ local function import_one_audio_file(file, at_s, prefix)
   -- If a live source ever reports lengthIsQN=true here, D_LENGTH would need
   -- TimeMap2_QNToTime conversion instead of the raw value. The stub cannot prove this.
   local len, len_is_qn = reaper.GetMediaSourceLength(src)
-  if not len or len <= 0 or len_is_qn then
+  if len_is_qn then
+    if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(src) end
+    err("source reports musical (QN) length — unsupported for audio import: " .. tostring(file))
+  end
+  if not len or len <= 0 then
     if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(src) end
     err("audio file is empty or not a readable audio source: " .. tostring(file))
   end
@@ -889,9 +893,20 @@ local function import_one_audio_file(file, at_s, prefix)
   reaper.GetSetMediaTrackInfo_String(tr, "P_NAME", name, true)
 
   local item = reaper.AddMediaItemToTrack(tr)
-  if not item then err("could not create a media item for: " .. tostring(file)) end
+  if not item then
+    -- The track we just created is still empty and would otherwise be stranded (§ "no
+    -- empty track for a failed file" invariant) — and src is still ours to release since
+    -- SetMediaItemTake_Source below is what hands ownership to a take.
+    if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(src) end
+    if reaper.DeleteTrack then reaper.DeleteTrack(tr) end
+    err("could not create a media item for: " .. tostring(file))
+  end
   local take = reaper.AddTakeToMediaItem(item)
-  if not take then err("could not create a take for: " .. tostring(file)) end
+  if not take then
+    if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(src) end
+    if reaper.DeleteTrack then reaper.DeleteTrack(tr) end
+    err("could not create a take for: " .. tostring(file))
+  end
   -- The take takes OWNERSHIP of src from here on — do not PCM_Source_Destroy it below.
   reaper.SetMediaItemTake_Source(take, src)
   reaper.SetMediaItemInfo_Value(item, "D_POSITION", at_s)
