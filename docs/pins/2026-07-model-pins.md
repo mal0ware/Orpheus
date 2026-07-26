@@ -148,3 +148,8 @@ Ear-checks (stem quality, chords, lyrics on owned songs) remain the user's.
   probe protects pytest only); a cp1252 UnicodeDecodeError in a subprocess reader thread
   (cosmetic); section naming merged everything into "verse 1" (line clustering too coarse
   on sparse real-song ASR lines).
+
+## import_audio_files live verification — 2026-07-25, REAPER 7.78
+4/4 stems imported as named tracks (200.0 s each, correct lengths → GetMediaSourceLength
+returns SECONDS on real PCM sources — verify-live comment (1) resolved), single undo block,
+zero failures. The verb is live-verified end-to-end.
