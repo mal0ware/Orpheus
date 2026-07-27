@@ -32,6 +32,10 @@ IMPLEMENTED = {
     "transpose_notes",
     # tracks — the opt-in local-audio import verb (drag-and-drop, programmatically)
     "import_audio_files",
+    # tracks — artificial-double-tracking primitives (clone a take onto a new track;
+    # set/read a track's fader volume + pan)
+    "clone_track_items",
+    "set_track_params",
     # instruments (pulled forward from Slice 2)
     "list_installed_fx",
     "add_instrument",

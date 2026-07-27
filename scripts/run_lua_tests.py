@@ -30,6 +30,7 @@ SUITES = [
     "test_render_handlers.lua",
     "test_fx_handlers.lua",
     "test_import_handlers.lua",
+    "test_clone_handlers.lua",
 ]
 
 

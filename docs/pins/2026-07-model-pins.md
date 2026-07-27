@@ -154,6 +154,21 @@ Ear-checks (stem quality, chords, lyrics on owned songs) remain the user's.
 returns SECONDS on real PCM sources — verify-live comment (1) resolved), single undo block,
 zero failures. The verb is live-verified end-to-end.
 
+## ReaPitch/ReaTune live verification — 2026-07-27, REAPER 7.78
+Vocal-recreation session prep (user singing over the "help herself" stems). Method upgrade
+over the 2026-07-25 param-map pass: tapers were EMPIRICALLY CALIBRATED, not just
+index-verified — ReaSynth A4 (440 Hz) tone on a probe track, rendered through ReaPitch via
+render_track_region at known normalized settings, f0 measured by zero-padded FFT +
+parabolic interpolation.
+- **ReaPitch** '1: Shift (semitones)' (idx 5): exactly linear, ±18 st (36 st/unit;
+  measured +8.998 st @ n=0.75, +17.998 st @ n=1.00 — sub-cent accuracy at musical
+  intervals). '1: Shift (cents)' (idx 4): ±200 cents (measured +197.9 @ n=1.00; ~2-cent
+  shifter-algorithm deviation at full deflection, irrelevant at detune depths). Both added
+  to data/fx_param_maps.json as measured tapers.
+- **ReaTune**: exposes ONLY Bypass/Wet/Delta as VST params — correction mode/key/attack
+  are UI-only. Pitch-correction setup is therefore a human step (documented in the map
+  entry's notes); set_fx_param attempts correctly fall through to human-instructions.
+
 ### Timebase regression + fix — 2026-07-27, REAPER 7.78
 The original import left items on the project-default (beats) timebase, so a later
 `set_tempo` (120 → 84 BPM) stretched the stems ~0.7x — user heard "half speed". Fix

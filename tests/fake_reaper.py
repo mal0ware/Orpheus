@@ -86,6 +86,10 @@ class FakeMediaItem:
     # assertion honestly rather than passing by accident.
     beat_attach_mode: int = -1
     playrate: float = 1.0
+    # Take start offset (D_STARTOFFS) and take volume (D_VOL, LINEAR gain) — carried so
+    # clone_track_items can prove it copies the offset and applies item_volume_db.
+    start_offs: float = 0.0
+    take_volume: float = 1.0
 
 
 @dataclass
@@ -521,6 +525,74 @@ def make_handlers(project: FakeReaperProject) -> dict:
             project.undo_events.append(("end", desc))
         return {"imported": imported, "failed": failed}
 
+    # -- clone_track_items / set_track_params — executable spec for the Lua handlers --- #
+
+    def clone_track_items(p):
+        tr = project.resolve_track(p["src_track"])
+        new_name = p.get("new_track_name") or ""
+        if not new_name:
+            raise ValueError("clone_track_items: new_track_name is required")
+        total = len(tr.takes) + len(tr.items)  # mirrors CountTrackMediaItems (both kinds)
+        if total == 0:
+            raise ValueError(f"no items to clone on track: {p['src_track']}")
+        offset_s = float(p.get("offset_s") or 0.0)
+        take_vol = 10.0 ** (float(p.get("item_volume_db") or 0.0) / 20.0)
+        desc = f"Orpheus: clone {total} items to {new_name}"
+        # ONE undo block around the WHOLE clone (opened after the guards, which error
+        # before any project mutation), closed in every path below.
+        project.undo_events.append(("begin", desc))
+        cloned = 0
+        skipped_midi = 0
+        failed: list[dict] = []
+        dest = FakeTrack(guid=project._next_guid(), name=new_name)
+        project.tracks.append(dest)  # ONE new track, appended at the end
+        try:
+            # MIDI takes: skipped silently, counted — never cloned, never an error.
+            skipped_midi = len(tr.takes)
+            for i, item in enumerate(tr.items):
+                try:
+                    if not item.source_file:
+                        raise ValueError("source has no filename (in-project/section source)")
+                    if not Path(item.source_file).is_file():
+                        # Mirrors PCM_Source_CreateFromFile returning nil on re-open.
+                        raise ValueError(f"could not re-open source file: {item.source_file}")
+                    dest.items.append(
+                        FakeMediaItem(
+                            source_file=item.source_file,
+                            position=item.position + offset_s,
+                            length=item.length,
+                            take_name=item.take_name,
+                            # Tempo-immunity pins (f4394e9), same as import_audio_files.
+                            beat_attach_mode=0,
+                            playrate=1.0,
+                            start_offs=item.start_offs,
+                            take_volume=take_vol,
+                        )
+                    )
+                    cloned += 1
+                except Exception as exc:  # noqa: BLE001 — recorded, never a silent skip
+                    failed.append({"item_index": i + 1, "error": str(exc)})
+        finally:
+            project.undo_events.append(("end", desc))
+        return {
+            "track_guid": dest.guid,
+            "track_name": new_name,
+            "cloned": cloned,
+            "skipped_midi": skipped_midi,
+            "failed": failed,
+        }
+
+    def set_track_params(p):
+        tr = project.resolve_track(p["track"])
+        if p.get("volume_db") is not None:
+            # Mirror the Lua exactly: dB -> linear D_VOL -> read back as dB with the
+            # -150 floor (a deep-enough dB underflows the linear gain to 0.0 -> -inf).
+            vol = 10.0 ** (float(p["volume_db"]) / 20.0)
+            tr.volume_db = (20.0 * math.log10(vol)) if vol > 0 else -150.0
+        if p.get("pan") is not None:
+            tr.pan = max(-1.0, min(1.0, float(p["pan"])))
+        return {"track_guid": tr.guid, "volume_db": tr.volume_db, "pan": tr.pan}
+
     def add_marker(p):
         entry = {"name": p["name"], "bar": int(p["bar"])}
         project.markers.append(entry)
@@ -651,6 +723,8 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "list_installed_fx": list_installed_fx,
         "add_instrument": add_instrument,
         "import_audio_files": import_audio_files,
+        "clone_track_items": clone_track_items,
+        "set_track_params": set_track_params,
         "add_marker": add_marker,
         "add_fx_by_name": add_fx_by_name,
         "set_fx_param": set_fx_param,

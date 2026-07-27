@@ -63,6 +63,17 @@
       "mix": {"index": 2, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true}
     }
   },
+  "ReaPitch": {
+    "notes": "Stock pitch shifter, PER-SHIFTER params from idx 2 ('1: Enabled', default-on): 3 '1: Shift (full range)', 4 '1: Shift (cents)', 5 '1: Shift (semitones)', 6 '1: Shift (oct)', 7-9 formant, 10 '1: Volume', 11 '1: Pan'; 0 Wet (default 0.5 = unity), 1 Dry (default 0). LIVE 7.78 2026-07-27, EMPIRICALLY CALIBRATED via ReaSynth A4 tone renders through the bridge: 'semitones' is exactly linear at 36 st/unit centered on 0.5 -> range -18..+18 st (measured +8.998 st @ 0.75, +17.998 @ 1.00); 'cents' range -200..+200 (measured +197.9 @ 1.00 -- small shifter-algorithm deviation, sub-audible at detune depths). These are MEASURED tapers, not estimates. Sliders are additive; set ONE of cents/semitones per intent (detune -> cents, harmony -> semitones).",
+    "params": {
+      "cents": {"index": 4, "unit": "cents", "min": -200.0, "max": 200.0, "to_normalized": "linear", "live_verified": true},
+      "semitones": {"index": 5, "unit": "st", "min": -18.0, "max": 18.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
+  "ReaTune": {
+    "notes": "Stock tuner/pitch-corrector. LIVE 7.78 2026-07-27: exposes ONLY Bypass(0)/Wet(1)/Delta(2) as automatable params -- the actual correction controls (mode, key/scale, attack speed) are UI-ONLY and cannot be set via TrackFX_SetParamNormalized. add_fx_by_name works; any set_fx_param attempt correctly routes to the human-instructions path (unmapped_param). Hard-tune recipe for the human: Correction tab -> enable 'Automatic pitch correction', set key/scale, drag 'Attack time' to minimum for the robotic hard-tuned effect.",
+    "params": {}
+  },
   "Stereo Width": {
     "notes": "Stock JSFX mid/side widener. LIVE 7.78: resolves to 'JS: Stereo Width'; params 0 'Width Boost (dB)', 1 'Center Boost (dB)', 2 'Gain (dB)', 3 'Width Balance (%)', 4 'Width Rotation (deg)'. 'width' is a dB BOOST (unit corrected from pct); taper approximate (index + name verified).",
     "params": {

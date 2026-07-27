@@ -77,6 +77,68 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
             "failed": list(result.get("failed") or []),
         }
 
+    @mcp.tool(annotations=_DESTRUCTIVE)
+    def clone_track_items(
+        src_track: str,
+        new_track_name: str,
+        offset_s: float = 0.0,
+        item_volume_db: float = 0.0,
+    ) -> dict:
+        """Clone every AUDIO item on ``src_track`` onto ONE new appended track — the
+        artificial-double-tracking primitive (clone a recorded take, then detune/nudge/
+        pan the clone). Returns ``{track_guid, track_name, cloned, skipped_midi, failed}``.
+
+        Each cloned item re-opens the SAME source file the original take plays (nothing
+        is copied on disk, nothing fetched — the same owned-audio boundary as
+        ``import_audio_files``), lands at the original position plus ``offset_s`` seconds,
+        and carries a take volume of ``item_volume_db`` dB. MIDI takes are counted under
+        ``skipped_midi``, never cloned; an item whose source has no filename (in-project/
+        section source) lands in ``failed`` with its reason while every other item still
+        clones. The whole clone is ONE undo block, and every created item is pinned to
+        TIME base at native playrate, so a later ``set_tempo`` never stretches it.
+        """
+        if not new_track_name:
+            raise ValueError("new_track_name must not be empty")
+        result = BridgeClient().call(
+            "clone_track_items",
+            src_track=src_track,
+            new_track_name=new_track_name,
+            offset_s=float(offset_s),
+            item_volume_db=float(item_volume_db),
+        )
+        # `or []`: the bridge's minimal JSON encoder emits an EMPTY Lua table as `{}`.
+        return {
+            "track_guid": result.get("track_guid"),
+            "track_name": result.get("track_name", new_track_name),
+            "cloned": int(result.get("cloned") or 0),
+            "skipped_midi": int(result.get("skipped_midi") or 0),
+            "failed": list(result.get("failed") or []),
+        }
+
+    @mcp.tool(annotations=_DESTRUCTIVE)
+    def set_track_params(
+        track: str,
+        volume_db: float | None = None,
+        pan: float | None = None,
+    ) -> dict:
+        """Set a track's fader ``volume_db`` (dB) and/or ``pan`` (-1.0 left .. 1.0 right;
+        out-of-range values are clamped bridge-side), then read BOTH back — the result
+        ``{track_guid, volume_db, pan}`` reports what the track now actually holds, never
+        an echo of the request. Omit either argument to leave it untouched (a call with
+        neither is a pure read-back). A fader at -inf reads back as the -150.0 dB floor.
+        """
+        params: dict = {"track": track}
+        if volume_db is not None:
+            params["volume_db"] = float(volume_db)
+        if pan is not None:
+            params["pan"] = float(pan)
+        result = BridgeClient().call("set_track_params", **params)
+        return {
+            "track_guid": result.get("track_guid"),
+            "volume_db": result.get("volume_db"),
+            "pan": result.get("pan"),
+        }
+
     if not include_stubs:
         return
 

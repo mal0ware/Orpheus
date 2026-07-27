@@ -960,6 +960,136 @@ HANDLERS.import_audio_files = function(p)
   return { imported = imported, failed = failed }
 end
 
+-- --------------------------------------------------------------------------- --
+-- clone_track_items — clone every AUDIO item on a source track onto ONE new
+-- appended track (motivating case: artificial double-tracking — clone the user's
+-- recorded take, then detune/nudge/pan the clone). Each clone re-opens the SAME
+-- source file the original take plays; nothing is copied on disk and nothing is
+-- fetched — the §1 owned-audio boundary import_audio_files draws applies here too.
+--
+-- Same promises as import_audio_files: the WHOLE clone is ONE undo block; a
+-- per-item failure is RECORDED under `failed`, never silent; and every created
+-- item is pinned to TIME base at native playrate (the f4394e9 tempo-immunity fix —
+-- a clone of reference audio must never warp under a later set_tempo either).
+-- MIDI takes are not errors: they are counted under `skipped_midi` and left alone
+-- (the verb's contract is audio items only).
+-- --------------------------------------------------------------------------- --
+
+-- Clone ONE audio item onto dest_tr. Raises (via err) on ANY failure so the caller
+-- records it under `failed` and continues with the remaining items.
+local function clone_one_item(src_item, src_take, dest_tr, offset_s, take_vol)
+  if not src_take then err("item has no active take") end
+  local src = reaper.GetMediaItemTake_Source(src_take)
+  if not src then err("take has no PCM source") end
+  local filename = reaper.GetMediaSourceFileName(src, "")
+  if not filename or filename == "" then
+    err("source has no filename (in-project/section source)")
+  end
+  local new_src = reaper.PCM_Source_CreateFromFile(filename)
+  if not new_src then err("could not re-open source file: " .. tostring(filename)) end
+  local item = reaper.AddMediaItemToTrack(dest_tr)
+  if not item then
+    -- new_src is still ours to release — SetMediaItemTake_Source below is what
+    -- hands ownership to a take (same rule as import_one_audio_file).
+    if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(new_src) end
+    err("could not create a media item on the clone track")
+  end
+  local take = reaper.AddTakeToMediaItem(item)
+  if not take then
+    if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(new_src) end
+    err("could not create a take on the clone track")
+  end
+  -- The take takes OWNERSHIP of new_src from here on.
+  reaper.SetMediaItemTake_Source(take, new_src)
+  reaper.SetMediaItemInfo_Value(item, "D_POSITION",
+    reaper.GetMediaItemInfo_Value(src_item, "D_POSITION") + offset_s)
+  reaper.SetMediaItemInfo_Value(item, "D_LENGTH",
+    reaper.GetMediaItemInfo_Value(src_item, "D_LENGTH"))
+  reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS",
+    reaper.GetMediaItemTakeInfo_Value(src_take, "D_STARTOFFS"))
+  -- Tempo-immunity pins (f4394e9): TIME base + native rate, same as imported items.
+  reaper.SetMediaItemInfo_Value(item, "C_BEATATTACHMODE", 0)
+  reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
+  reaper.SetMediaItemTakeInfo_Value(take, "D_VOL", take_vol)
+end
+
+HANDLERS.clone_track_items = function(p)
+  local tr, rerr = resolve_track(p.src_track)
+  if not tr then err(rerr) end
+  local new_name = p.new_track_name
+  if not new_name or new_name == "" then
+    err("clone_track_items: new_track_name is required")
+  end
+  local n = reaper.CountTrackMediaItems(tr)
+  if n == 0 then err("no items to clone on track: " .. tostring(p.src_track)) end
+  local offset_s = tonumber(p.offset_s) or 0.0
+  local take_vol = 10.0 ^ ((tonumber(p.item_volume_db) or 0.0) / 20.0)
+  local desc = string.format("Orpheus: clone %d items to %s", n, tostring(new_name))
+
+  reaper.Undo_BeginBlock()
+  local dest = nil
+  local cloned, skipped_midi, failed = 0, 0, {}
+  -- Same shape as import_audio_files: the loop runs inside a pcall so NO raise can
+  -- escape with the undo block still open; per-item failures are caught one level in.
+  local ok_all, loop_err = pcall(function()
+    local count = reaper.CountTracks(0)
+    reaper.InsertTrackAtIndex(count, true)   -- ONE new track, appended at the end
+    dest = reaper.GetTrack(0, count)
+    if not dest then error("could not create the clone track: " .. tostring(new_name), 0) end
+    reaper.GetSetMediaTrackInfo_String(dest, "P_NAME", new_name, true)
+    for i = 0, n - 1 do
+      local src_item = reaper.GetTrackMediaItem(tr, i)
+      local src_take = reaper.GetActiveTake(src_item)
+      if src_take and reaper.TakeIsMIDI(src_take) then
+        skipped_midi = skipped_midi + 1
+      else
+        local one_ok, one = pcall(clone_one_item, src_item, src_take, dest, offset_s, take_vol)
+        if one_ok then
+          cloned = cloned + 1
+        else
+          failed[#failed + 1] = { item_index = i + 1, error = tostring(one) }
+        end
+      end
+    end
+    reaper.UpdateArrange()   -- ONCE, after every item (not per clone)
+  end)
+  reaper.Undo_EndBlock(desc, -1)
+  if not ok_all then err(tostring(loop_err)) end
+
+  return {
+    track_guid = reaper.GetTrackGUID(dest),
+    track_name = tostring(new_name),
+    cloned = cloned,
+    skipped_midi = skipped_midi,
+    failed = failed,
+  }
+end
+
+-- set_track_params — set a track's fader volume (dB) and/or pan (-1..1, clamped),
+-- then read BOTH back so the result reports what the track now actually holds.
+HANDLERS.set_track_params = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local vdb = tonumber(p.volume_db)
+  if p.volume_db ~= nil and vdb then
+    reaper.SetMediaTrackInfo_Value(tr, "D_VOL", 10.0 ^ (vdb / 20.0))
+  end
+  local pan = tonumber(p.pan)
+  if p.pan ~= nil and pan then
+    if pan < -1.0 then pan = -1.0 elseif pan > 1.0 then pan = 1.0 end
+    reaper.SetMediaTrackInfo_Value(tr, "D_PAN", pan)
+  end
+  -- D_VOL is a linear gain; 0 -> -inf dB, clamped to -150 (the same floor list_tracks
+  -- uses) so the JSON result never carries a non-finite number.
+  local vol = reaper.GetMediaTrackInfo_Value(tr, "D_VOL")
+  local vol_db = (vol and vol > 0) and (20.0 * math.log(vol, 10)) or -150.0
+  return {
+    track_guid = reaper.GetTrackGUID(tr),
+    volume_db = vol_db,
+    pan = reaper.GetMediaTrackInfo_Value(tr, "D_PAN"),
+  }
+end
+
 local function dispatch(fn, params)
   if fn == "__batch__" then
     local results = {}
