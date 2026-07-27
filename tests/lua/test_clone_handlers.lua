@@ -414,5 +414,62 @@ local r8d = call("nudge_take_offset", { track = "empty", delta_s = 0.1 })
 eq(r8d.ok, false, "empty track -> ok=false")
 ok(tostring(r8d.error):find("no items to nudge"), "empty-track message")
 
+
+-- --------------------------------------------------------------------------- --
+-- 9. clone_item_region — window a piece of a take onto a new track at dest_s
+-- --------------------------------------------------------------------------- --
+reset()
+local voxr = new_track("vox")
+-- item at 140.0, 8 s long, take already slid 0.26 s by a sync nudge
+local itr = add_audio_item(voxr, "C:/takes/my_take.wav", 140.0, 8.0, 0.26)
+local r9 = call("clone_item_region", { src_track = "vox", new_track_name = "chant",
+  src_start_s = 142.9, src_end_s = 149.8, dest_s = 154.3, item_volume_db = -3.0 })
+eq(r9.ok, true, "region clone ok")
+eq(r9.result.track_name, "chant", "new track named")
+approx(r9.result.cloned_start_s, 142.9, "clip start", 1e-9)
+approx(r9.result.cloned_end_s, 148.0, "clip end clipped to item end", 1e-9)
+approx(r9.result.dest_s, 154.3, "dest as asked", 1e-9)
+approx(r9.result.length_s, 5.1, "clip length", 1e-9)
+local chant = proj.tracks[#proj.tracks]
+eq(chant.name, "chant", "appended track carries the name")
+local citem = chant.items[1]
+approx(citem.pos, 154.3, "item position at dest", 1e-9)
+approx(citem.len, 5.1, "item length = clip length", 1e-9)
+approx(citem.takes[1].startoffs, 0.26 + 2.9, "startoffs = take offs + in-item skip", 1e-9)
+eq(citem.beat_attach_mode, 0, "f4394e9: TIME base pinned")
+approx(citem.takes[1].playrate, 1.0, "f4394e9: native playrate pinned", 1e-9)
+approx(citem.takes[1].vol, 10.0 ^ (-3.0 / 20.0), "take volume from item_volume_db", 1e-9)
+eq(proj.undo_begins, 1, "one undo begin")
+eq(proj.undo_ends, 1, "one undo end")
+
+-- 9a. leading overhang: clip skips to item start, dest shifts by the same amount.
+reset()
+local vox2 = new_track("vox")
+add_audio_item(vox2, "C:/takes/my_take.wav", 10.0, 5.0, 0.0)
+local r9a = call("clone_item_region", { src_track = "vox", new_track_name = "clip",
+  src_start_s = 8.0, src_end_s = 12.0, dest_s = 50.0 })
+approx(r9a.result.cloned_start_s, 10.0, "clip start snapped to item start", 1e-9)
+approx(r9a.result.dest_s, 52.0, "dest shifted by the clipped lead", 1e-9)
+approx(r9a.result.length_s, 2.0, "clipped length", 1e-9)
+
+-- 9b. guards: no overlap; inverted range; missing dest; unopenable source.
+local r9b = call("clone_item_region", { src_track = "vox", new_track_name = "x",
+  src_start_s = 100.0, src_end_s = 110.0, dest_s = 0.0 })
+eq(r9b.ok, false, "no overlap -> ok=false")
+ok(tostring(r9b.error):find("no audio item overlaps"), "no-overlap message")
+local r9c = call("clone_item_region", { src_track = "vox", new_track_name = "x",
+  src_start_s = 11.0, src_end_s = 11.0, dest_s = 0.0 })
+ok(tostring(r9c.error):find("must be > src_start_s"), "inverted-range message")
+local r9d = call("clone_item_region", { src_track = "vox", new_track_name = "x",
+  src_start_s = 10.5, src_end_s = 11.0 })
+ok(tostring(r9d.error):find("are required"), "missing dest_s message")
+local vox3 = new_track("ghostsrc")
+add_audio_item(vox3, "C:/takes/never_registered.wav", 0.0, 2.0, 0.0)
+local r9e = call("clone_item_region", { src_track = "ghostsrc", new_track_name = "x",
+  src_start_s = 0.0, src_end_s = 1.0, dest_s = 5.0 })
+eq(r9e.ok, false, "unopenable source -> ok=false")
+ok(tostring(r9e.error):find("could not re%-open source file"), "re-open failure message")
+eq(proj.undo_begins, proj.undo_ends, "undo blocks balanced across failures")
+
 print(string.format("lua clone handlers: %d passed, %d failed", passed, failed_count))
 os.exit(failed_count == 0 and 0 or 1)

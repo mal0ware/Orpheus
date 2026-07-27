@@ -1090,6 +1090,103 @@ HANDLERS.set_track_params = function(p)
   }
 end
 
+-- clone_item_region — clone a TIME REGION of a track's audio onto ONE new appended
+-- track at a chosen destination position (motivating case: re-arranging pieces of a
+-- recorded take — e.g. layering a background chant sung in section N over the lyrics
+-- sung in section N+1). Region semantics: the FIRST audio item overlapping
+-- [src_start_s, src_end_s) is windowed — the region is clipped to that item's bounds,
+-- the clip's take start-offset advances by the in-item skip, and the new item lands at
+-- dest_s shifted by the same clip amount, so source audio at src time T plays at
+-- exactly dest_s + (T - src_start_s). Same promises as clone_track_items: re-opens the
+-- take's own source file (owned-audio boundary), ONE undo block, f4394e9 tempo pins.
+HANDLERS.clone_item_region = function(p)
+  local tr, rerr = resolve_track(p.src_track)
+  if not tr then err(rerr) end
+  local new_name = p.new_track_name
+  if not new_name or new_name == "" then err("clone_item_region: new_track_name is required") end
+  local s0 = tonumber(p.src_start_s)
+  local s1 = tonumber(p.src_end_s)
+  local dest = tonumber(p.dest_s)
+  if not (s0 and s1 and dest) then
+    err("clone_item_region: src_start_s, src_end_s and dest_s are required")
+  end
+  if s1 <= s0 then err("clone_item_region: src_end_s must be > src_start_s") end
+  local take_vol = 10.0 ^ ((tonumber(p.item_volume_db) or 0.0) / 20.0)
+
+  -- Find the first AUDIO item overlapping the region.
+  local src_item, src_take = nil, nil
+  for i = 0, reaper.CountTrackMediaItems(tr) - 1 do
+    local it = reaper.GetTrackMediaItem(tr, i)
+    local tk = reaper.GetActiveTake(it)
+    if tk and not reaper.TakeIsMIDI(tk) then
+      local pos = reaper.GetMediaItemInfo_Value(it, "D_POSITION")
+      local len = reaper.GetMediaItemInfo_Value(it, "D_LENGTH")
+      if pos < s1 and (pos + len) > s0 then src_item, src_take = it, tk; break end
+    end
+  end
+  if not src_item then
+    err(string.format("no audio item overlaps [%.3f, %.3f) on track: %s",
+      s0, s1, tostring(p.src_track)))
+  end
+
+  local pos = reaper.GetMediaItemInfo_Value(src_item, "D_POSITION")
+  local len = reaper.GetMediaItemInfo_Value(src_item, "D_LENGTH")
+  local clip0 = math.max(s0, pos)
+  local clip1 = math.min(s1, pos + len)
+  local src = reaper.GetMediaItemTake_Source(src_take)
+  if not src then err("take has no PCM source") end
+  local filename = reaper.GetMediaSourceFileName(src, "")
+  if not filename or filename == "" then
+    err("source has no filename (in-project/section source)")
+  end
+
+  reaper.Undo_BeginBlock()
+  local result = nil
+  local ok_all, loop_err = pcall(function()
+    local new_src = reaper.PCM_Source_CreateFromFile(filename)
+    if not new_src then error("could not re-open source file: " .. tostring(filename), 0) end
+    local count = reaper.CountTracks(0)
+    reaper.InsertTrackAtIndex(count, true)
+    local dtr = reaper.GetTrack(0, count)
+    if not dtr then
+      if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(new_src) end
+      error("could not create the clone track: " .. tostring(new_name), 0)
+    end
+    reaper.GetSetMediaTrackInfo_String(dtr, "P_NAME", new_name, true)
+    local item = reaper.AddMediaItemToTrack(dtr)
+    if not item then
+      if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(new_src) end
+      error("could not create a media item on the clone track", 0)
+    end
+    local take = reaper.AddTakeToMediaItem(item)
+    if not take then
+      if reaper.PCM_Source_Destroy then reaper.PCM_Source_Destroy(new_src) end
+      error("could not create a take on the clone track", 0)
+    end
+    reaper.SetMediaItemTake_Source(take, new_src)   -- take owns new_src from here
+    reaper.SetMediaItemInfo_Value(item, "D_POSITION", dest + (clip0 - s0))
+    reaper.SetMediaItemInfo_Value(item, "D_LENGTH", clip1 - clip0)
+    reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS",
+      reaper.GetMediaItemTakeInfo_Value(src_take, "D_STARTOFFS") + (clip0 - pos))
+    reaper.SetMediaItemInfo_Value(item, "C_BEATATTACHMODE", 0)   -- f4394e9 pins
+    reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
+    reaper.SetMediaItemTakeInfo_Value(take, "D_VOL", take_vol)
+    reaper.UpdateArrange()
+    result = {
+      track_guid = reaper.GetTrackGUID(dtr),
+      track_name = tostring(new_name),
+      cloned_start_s = clip0,
+      cloned_end_s = clip1,
+      dest_s = dest + (clip0 - s0),
+      length_s = clip1 - clip0,
+    }
+  end)
+  reaper.Undo_EndBlock(string.format("Orpheus: clone region [%.2f-%.2f] to %.2f on %s",
+    s0, s1, dest, tostring(new_name)), -1)
+  if not ok_all then err(tostring(loop_err)) end
+  return result
+end
+
 -- nudge_take_offset — slide the AUDIO inside every audio item on a track by adding
 -- delta_s to each active take's D_STARTOFFS, WITHOUT moving the items themselves
 -- (motivating case: record-latency sync repair — the take plays delta_s earlier while

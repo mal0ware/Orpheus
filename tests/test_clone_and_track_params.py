@@ -320,3 +320,64 @@ def test_nudge_is_one_undo_block(client, project, take_wav):
     client.call("nudge_take_offset", track="vox", delta_s=0.26)
     pairs = [e for e in project.undo_events if "nudge take offset" in e[1]]
     assert [kind for kind, _ in pairs] == ["begin", "end"]
+
+
+# --------------------------------------------------------------------------- #
+# Bridge contract — clone_item_region (re-arrange a piece of a recorded take)
+# --------------------------------------------------------------------------- #
+
+
+def test_clone_region_windows_the_take_and_lands_at_dest(client, project, take_wav):
+    # Item on the timeline at 140.0, 8 s long, take already slid 0.26 s (sync nudge).
+    _audio_track(project, "vox", take_wav, position=140.0, length=8.0, start_offs=0.26)
+    res = client.call(
+        "clone_item_region", src_track="vox", new_track_name="chant",
+        src_start_s=142.9, src_end_s=149.8, dest_s=154.3, item_volume_db=-3.0,
+    )
+    assert res["track_name"] == "chant"
+    assert res["cloned_start_s"] == pytest.approx(142.9)
+    assert res["cloned_end_s"] == pytest.approx(148.0)   # clipped to item end (140+8)
+    assert res["dest_s"] == pytest.approx(154.3)
+    assert res["length_s"] == pytest.approx(5.1)
+    dest = project.resolve_track("chant")
+    item = dest.items[0]
+    assert item.position == pytest.approx(154.3)
+    assert item.length == pytest.approx(5.1)
+    # source audio at src time 142.9 = take offset 0.26 + (142.9 - 140.0)
+    assert item.start_offs == pytest.approx(0.26 + 2.9)
+    assert item.beat_attach_mode == 0 and item.playrate == 1.0   # f4394e9 pins
+    assert item.take_volume == pytest.approx(10 ** (-3.0 / 20.0))
+
+
+def test_clone_region_clips_leading_overhang_and_shifts_dest(client, project, take_wav):
+    # Region starts BEFORE the item: the clip skips to the item start and dest shifts
+    # by the same amount, so src time T still plays at dest + (T - src_start_s).
+    _audio_track(project, "vox", take_wav, position=10.0, length=5.0)
+    res = client.call(
+        "clone_item_region", src_track="vox", new_track_name="clip",
+        src_start_s=8.0, src_end_s=12.0, dest_s=50.0,
+    )
+    assert res["cloned_start_s"] == pytest.approx(10.0)
+    assert res["dest_s"] == pytest.approx(52.0)
+    assert res["length_s"] == pytest.approx(2.0)
+
+
+def test_clone_region_requires_overlap_and_sane_range(client, project, take_wav):
+    _audio_track(project, "vox", take_wav, position=0.0, length=5.0)
+    with pytest.raises(BridgeError, match="no audio item overlaps"):
+        client.call("clone_item_region", src_track="vox", new_track_name="x",
+                    src_start_s=100.0, src_end_s=110.0, dest_s=0.0)
+    with pytest.raises(BridgeError, match="must be > src_start_s"):
+        client.call("clone_item_region", src_track="vox", new_track_name="x",
+                    src_start_s=2.0, src_end_s=2.0, dest_s=0.0)
+    with pytest.raises(BridgeError, match="new_track_name is required"):
+        client.call("clone_item_region", src_track="vox", new_track_name="",
+                    src_start_s=0.0, src_end_s=1.0, dest_s=0.0)
+
+
+def test_clone_region_is_one_undo_block(client, project, take_wav):
+    _audio_track(project, "vox", take_wav, position=0.0, length=5.0)
+    client.call("clone_item_region", src_track="vox", new_track_name="clip",
+                src_start_s=1.0, src_end_s=2.0, dest_s=9.0)
+    pairs = [e for e in project.undo_events if "clone region" in e[1]]
+    assert [kind for kind, _ in pairs] == ["begin", "end"]

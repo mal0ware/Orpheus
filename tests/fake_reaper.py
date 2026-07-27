@@ -593,6 +593,60 @@ def make_handlers(project: FakeReaperProject) -> dict:
             tr.pan = max(-1.0, min(1.0, float(p["pan"])))
         return {"track_guid": tr.guid, "volume_db": tr.volume_db, "pan": tr.pan}
 
+    def clone_item_region(p):
+        tr = project.resolve_track(p["src_track"])
+        new_name = p.get("new_track_name") or ""
+        if not new_name:
+            raise ValueError("clone_item_region: new_track_name is required")
+        s0, s1, dest = p.get("src_start_s"), p.get("src_end_s"), p.get("dest_s")
+        if s0 is None or s1 is None or dest is None:
+            raise ValueError("clone_item_region: src_start_s, src_end_s and dest_s are required")
+        s0, s1, dest = float(s0), float(s1), float(dest)
+        if s1 <= s0:
+            raise ValueError("clone_item_region: src_end_s must be > src_start_s")
+        take_vol = 10.0 ** (float(p.get("item_volume_db") or 0.0) / 20.0)
+        src_item = next(
+            (it for it in tr.items if it.position < s1 and it.position + it.length > s0),
+            None,
+        )
+        if src_item is None:
+            raise ValueError(
+                f"no audio item overlaps [{s0:.3f}, {s1:.3f}) on track: {p['src_track']}"
+            )
+        if not src_item.source_file:
+            raise ValueError("source has no filename (in-project/section source)")
+        clip0 = max(s0, src_item.position)
+        clip1 = min(s1, src_item.position + src_item.length)
+        desc = f"Orpheus: clone region [{s0:.2f}-{s1:.2f}] to {dest:.2f} on {new_name}"
+        project.undo_events.append(("begin", desc))
+        try:
+            if not Path(src_item.source_file).is_file():
+                raise ValueError(f"could not re-open source file: {src_item.source_file}")
+            dtr = FakeTrack(guid=project._next_guid(), name=new_name)
+            project.tracks.append(dtr)
+            dtr.items.append(
+                FakeMediaItem(
+                    source_file=src_item.source_file,
+                    position=dest + (clip0 - s0),
+                    length=clip1 - clip0,
+                    take_name=new_name,
+                    beat_attach_mode=0,
+                    playrate=1.0,
+                    start_offs=src_item.start_offs + (clip0 - src_item.position),
+                    take_volume=take_vol,
+                )
+            )
+        finally:
+            project.undo_events.append(("end", desc))
+        return {
+            "track_guid": dtr.guid,
+            "track_name": new_name,
+            "cloned_start_s": clip0,
+            "cloned_end_s": clip1,
+            "dest_s": dest + (clip0 - s0),
+            "length_s": clip1 - clip0,
+        }
+
     def nudge_take_offset(p):
         tr = project.resolve_track(p["track"])
         if p.get("delta_s") is None:
@@ -756,6 +810,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "clone_track_items": clone_track_items,
         "set_track_params": set_track_params,
         "nudge_take_offset": nudge_take_offset,
+        "clone_item_region": clone_item_region,
         "add_marker": add_marker,
         "add_fx_by_name": add_fx_by_name,
         "set_fx_param": set_fx_param,
