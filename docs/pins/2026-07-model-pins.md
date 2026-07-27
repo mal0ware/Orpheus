@@ -153,3 +153,12 @@ Ear-checks (stem quality, chords, lyrics on owned songs) remain the user's.
 4/4 stems imported as named tracks (200.0 s each, correct lengths → GetMediaSourceLength
 returns SECONDS on real PCM sources — verify-live comment (1) resolved), single undo block,
 zero failures. The verb is live-verified end-to-end.
+
+### Timebase regression + fix — 2026-07-27, REAPER 7.78
+The original import left items on the project-default (beats) timebase, so a later
+`set_tempo` (120 → 84 BPM) stretched the stems ~0.7x — user heard "half speed". Fix
+(commit f4394e9): `import_one_audio_file` now pins `C_BEATATTACHMODE = 0` (time base) and
+`D_PLAYRATE = 1.0` on every imported item. Live-verified: warped tracks deleted, bridge
+reloaded, 4/4 stems re-imported (199.97 s each) into the 84 BPM project — items are
+tempo-immune. Imported reference audio must ALWAYS be time-based; tempo/marker verbs must
+never alter its playback rate.
