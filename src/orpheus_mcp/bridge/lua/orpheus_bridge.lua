@@ -1344,8 +1344,73 @@ local function scan_requests()
   return names
 end
 
+-- --------------------------------------------------------------------------- --
+-- Hot reload — the bridge watches its OWN installed file and swaps in updated
+-- HANDLERS without the user re-running the action. `orpheus-mcp install-bridge`
+-- overwrites the script file; within a couple of seconds the running loop notices
+-- the content changed, loads the new file (with ORPHEUS_NO_AUTORUN so the new copy
+-- does NOT start a second defer loop), and mutates the LIVE HANDLERS table in
+-- place — dispatch() closes over that same table, so new/changed verbs take effect
+-- immediately. The loop/tick/heartbeat core itself is NOT hot-swapped (changes to
+-- it still need one manual re-run; handler changes — the common case — never do).
+-- A broken new file is REPORTED to the console and the old handlers keep serving.
+-- --------------------------------------------------------------------------- --
+
+-- Swap the live handler table's contents for another module's handlers, in place.
+-- Exposed on M so tests can drive the swap without the file-watch glue.
+local function swap_handlers(new_handlers)
+  for k in pairs(HANDLERS) do HANDLERS[k] = nil end
+  for k, v in pairs(new_handlers) do HANDLERS[k] = v end
+end
+M.swap_handlers = swap_handlers
+
+local SELF_PATH = nil          -- resolved at autostart via get_action_context
+local SELF_CONTENT = nil       -- last-loaded file content (change detector)
+local RELOAD_CHECK_EVERY_S = 2.0
+local last_reload_check = 0.0
+
+local function read_self()
+  if not SELF_PATH then return nil end
+  local f = io.open(SELF_PATH, "rb")
+  if not f then return nil end
+  local content = f:read("*a")
+  f:close()
+  return content
+end
+
+local function check_hot_reload()
+  local now = os.clock()
+  if now - last_reload_check < RELOAD_CHECK_EVERY_S then return end
+  last_reload_check = now
+  local content = read_self()
+  if not content or content == SELF_CONTENT then return end
+  SELF_CONTENT = content   -- consume the change even if the load fails (no retry storm)
+  local chunk, cerr = load(content, "@" .. tostring(SELF_PATH))
+  if not chunk then
+    if reaper.ShowConsoleMsg then
+      reaper.ShowConsoleMsg("Orpheus bridge: hot-reload PARSE error (old verbs still live): "
+        .. tostring(cerr) .. "\n")
+    end
+    return
+  end
+  local saved = _G.ORPHEUS_NO_AUTORUN
+  _G.ORPHEUS_NO_AUTORUN = true   -- the new copy must NOT start its own defer loop
+  local ok, new_M = pcall(chunk)
+  _G.ORPHEUS_NO_AUTORUN = saved
+  if ok and type(new_M) == "table" and type(new_M.handlers) == "table" then
+    swap_handlers(new_M.handlers)
+    if reaper.ShowConsoleMsg then
+      reaper.ShowConsoleMsg("Orpheus bridge: hot-reloaded updated handlers.\n")
+    end
+  elseif reaper.ShowConsoleMsg then
+    reaper.ShowConsoleMsg("Orpheus bridge: hot-reload RUN error (old verbs still live): "
+      .. tostring(new_M) .. "\n")
+  end
+end
+
 local function tick()
   touch_heartbeat()
+  check_hot_reload()
   for _, name in ipairs(scan_requests()) do
     pcall(handle_request, name)
   end
@@ -1364,8 +1429,19 @@ M.loop = loop
 
 if not _G.ORPHEUS_NO_AUTORUN then
   ensure_dir()
+  -- Resolve our own installed path for the hot-reload watcher. get_action_context is
+  -- only meaningful when actually run as a REAPER action; absent (or failing), the
+  -- watcher stays disarmed and the bridge behaves exactly as before.
+  if reaper.get_action_context then
+    local ok, _, script_path = pcall(reaper.get_action_context)
+    if ok and script_path and script_path ~= "" then
+      SELF_PATH = script_path
+      SELF_CONTENT = read_self()
+    end
+  end
   if reaper and reaper.ShowConsoleMsg then
-    reaper.ShowConsoleMsg("Orpheus bridge listening in: " .. BRIDGE_DIR .. "\n")
+    reaper.ShowConsoleMsg("Orpheus bridge listening in: " .. BRIDGE_DIR ..
+      (SELF_PATH and " (hot-reload armed)" or "") .. "\n")
   end
   loop()
 end

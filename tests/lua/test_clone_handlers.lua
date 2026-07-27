@@ -510,5 +510,27 @@ ok(tostring(r10c.error):find("at least one of"), "missing-bounds message")
 local r10d = call("trim_track_items", { track = "vox", start_s = 5.0, end_s = 5.0 })
 ok(tostring(r10d.error):find("must be > start_s"), "inverted-window message")
 
+
+-- --------------------------------------------------------------------------- --
+-- 11. hot reload — swap_handlers mutates the LIVE table dispatch closes over
+-- --------------------------------------------------------------------------- --
+reset()
+new_track("vox")
+local before = call("set_track_params", { track = "vox" })
+eq(before.ok, true, "existing verb works before swap")
+M.swap_handlers({ brand_new_verb = function(_) return { hello = "world" } end })
+local after_new = call("brand_new_verb", {})
+eq(after_new.ok, true, "swapped-in verb dispatches")
+eq(after_new.result.hello, "world", "swapped-in verb returns its result")
+local after_old = call("set_track_params", { track = "vox" })
+eq(after_old.ok, false, "verbs absent from the new set are gone (true swap, not merge)")
+-- restore the real handlers for any later assertions
+M.swap_handlers(M.handlers ~= nil and (function()
+  local orig = assert(loadfile(here .. "../../src/orpheus_mcp/bridge/lua/orpheus_bridge.lua"))()
+  return orig.handlers
+end)() or {})
+local restored = call("set_track_params", { track = "vox" })
+eq(restored.ok, true, "original handlers restored after swap-back")
+
 print(string.format("lua clone handlers: %d passed, %d failed", passed, failed_count))
 os.exit(failed_count == 0 and 0 or 1)
