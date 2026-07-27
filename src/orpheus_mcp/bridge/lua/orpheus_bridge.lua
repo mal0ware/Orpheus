@@ -911,6 +911,15 @@ local function import_one_audio_file(file, at_s, prefix)
   reaper.SetMediaItemTake_Source(take, src)
   reaper.SetMediaItemInfo_Value(item, "D_POSITION", at_s)
   reaper.SetMediaItemInfo_Value(item, "D_LENGTH", len)
+  -- Pin the item to TIME base (0 = time; -1 would be project default — that was the bug:
+  -- a beats-timebase item warps under a later set_tempo). Imported reference audio must
+  -- never tempo-warp; a later set_tempo stretched real stems at half speed (live incident
+  -- 2026-07-25). verify live: 0=time per the ReaScript docs for C_BEATATTACHMODE.
+  reaper.SetMediaItemInfo_Value(item, "C_BEATATTACHMODE", 0)
+  -- Belt-and-suspenders against the same class of bug: an imported reference take must
+  -- always play back at its native rate, never inherit a project/take playrate that would
+  -- also stretch it under a tempo change.
+  reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
   -- verify live: the take-name setter is GetSetMediaItemTakeInfo_String(take, "P_NAME",
   -- name, true) on REAPER 7.x. The stub only proves we call it with those arguments; if
   -- the live build ignores it, the item will still be correct but unnamed.

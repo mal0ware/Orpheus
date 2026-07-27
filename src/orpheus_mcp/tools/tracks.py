@@ -56,6 +56,9 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         paths against its own working directory, not the caller's). A file that cannot be
         opened as audio lands in ``failed`` with its error while every other file still
         imports — never a half-silent partial.
+
+        Imported items are pinned to TIME base at native playrate, so a later ``set_tempo``
+        never stretches them.
         """
         if not files:
             raise ValueError("files must not be empty — name at least one audio file to import")

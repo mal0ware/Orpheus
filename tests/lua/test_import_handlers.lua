@@ -130,14 +130,24 @@ reaper = {
     return true, take.name
   end,
   SetMediaItemInfo_Value = function(item, key, val)
+    record("SetMediaItemInfo_Value:" .. key)
     if key == "D_POSITION" then item.pos = val
-    elseif key == "D_LENGTH" then item.len = val end
+    elseif key == "D_LENGTH" then item.len = val
+    elseif key == "C_BEATATTACHMODE" then item.beat_attach_mode = val end
     return true
   end,
   GetMediaItemInfo_Value = function(item, key)
     if key == "D_POSITION" then return item.pos or 0 end
     if key == "D_LENGTH" then return item.len or 0 end
+    if key == "C_BEATATTACHMODE" then return item.beat_attach_mode end
     return 0
+  end,
+  -- Take-level D_PLAYRATE, distinct from the item-level SetMediaItemInfo_Value above —
+  -- imported reference audio must play back at its native rate (the 2026-07-25 fix).
+  SetMediaItemTakeInfo_Value = function(take, key, val)
+    record("SetMediaItemTakeInfo_Value:" .. key)
+    if key == "D_PLAYRATE" then take.playrate = val end
+    return true
   end,
 
   UpdateArrange = function()
@@ -213,6 +223,15 @@ approx(r.result.imported[2].length_s, 30.25, "result reports the source length i
 eq(proj.tracks[1].items[1].takes[1].source.file, "C:/stems/vocals.wav",
   "the take's source is the file we opened")
 eq(proj.tracks[1].items[1].takes[1].name, "vocals", "take name matches the track name")
+
+-- 1e. TEMPO-STRETCH FIX (live incident 2026-07-25): every imported item is pinned to TIME
+-- base (C_BEATATTACHMODE=0, never -1/project-default) and its take plays at native rate
+-- (D_PLAYRATE=1.0), so a later set_tempo never stretches imported reference audio.
+eq(proj.tracks[1].items[1].beat_attach_mode, 0, "item 1 pinned to TIME base (C_BEATATTACHMODE=0)")
+eq(proj.tracks[2].items[1].beat_attach_mode, 0, "item 2 pinned to TIME base (C_BEATATTACHMODE=0)")
+approx(proj.tracks[1].items[1].takes[1].playrate, 1.0, "take 1 D_PLAYRATE == 1.0 (native rate)")
+approx(proj.tracks[2].items[1].takes[1].playrate, 1.0, "take 2 D_PLAYRATE == 1.0 (native rate)")
+ok(called("SetMediaItemTakeInfo_Value:D_PLAYRATE"), "SetMediaItemTakeInfo_Value D_PLAYRATE called")
 
 -- 1d. ONE undo block for the WHOLE import (the one-Ctrl+Z promise), and UpdateArrange once.
 eq(proj.undo_begins, 1, "undo block opened exactly once")

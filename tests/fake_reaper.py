@@ -79,6 +79,13 @@ class FakeMediaItem:
     position: float = 0.0
     length: float = 0.0
     take_name: str = ""
+    # C_BEATATTACHMODE as REAPER models it: 0=time, 1=beats, -1=project default. Imported
+    # reference audio must be pinned to TIME (0) so a later set_tempo never stretches it —
+    # the live incident (2026-07-25) was a beats-timebase item warping under a tempo change.
+    # Default here is -1 (the buggy "inherit project default") so an un-set item fails the
+    # assertion honestly rather than passing by accident.
+    beat_attach_mode: int = -1
+    playrate: float = 1.0
 
 
 @dataclass
@@ -498,6 +505,10 @@ def make_handlers(project: FakeReaperProject) -> dict:
                             position=at_s,
                             length=length_s,
                             take_name=name,
+                            # Pinned to time base + native playrate — see the Lua handler's
+                            # import_one_audio_file (the 2026-07-25 tempo-stretch fix).
+                            beat_attach_mode=0,
+                            playrate=1.0,
                         )
                     )
                     project.tracks.append(tr)  # append at the end

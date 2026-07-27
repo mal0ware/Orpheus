@@ -87,6 +87,17 @@ def test_items_land_at_at_s_with_the_real_source_length(client, project, stems):
     assert vocals.items[0].source_file == stems["vocals"]
 
 
+def test_imported_items_are_pinned_to_time_base_at_native_playrate(client, project, stems):
+    # Live incident (2026-07-25): imported items inherited a beats timebase, so a later
+    # set_tempo stretched the audio (half-speed). Imported reference audio must never
+    # tempo-warp — assert both the time-base pin and the native playrate.
+    client.call("import_audio_files", files=[stems["vocals"], stems["drums"]], at_s=0.0)
+    for tr in project.tracks:
+        item = tr.items[0]
+        assert item.beat_attach_mode == 0, "imported item must be pinned to TIME base (0)"
+        assert item.playrate == 1.0, "imported item must play back at its native rate"
+
+
 def test_at_s_defaults_to_zero(client, project, stems):
     client.call("import_audio_files", files=[stems["drums"]])
     assert project.tracks[0].items[0].position == 0.0
