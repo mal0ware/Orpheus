@@ -593,6 +593,36 @@ def make_handlers(project: FakeReaperProject) -> dict:
             tr.pan = max(-1.0, min(1.0, float(p["pan"])))
         return {"track_guid": tr.guid, "volume_db": tr.volume_db, "pan": tr.pan}
 
+    def nudge_take_offset(p):
+        tr = project.resolve_track(p["track"])
+        if p.get("delta_s") is None:
+            raise ValueError("nudge_take_offset: delta_s is required")
+        delta = float(p["delta_s"])
+        total = len(tr.takes) + len(tr.items)
+        if total == 0:
+            raise ValueError(f"no items to nudge on track: {p['track']}")
+        desc = f"Orpheus: nudge take offset {delta:+.3f}s"
+        project.undo_events.append(("begin", desc))
+        nudged = 0
+        clamped = 0
+        try:
+            for item in tr.items:
+                new_offs = item.start_offs + delta
+                if new_offs < 0:
+                    new_offs = 0.0
+                    clamped += 1
+                item.start_offs = new_offs
+                nudged += 1
+        finally:
+            project.undo_events.append(("end", desc))
+        return {
+            "track_guid": tr.guid,
+            "nudged": nudged,
+            "skipped_midi": len(tr.takes),
+            "clamped": clamped,
+            "delta_s": delta,
+        }
+
     def add_marker(p):
         entry = {"name": p["name"], "bar": int(p["bar"])}
         project.markers.append(entry)
@@ -725,6 +755,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "import_audio_files": import_audio_files,
         "clone_track_items": clone_track_items,
         "set_track_params": set_track_params,
+        "nudge_take_offset": nudge_take_offset,
         "add_marker": add_marker,
         "add_fx_by_name": add_fx_by_name,
         "set_fx_param": set_fx_param,

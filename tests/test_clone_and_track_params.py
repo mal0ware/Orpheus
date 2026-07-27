@@ -273,3 +273,50 @@ async def test_set_track_params_tool_end_to_end(mcp_client, project):
     assert res.data["volume_db"] == pytest.approx(-4.5)
     assert res.data["pan"] == pytest.approx(0.6)
     assert tr.pan == pytest.approx(0.6)
+
+
+# --------------------------------------------------------------------------- #
+# Bridge contract — nudge_take_offset (record-latency sync repair)
+# --------------------------------------------------------------------------- #
+
+
+def test_nudge_slides_audio_without_moving_items(client, project, take_wav):
+    tr = _audio_track(project, "vox", take_wav, position=2.0, start_offs=0.1)
+    res = client.call("nudge_take_offset", track="vox", delta_s=0.26)
+    assert res["nudged"] == 1
+    assert res["clamped"] == 0
+    assert res["delta_s"] == pytest.approx(0.26)
+    item = tr.items[0]
+    assert item.start_offs == pytest.approx(0.36)   # audio plays 260 ms earlier...
+    assert item.position == pytest.approx(2.0)      # ...but the item does NOT move
+
+
+def test_nudge_clamps_negative_start_offset_and_counts_it(client, project, take_wav):
+    tr = _audio_track(project, "vox", take_wav, start_offs=0.1)
+    res = client.call("nudge_take_offset", track="vox", delta_s=-0.5)
+    assert res["clamped"] == 1
+    assert tr.items[0].start_offs == 0.0
+
+
+def test_nudge_skips_midi_takes_but_counts_them(client, project, take_wav):
+    tr = _audio_track(project, "vox", take_wav)
+    tr.takes.append(FakeTake())
+    res = client.call("nudge_take_offset", track="vox", delta_s=0.1)
+    assert res["nudged"] == 1
+    assert res["skipped_midi"] == 1
+
+
+def test_nudge_requires_delta_and_items(client, project, take_wav):
+    _audio_track(project, "vox", take_wav)
+    with pytest.raises(BridgeError, match="delta_s is required"):
+        client.call("nudge_take_offset", track="vox")
+    project.tracks.append(FakeTrack(guid=project._next_guid(), name="empty"))
+    with pytest.raises(BridgeError, match="no items to nudge"):
+        client.call("nudge_take_offset", track="empty", delta_s=0.1)
+
+
+def test_nudge_is_one_undo_block(client, project, take_wav):
+    _audio_track(project, "vox", take_wav)
+    client.call("nudge_take_offset", track="vox", delta_s=0.26)
+    pairs = [e for e in project.undo_events if "nudge take offset" in e[1]]
+    assert [kind for kind, _ in pairs] == ["begin", "end"]

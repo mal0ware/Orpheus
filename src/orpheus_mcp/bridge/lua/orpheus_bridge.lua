@@ -1090,6 +1090,50 @@ HANDLERS.set_track_params = function(p)
   }
 end
 
+-- nudge_take_offset — slide the AUDIO inside every audio item on a track by adding
+-- delta_s to each active take's D_STARTOFFS, WITHOUT moving the items themselves
+-- (motivating case: record-latency sync repair — the take plays delta_s earlier while
+-- item positions, and therefore deliberate ADT offsets between clone tracks, stay put).
+-- positive delta_s = audio plays EARLIER on the timeline. A resulting negative
+-- start-offset is clamped to 0 and COUNTED, never silent; MIDI takes are counted and
+-- left alone (audio-only contract, same as clone_track_items). ONE undo block.
+HANDLERS.nudge_take_offset = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local delta = tonumber(p.delta_s)
+  if delta == nil then err("nudge_take_offset: delta_s is required") end
+  local n = reaper.CountTrackMediaItems(tr)
+  if n == 0 then err("no items to nudge on track: " .. tostring(p.track)) end
+
+  reaper.Undo_BeginBlock()
+  local nudged, skipped_midi, clamped = 0, 0, 0
+  local ok_all, loop_err = pcall(function()
+    for i = 0, n - 1 do
+      local item = reaper.GetTrackMediaItem(tr, i)
+      local take = reaper.GetActiveTake(item)
+      if take and reaper.TakeIsMIDI(take) then
+        skipped_midi = skipped_midi + 1
+      elseif take then
+        local cur = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
+        local new_offs = cur + delta
+        if new_offs < 0 then new_offs = 0; clamped = clamped + 1 end
+        reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_offs)
+        nudged = nudged + 1
+      end
+    end
+    reaper.UpdateArrange()
+  end)
+  reaper.Undo_EndBlock(string.format("Orpheus: nudge take offset %+.3fs", delta), -1)
+  if not ok_all then err(tostring(loop_err)) end
+  return {
+    track_guid = reaper.GetTrackGUID(tr),
+    nudged = nudged,
+    skipped_midi = skipped_midi,
+    clamped = clamped,
+    delta_s = delta,
+  }
+end
+
 local function dispatch(fn, params)
   if fn == "__batch__" then
     local results = {}

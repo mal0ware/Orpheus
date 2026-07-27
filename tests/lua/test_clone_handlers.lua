@@ -375,5 +375,44 @@ local r7e = call("set_track_params", { track = "ghost", pan = 0.0 })
 eq(r7e.ok, false, "unknown track -> ok=false")
 ok(tostring(r7e.error):find("no track named"), "unknown-track error message")
 
+
+-- --------------------------------------------------------------------------- --
+-- 8. nudge_take_offset — slide the audio inside items (record-latency repair)
+-- --------------------------------------------------------------------------- --
+reset()
+local vox = new_track("vox")
+local it1 = add_audio_item(vox, "C:/takes/my_take.wav", 2.0, 1.5, 0.1)
+local r8 = call("nudge_take_offset", { track = "vox", delta_s = 0.26 })
+eq(r8.ok, true, "nudge ok")
+eq(r8.result.nudged, 1, "one item nudged")
+eq(r8.result.clamped, 0, "nothing clamped")
+approx(r8.result.delta_s, 0.26, "delta echoed")
+approx(it1.takes[1].startoffs, 0.36, "D_STARTOFFS advanced by delta", 1e-9)
+approx(it1.pos, 2.0, "item position UNTOUCHED (audio slides, item stays)", 1e-9)
+eq(proj.undo_begins, 1, "one undo begin")
+eq(proj.undo_ends, 1, "one undo end")
+ok(proj.undo_descs[1].desc:find("nudge take offset"), "undo description names the verb")
+eq(proj.update_arrange_calls, 1, "one UpdateArrange")
+
+-- 8a. negative resulting offset clamps to 0 and is counted.
+local r8a = call("nudge_take_offset", { track = "vox", delta_s = -5.0 })
+eq(r8a.result.clamped, 1, "clamp counted")
+approx(it1.takes[1].startoffs, 0.0, "offset clamped to zero", 1e-9)
+
+-- 8b. MIDI takes are skipped and counted; audio still nudged.
+add_midi_item(vox, 0.0)
+local r8b = call("nudge_take_offset", { track = "vox", delta_s = 0.1 })
+eq(r8b.result.nudged, 1, "audio item nudged alongside a MIDI item")
+eq(r8b.result.skipped_midi, 1, "MIDI take counted, not touched")
+
+-- 8c. guards: missing delta_s; empty track.
+local r8c = call("nudge_take_offset", { track = "vox" })
+eq(r8c.ok, false, "missing delta_s -> ok=false")
+ok(tostring(r8c.error):find("delta_s is required"), "missing-delta message")
+new_track("empty")
+local r8d = call("nudge_take_offset", { track = "empty", delta_s = 0.1 })
+eq(r8d.ok, false, "empty track -> ok=false")
+ok(tostring(r8d.error):find("no items to nudge"), "empty-track message")
+
 print(string.format("lua clone handlers: %d passed, %d failed", passed, failed_count))
 os.exit(failed_count == 0 and 0 or 1)
