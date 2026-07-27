@@ -1090,6 +1090,74 @@ HANDLERS.set_track_params = function(p)
   }
 end
 
+-- trim_track_items — clip every AUDIO item on a track to the window [start_s, end_s]
+-- (either bound optional; motivating case: cutting the main vocal stack's tail so a
+-- cloned, differently-processed copy — e.g. a telephone-EQ ending — can take over).
+-- A left trim advances D_POSITION and D_STARTOFFS together so the surviving audio
+-- keeps playing at the same timeline moment. An item that falls ENTIRELY outside the
+-- window cannot be deleted by this verb (no delete by design) — it is collapsed to
+-- 1 ms at the window edge and COUNTED under `collapsed`, never silently skipped.
+-- MIDI takes are counted and untouched. ONE undo block.
+HANDLERS.trim_track_items = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local w0 = tonumber(p.start_s)
+  local w1 = tonumber(p.end_s)
+  if w0 == nil and w1 == nil then
+    err("trim_track_items: at least one of start_s / end_s is required")
+  end
+  if w0 and w1 and w1 <= w0 then err("trim_track_items: end_s must be > start_s") end
+  local n = reaper.CountTrackMediaItems(tr)
+  if n == 0 then err("no items to trim on track: " .. tostring(p.track)) end
+
+  reaper.Undo_BeginBlock()
+  local trimmed, skipped_midi, collapsed, untouched = 0, 0, 0, 0
+  local ok_all, loop_err = pcall(function()
+    for i = 0, n - 1 do
+      local item = reaper.GetTrackMediaItem(tr, i)
+      local take = reaper.GetActiveTake(item)
+      if take and reaper.TakeIsMIDI(take) then
+        skipped_midi = skipped_midi + 1
+      elseif take then
+        local pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+        local len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+        local lo = w0 or pos
+        local hi = w1 or (pos + len)
+        local new_pos = math.max(pos, lo)
+        local new_end = math.min(pos + len, hi)
+        if new_end <= new_pos then
+          -- Entirely outside: collapse to 1 ms at the nearest window edge.
+          local edge = (pos + len <= lo) and lo or hi
+          reaper.SetMediaItemInfo_Value(item, "D_POSITION", edge)
+          reaper.SetMediaItemInfo_Value(item, "D_LENGTH", 0.001)
+          collapsed = collapsed + 1
+        elseif new_pos == pos and new_end == pos + len then
+          untouched = untouched + 1
+        else
+          if new_pos > pos then
+            local offs = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
+            reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", offs + (new_pos - pos))
+            reaper.SetMediaItemInfo_Value(item, "D_POSITION", new_pos)
+          end
+          reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_end - new_pos)
+          trimmed = trimmed + 1
+        end
+      end
+    end
+    reaper.UpdateArrange()
+  end)
+  reaper.Undo_EndBlock(string.format("Orpheus: trim items to [%s, %s]",
+    w0 and string.format("%.2f", w0) or "-", w1 and string.format("%.2f", w1) or "-"), -1)
+  if not ok_all then err(tostring(loop_err)) end
+  return {
+    track_guid = reaper.GetTrackGUID(tr),
+    trimmed = trimmed,
+    untouched = untouched,
+    collapsed = collapsed,
+    skipped_midi = skipped_midi,
+  }
+end
+
 -- clone_item_region — clone a TIME REGION of a track's audio onto ONE new appended
 -- track at a chosen destination position (motivating case: re-arranging pieces of a
 -- recorded take — e.g. layering a background chant sung in section N over the lyrics

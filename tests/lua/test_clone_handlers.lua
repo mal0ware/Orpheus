@@ -471,5 +471,44 @@ eq(r9e.ok, false, "unopenable source -> ok=false")
 ok(tostring(r9e.error):find("could not re%-open source file"), "re-open failure message")
 eq(proj.undo_begins, proj.undo_ends, "undo blocks balanced across failures")
 
+
+-- --------------------------------------------------------------------------- --
+-- 10. trim_track_items — clip items to a window (no deletion by design)
+-- --------------------------------------------------------------------------- --
+reset()
+local voxt = new_track("vox")
+local itt = add_audio_item(voxt, "C:/takes/my_take.wav", 0.26, 180.0, 0.0)
+local r10 = call("trim_track_items", { track = "vox", end_s = 168.0 })
+eq(r10.ok, true, "trim ok")
+eq(r10.result.trimmed, 1, "one item trimmed")
+approx(itt.pos, 0.26, "right-trim leaves position", 1e-9)
+approx(itt.len, 168.0 - 0.26, "length clipped to end_s", 1e-9)
+eq(proj.undo_begins, 1, "one undo begin")
+eq(proj.undo_ends, 1, "one undo end")
+
+-- 10a. left trim advances position + startoffs together.
+reset()
+local vt2 = new_track("vox")
+local it2 = add_audio_item(vt2, "C:/takes/my_take.wav", 10.0, 20.0, 0.5)
+call("trim_track_items", { track = "vox", start_s = 14.0 })
+approx(it2.pos, 14.0, "left-trim advances position", 1e-9)
+approx(it2.takes[1].startoffs, 4.5, "startoffs advances with it", 1e-9)
+approx(it2.len, 16.0, "length shrinks by the lead", 1e-9)
+
+-- 10b. fully-outside item collapses to 1 ms at the window edge, counted.
+reset()
+local vt3 = new_track("vox")
+local it3 = add_audio_item(vt3, "C:/takes/my_take.wav", 100.0, 5.0, 0.0)
+local r10b = call("trim_track_items", { track = "vox", end_s = 50.0 })
+eq(r10b.result.collapsed, 1, "collapse counted")
+approx(it3.pos, 50.0, "collapsed to the window edge", 1e-9)
+approx(it3.len, 0.001, "collapsed to 1 ms", 1e-12)
+
+-- 10c. guards.
+local r10c = call("trim_track_items", { track = "vox" })
+ok(tostring(r10c.error):find("at least one of"), "missing-bounds message")
+local r10d = call("trim_track_items", { track = "vox", start_s = 5.0, end_s = 5.0 })
+ok(tostring(r10d.error):find("must be > start_s"), "inverted-window message")
+
 print(string.format("lua clone handlers: %d passed, %d failed", passed, failed_count))
 os.exit(failed_count == 0 and 0 or 1)

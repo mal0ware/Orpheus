@@ -381,3 +381,59 @@ def test_clone_region_is_one_undo_block(client, project, take_wav):
                 src_start_s=1.0, src_end_s=2.0, dest_s=9.0)
     pairs = [e for e in project.undo_events if "clone region" in e[1]]
     assert [kind for kind, _ in pairs] == ["begin", "end"]
+
+
+# --------------------------------------------------------------------------- #
+# Bridge contract — trim_track_items (clip items to a window; no deletion)
+# --------------------------------------------------------------------------- #
+
+
+def test_trim_end_shortens_item_in_place(client, project, take_wav):
+    tr = _audio_track(project, "vox", take_wav, position=0.26, length=180.0)
+    res = client.call("trim_track_items", track="vox", end_s=168.0)
+    assert res["trimmed"] == 1 and res["collapsed"] == 0
+    item = tr.items[0]
+    assert item.position == pytest.approx(0.26)          # right-trim: position untouched
+    assert item.length == pytest.approx(168.0 - 0.26)
+
+
+def test_trim_start_advances_position_and_startoffs_together(client, project, take_wav):
+    tr = _audio_track(project, "vox", take_wav, position=10.0, length=20.0, start_offs=0.5)
+    client.call("trim_track_items", track="vox", start_s=14.0)
+    item = tr.items[0]
+    assert item.position == pytest.approx(14.0)
+    assert item.start_offs == pytest.approx(0.5 + 4.0)   # audio keeps its timeline moment
+    assert item.length == pytest.approx(16.0)
+
+
+def test_trim_collapses_fully_outside_item_and_counts_it(client, project, take_wav):
+    tr = _audio_track(project, "vox", take_wav, position=100.0, length=5.0)
+    res = client.call("trim_track_items", track="vox", end_s=50.0)
+    assert res["collapsed"] == 1
+    assert tr.items[0].length == pytest.approx(0.001)
+    assert tr.items[0].position == pytest.approx(50.0)
+
+
+def test_trim_leaves_inside_items_untouched_and_counts_them(client, project, take_wav):
+    tr = _audio_track(project, "vox", take_wav, position=5.0, length=2.0)
+    res = client.call("trim_track_items", track="vox", start_s=0.0, end_s=100.0)
+    assert res["untouched"] == 1 and res["trimmed"] == 0
+    assert tr.items[0].position == pytest.approx(5.0)
+
+
+def test_trim_guards(client, project, take_wav):
+    _audio_track(project, "vox", take_wav)
+    with pytest.raises(BridgeError, match="at least one of"):
+        client.call("trim_track_items", track="vox")
+    with pytest.raises(BridgeError, match="must be > start_s"):
+        client.call("trim_track_items", track="vox", start_s=5.0, end_s=5.0)
+    project.tracks.append(FakeTrack(guid=project._next_guid(), name="empty"))
+    with pytest.raises(BridgeError, match="no items to trim"):
+        client.call("trim_track_items", track="empty", end_s=1.0)
+
+
+def test_trim_is_one_undo_block(client, project, take_wav):
+    _audio_track(project, "vox", take_wav, position=0.0, length=10.0)
+    client.call("trim_track_items", track="vox", end_s=5.0)
+    pairs = [e for e in project.undo_events if "trim items" in e[1]]
+    assert [kind for kind, _ in pairs] == ["begin", "end"]

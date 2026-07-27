@@ -593,6 +593,47 @@ def make_handlers(project: FakeReaperProject) -> dict:
             tr.pan = max(-1.0, min(1.0, float(p["pan"])))
         return {"track_guid": tr.guid, "volume_db": tr.volume_db, "pan": tr.pan}
 
+    def trim_track_items(p):
+        tr = project.resolve_track(p["track"])
+        w0 = p.get("start_s")
+        w1 = p.get("end_s")
+        if w0 is None and w1 is None:
+            raise ValueError("trim_track_items: at least one of start_s / end_s is required")
+        if w0 is not None and w1 is not None and float(w1) <= float(w0):
+            raise ValueError("trim_track_items: end_s must be > start_s")
+        if len(tr.takes) + len(tr.items) == 0:
+            raise ValueError(f"no items to trim on track: {p['track']}")
+        desc = "Orpheus: trim items"
+        project.undo_events.append(("begin", desc))
+        trimmed = untouched = collapsed = 0
+        try:
+            for item in tr.items:
+                lo = float(w0) if w0 is not None else item.position
+                hi = float(w1) if w1 is not None else item.position + item.length
+                new_pos = max(item.position, lo)
+                new_end = min(item.position + item.length, hi)
+                if new_end <= new_pos:
+                    item.position = lo if item.position + item.length <= lo else hi
+                    item.length = 0.001
+                    collapsed += 1
+                elif new_pos == item.position and new_end == item.position + item.length:
+                    untouched += 1
+                else:
+                    if new_pos > item.position:
+                        item.start_offs += new_pos - item.position
+                        item.position = new_pos
+                    item.length = new_end - new_pos
+                    trimmed += 1
+        finally:
+            project.undo_events.append(("end", desc))
+        return {
+            "track_guid": tr.guid,
+            "trimmed": trimmed,
+            "untouched": untouched,
+            "collapsed": collapsed,
+            "skipped_midi": len(tr.takes),
+        }
+
     def clone_item_region(p):
         tr = project.resolve_track(p["src_track"])
         new_name = p.get("new_track_name") or ""
@@ -811,6 +852,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "set_track_params": set_track_params,
         "nudge_take_offset": nudge_take_offset,
         "clone_item_region": clone_item_region,
+        "trim_track_items": trim_track_items,
         "add_marker": add_marker,
         "add_fx_by_name": add_fx_by_name,
         "set_fx_param": set_fx_param,
