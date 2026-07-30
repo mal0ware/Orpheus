@@ -1435,6 +1435,22 @@ HANDLERS.nudge_take_offset = function(p)
   }
 end
 
+-- delete_track — remove a track from the project (user-mandated 2026-07-30; the
+-- original no-delete design stance was overridden by explicit request). Resolves by
+-- name/GUID/index like every verb; the result echoes what was deleted so the caller
+-- can log it. One undo block — a deletion must be one Ctrl+Z away from recovery.
+HANDLERS.delete_track = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local guid = reaper.GetTrackGUID(tr)
+  local _, name = reaper.GetTrackName(tr, "")
+  reaper.Undo_BeginBlock()
+  reaper.DeleteTrack(tr)
+  reaper.Undo_EndBlock("Orpheus: delete track " .. tostring(name), -1)
+  if reaper.TrackList_AdjustWindows then reaper.TrackList_AdjustWindows(false) end
+  return { deleted = true, name = name, track_guid = guid }
+end
+
 -- set_fx_preset / get_fx_preset — select a plugin's FACTORY PRESET by index and read
 -- back the active preset name + total count. The preset list is the fastest route to
 -- musical sounds on instrument VSTs (TAL-NoiseMaker ships ~256 host-visible programs;

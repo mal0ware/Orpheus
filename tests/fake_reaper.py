@@ -810,6 +810,13 @@ def make_handlers(project: FakeReaperProject) -> dict:
             "delta_s": delta,
         }
 
+    def delete_track(p):
+        tr = project.resolve_track(p["track"])
+        project.undo_events.append(("begin", f"delete track {tr.name}"))
+        project.tracks.remove(tr)
+        project.undo_events.append(("end", f"delete track {tr.name}"))
+        return {"deleted": True, "name": tr.name, "track_guid": tr.guid}
+
     def set_fx_preset(p):
         tr = project.resolve_track(p["track"])
         fx = int(p.get("fx_index", -1))
@@ -1012,6 +1019,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "set_track_color": set_track_color,
         "rename_track": rename_track,
         "set_fx_preset": set_fx_preset,
+        "delete_track": delete_track,
         "get_fx_preset": get_fx_preset,
         "add_region": add_region,
         "rebuild_peaks": rebuild_peaks,

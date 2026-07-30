@@ -490,3 +490,15 @@ def test_fx_preset_select_and_read(client, project):
     assert got["preset_index"] == 1 and got["preset_count"] == 3
     with pytest.raises(BridgeError, match="could not set preset"):
         client.call("set_fx_preset", track="synth", fx_index=0, preset_index=99)
+
+
+def test_delete_track_removes_and_reports(client, project):
+    for name in ("keep", "junk"):
+        project.tracks.append(FakeTrack(guid=project._next_guid(), name=name))
+    res = client.call("delete_track", track="junk")
+    assert res["deleted"] is True and res["name"] == "junk"
+    assert [t.name for t in project.tracks] == ["keep"]
+    pairs = [e for e in project.undo_events if "delete track" in e[1]]
+    assert [k for k, _ in pairs] == ["begin", "end"]
+    with pytest.raises(BridgeError):
+        client.call("delete_track", track="junk")
