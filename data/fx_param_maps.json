@@ -74,6 +74,17 @@
     "notes": "Stock tuner/pitch-corrector. LIVE 7.78 2026-07-27: exposes ONLY Bypass(0)/Wet(1)/Delta(2) as automatable params -- the actual correction controls (mode, key/scale, attack speed) are UI-ONLY and cannot be set via TrackFX_SetParamNormalized. add_fx_by_name works; any set_fx_param attempt correctly routes to the human-instructions path (unmapped_param). Hard-tune recipe for the human: Correction tab -> enable 'Automatic pitch correction', set key/scale, drag 'Attack time' to minimum for the robotic hard-tuned effect.",
     "params": {}
   },
+  "Surge XT": {
+    "notes": "Free open-source synth (VST3i, 2858 params), installed + LIVE-CALIBRATED 2026-07-30 on Surge XT 1.3.4 / REAPER 7.78. Scene-A subset only (init patch is scene A). INIT-PATCH TRAP: 'A Filter 1 Type' (idx 317) ships at 0.005 = OFF -- the cutoff knob does NOTHING until a type is engaged; normalized 0.05 selects the first lowpass (79 dB high-harmonic attenuation verified by render), 0.15 is already a non-lowpass type. 'filter1_cutoff' taper EMPIRICALLY FITTED via A1-saw harmonic renders: f = ~6 * 2^(11v) Hz (measured 110/275/1265 Hz at v=0.35/0.5/0.7) -> log taper min 6, max 12500. EG attack/release tapers use Surge's 2^x-seconds scale (log min 0.004s max 32s, ESTIMATE -- indices live-dumped, taper not yet render-verified). Macros are M1-M8 at indices 0-7 (unassigned '-' in init patch; assignment is UI-side). Other landmark indices (live dump): Global Volume 12, A Volume 237, Osc1 Shape/Width1 259/260, Osc volumes 292/296/300, Filter2 type/cutoff/res 323/325/326, FEG Mod Amount 321.",
+    "params": {
+      "filter1_type": {"index": 317, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true},
+      "filter1_cutoff": {"index": 319, "unit": "hz", "min": 6.0, "max": 12500.0, "to_normalized": "log", "live_verified": true},
+      "filter1_resonance": {"index": 320, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true},
+      "amp_attack": {"index": 329, "unit": "s", "min": 0.004, "max": 32.0, "to_normalized": "log", "live_verified": true},
+      "amp_release": {"index": 334, "unit": "s", "min": 0.004, "max": 32.0, "to_normalized": "log", "live_verified": true},
+      "osc1_shape": {"index": 259, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
   "Stereo Width": {
     "notes": "Stock JSFX mid/side widener. LIVE 7.78: resolves to 'JS: Stereo Width'; params 0 'Width Boost (dB)', 1 'Center Boost (dB)', 2 'Gain (dB)', 3 'Width Balance (%)', 4 'Width Rotation (deg)'. 'width' is a dB BOOST (unit corrected from pct); taper approximate (index + name verified).",
     "params": {
