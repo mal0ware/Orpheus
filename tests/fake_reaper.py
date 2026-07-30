@@ -810,6 +810,24 @@ def make_handlers(project: FakeReaperProject) -> dict:
             "delta_s": delta,
         }
 
+    def rename_track(p):
+        tr = project.resolve_track(p["track"])
+        name = p.get("new_name") or ""
+        if not name:
+            raise ValueError("rename_track: new_name is required")
+        tr.name = name
+        return {"track_guid": tr.guid, "name": name}
+
+    def add_region(p):
+        s0, s1 = p.get("start_s"), p.get("end_s")
+        if s0 is None or s1 is None or float(s1) <= float(s0):
+            raise ValueError("add_region: start_s and end_s required, end_s > start_s")
+        entry = {"name": p.get("name") or "", "start_s": float(s0), "end_s": float(s1),
+                 "color": p.get("color")}
+        project.markers.append(entry)
+        return {"name": entry["name"], "start_s": entry["start_s"],
+                "end_s": entry["end_s"], "index": len(project.markers)}
+
     def set_track_color(p):
         tr = project.resolve_track(p["track"])
         color = str(p.get("color") or "")
@@ -972,6 +990,8 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "refresh_media": refresh_media,
         "move_track": move_track,
         "set_track_color": set_track_color,
+        "rename_track": rename_track,
+        "add_region": add_region,
         "rebuild_peaks": rebuild_peaks,
         "clone_item_region": clone_item_region,
         "trim_track_items": trim_track_items,

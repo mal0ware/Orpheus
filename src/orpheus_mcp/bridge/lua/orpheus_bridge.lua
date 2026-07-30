@@ -1435,6 +1435,38 @@ HANDLERS.nudge_take_offset = function(p)
   }
 end
 
+-- rename_track — set a track's name (project labeling).
+HANDLERS.rename_track = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local name = p.new_name
+  if not name or name == "" then err("rename_track: new_name is required") end
+  reaper.GetSetMediaTrackInfo_String(tr, "P_NAME", name, true)
+  return { track_guid = reaper.GetTrackGUID(tr), name = name }
+end
+
+-- add_region — a NAMED, optionally colored REGION spanning [start_s, end_s]: the visual
+-- section dividers (chorus/verse/...) point markers cannot express. Seconds, not bars —
+-- section boundaries come from audio analysis, which speaks time.
+HANDLERS.add_region = function(p)
+  local s0 = tonumber(p.start_s)
+  local s1 = tonumber(p.end_s)
+  if not (s0 and s1) or s1 <= s0 then
+    err("add_region: start_s and end_s required, end_s > start_s")
+  end
+  local color = 0
+  if p.color then
+    local hexs = tostring(p.color):gsub("^#", "")
+    if not hexs:match("^%x%x%x%x%x%x$") then
+      err("add_region: color must be '#RRGGBB' (got: " .. tostring(p.color) .. ")")
+    end
+    color = reaper.ColorToNative(tonumber(hexs:sub(1, 2), 16), tonumber(hexs:sub(3, 4), 16),
+      tonumber(hexs:sub(5, 6), 16)) | 0x1000000
+  end
+  local idx = reaper.AddProjectMarker2(0, true, s0, s1, p.name or "", -1, color)
+  return { name = p.name or "", start_s = s0, end_s = s1, index = idx }
+end
+
 -- set_track_color — custom track color from "#RRGGBB" (project organization's visual
 -- half: group the active stack / reference / retired tiers by color theme).
 HANDLERS.set_track_color = function(p)

@@ -466,3 +466,15 @@ def test_set_track_color_round_trip_and_validation(client, project):
     assert res["color"] == "#29B6F6"
     with pytest.raises(BridgeError, match="RRGGBB"):
         client.call("set_track_color", track="bus", color="blue")
+
+
+def test_rename_track_and_add_region(client, project):
+    project.tracks.append(FakeTrack(guid=project._next_guid(), name="old name"))
+    res = client.call("rename_track", track="old name", new_name="VOX Lead")
+    assert res["name"] == "VOX Lead"
+    assert project.tracks[0].name == "VOX Lead"
+    reg = client.call("add_region", name="Chorus 1", start_s=66.0, end_s=88.9, color="#29B6F6")
+    assert reg["index"] == 1
+    assert project.markers[0]["end_s"] == pytest.approx(88.9)
+    with pytest.raises(BridgeError, match="end_s > start_s"):
+        client.call("add_region", name="bad", start_s=5.0, end_s=5.0)
