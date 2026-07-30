@@ -478,3 +478,15 @@ def test_rename_track_and_add_region(client, project):
     assert project.markers[0]["end_s"] == pytest.approx(88.9)
     with pytest.raises(BridgeError, match="end_s > start_s"):
         client.call("add_region", name="bad", start_s=5.0, end_s=5.0)
+
+
+def test_fx_preset_select_and_read(client, project):
+    tr = FakeTrack(guid=project._next_guid(), name="synth")
+    project.tracks.append(tr)
+    client.call("add_fx_by_name", track="synth", name="TAL-NoiseMaker")
+    res = client.call("set_fx_preset", track="synth", fx_index=0, preset_index=1)
+    assert res["preset_name"] == "Warm Pad"
+    got = client.call("get_fx_preset", track="synth", fx_index=0)
+    assert got["preset_index"] == 1 and got["preset_count"] == 3
+    with pytest.raises(BridgeError, match="could not set preset"):
+        client.call("set_fx_preset", track="synth", fx_index=0, preset_index=99)

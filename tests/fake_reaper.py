@@ -810,6 +810,26 @@ def make_handlers(project: FakeReaperProject) -> dict:
             "delta_s": delta,
         }
 
+    def set_fx_preset(p):
+        tr = project.resolve_track(p["track"])
+        fx = int(p.get("fx_index", -1))
+        idx = int(p.get("preset_index", -1))
+        if fx < 0 or idx < 0:
+            raise ValueError("set_fx_preset: fx_index and preset_index required (0-based)")
+        inst = tr.fx_chain[fx]
+        presets = getattr(inst, "presets", ["Init", "Warm Pad", "Acid Bass"])
+        if idx >= len(presets):
+            raise ValueError(f"could not set preset {idx} on fx {fx}")
+        inst.preset_index = idx
+        return {"track_guid": tr.guid, "preset_index": idx, "preset_name": presets[idx]}
+
+    def get_fx_preset(p):
+        tr = project.resolve_track(p["track"])
+        inst = tr.fx_chain[int(p.get("fx_index", 0))]
+        presets = getattr(inst, "presets", ["Init", "Warm Pad", "Acid Bass"])
+        idx = getattr(inst, "preset_index", 0)
+        return {"preset_index": idx, "preset_count": len(presets), "preset_name": presets[idx]}
+
     def rename_track(p):
         tr = project.resolve_track(p["track"])
         name = p.get("new_name") or ""
@@ -991,6 +1011,8 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "move_track": move_track,
         "set_track_color": set_track_color,
         "rename_track": rename_track,
+        "set_fx_preset": set_fx_preset,
+        "get_fx_preset": get_fx_preset,
         "add_region": add_region,
         "rebuild_peaks": rebuild_peaks,
         "clone_item_region": clone_item_region,

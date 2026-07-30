@@ -1435,6 +1435,32 @@ HANDLERS.nudge_take_offset = function(p)
   }
 end
 
+-- set_fx_preset / get_fx_preset — select a plugin's FACTORY PRESET by index and read
+-- back the active preset name + total count. The preset list is the fastest route to
+-- musical sounds on instrument VSTs (TAL-NoiseMaker ships ~256 host-visible programs;
+-- param-by-param sound design cannot compete for breadth).
+HANDLERS.set_fx_preset = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local fx = math.floor(tonumber(p.fx_index) or -1)
+  local idx = math.floor(tonumber(p.preset_index) or -1)
+  if fx < 0 or idx < 0 then err("set_fx_preset: fx_index and preset_index required (0-based)") end
+  local ok = reaper.TrackFX_SetPresetByIndex(tr, fx, idx)
+  if not ok then err("could not set preset " .. idx .. " on fx " .. fx) end
+  local _, name = reaper.TrackFX_GetPreset(tr, fx, "")
+  return { track_guid = reaper.GetTrackGUID(tr), preset_index = idx, preset_name = name or "" }
+end
+
+HANDLERS.get_fx_preset = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local fx = math.floor(tonumber(p.fx_index) or -1)
+  if fx < 0 then err("get_fx_preset: fx_index required") end
+  local idx, count = reaper.TrackFX_GetPresetIndex(tr, fx)
+  local _, name = reaper.TrackFX_GetPreset(tr, fx, "")
+  return { preset_index = idx, preset_count = count, preset_name = name or "" }
+end
+
 -- rename_track — set a track's name (project labeling).
 HANDLERS.rename_track = function(p)
   local tr, rerr = resolve_track(p.track)
