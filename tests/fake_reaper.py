@@ -810,6 +810,10 @@ def make_handlers(project: FakeReaperProject) -> dict:
             "delta_s": delta,
         }
 
+    def refresh_media(_p):
+        project.media_refreshes = getattr(project, "media_refreshes", 0) + 1
+        return {"refreshed": True}
+
     def add_marker(p):
         entry = {"name": p["name"], "bar": int(p["bar"])}
         project.markers.append(entry)
@@ -943,6 +947,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "clone_track_items": clone_track_items,
         "set_track_params": set_track_params,
         "nudge_take_offset": nudge_take_offset,
+        "refresh_media": refresh_media,
         "clone_item_region": clone_item_region,
         "trim_track_items": trim_track_items,
         "set_envelope_points": set_envelope_points,

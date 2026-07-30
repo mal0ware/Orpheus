@@ -1435,6 +1435,19 @@ HANDLERS.nudge_take_offset = function(p)
   }
 end
 
+-- refresh_media — force every media source to close and re-open (REAPER's own
+-- "Item: Set all media offline" (40100) then "online" (40101) action pair). Needed
+-- after a media FILE is replaced on disk while the project has it open: REAPER's
+-- PCM sources cache the parsed header (bit depth, data offset) and a changed file
+-- silently misreads until re-opened (live incident 2026-07-30: tuned-vocal swap
+-- rendered digital silence until refreshed). Touches no selection/render state.
+HANDLERS.refresh_media = function(_)
+  reaper.Main_OnCommand(40100, 0)   -- all media offline
+  reaper.Main_OnCommand(40101, 0)   -- all media online (re-opens every source)
+  reaper.UpdateArrange()
+  return { refreshed = true }
+end
+
 local function dispatch(fn, params)
   if fn == "__batch__" then
     local results = {}
