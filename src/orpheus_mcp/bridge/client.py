@@ -113,7 +113,7 @@ class BridgeClient:
         while time.monotonic() < deadline:
             if path.exists():
                 try:
-                    data = json.loads(path.read_text())
+                    data = json.loads(path.read_text(encoding="utf-8"))
                 except (json.JSONDecodeError, OSError):
                     # Caught the file mid-write — retry on the next tick.
                     time.sleep(POLL_INTERVAL_S)
@@ -135,5 +135,5 @@ class BridgeClient:
         client, response_<id> from the bridge), so temp names never collide in practice.
         """
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload))
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
         os.replace(tmp, path)  # atomic on POSIX; replace() on Windows
