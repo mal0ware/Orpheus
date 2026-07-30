@@ -1158,6 +1158,142 @@ HANDLERS.trim_track_items = function(p)
   }
 end
 
+-- --------------------------------------------------------------------------- --
+-- Automation envelopes — set_envelope_points / get_envelope_points (motivating
+-- case: risers, filter sweeps, fade automation — the "small stuff" a static FX
+-- chain cannot express). Value semantics at the wire: volume points arrive in dB
+-- (converted to the envelope's native scale via the Scale*EnvelopeMode API pair),
+-- pan points in -1..1, FX-param points NORMALIZED 0..1 (unit translation stays
+-- python-side, the exact same split set_fx_param uses).
+-- --------------------------------------------------------------------------- --
+
+local MAX_ENV_POINTS = 512
+
+-- Resolve an envelope spec to (env, kind, desc). kind is "volume"/"pan"/"fx".
+-- spec: the string "volume" or "pan", or a table {fx_index, param_index}.
+-- create_fx: passed to GetFXEnvelope (get=false so a read never creates).
+local function resolve_envelope(tr, spec, create_fx)
+  if spec == "volume" or spec == "pan" then
+    local name = spec == "volume" and "Volume" or "Pan"
+    local env = reaper.GetTrackEnvelopeByName(tr, name)
+    if not env and reaper.GetTrackEnvelopeByChunkName then
+      -- verify live: chunk names for the track volume/pan envelopes on REAPER 7.x.
+      -- GetTrackEnvelopeByName only finds VISIBLE envelopes; the chunk route can find
+      -- one that exists but is hidden. Neither CREATES a volume/pan envelope.
+      env = reaper.GetTrackEnvelopeByChunkName(tr, spec == "volume" and "VOLENV2" or "PANENV2")
+    end
+    return env, spec, spec
+  end
+  if type(spec) == "table" and spec.fx_index ~= nil and spec.param_index ~= nil then
+    local fi = math.floor(tonumber(spec.fx_index) or -1)
+    local pi = math.floor(tonumber(spec.param_index) or -1)
+    if fi < 0 or pi < 0 then return nil, nil, nil end
+    local env = reaper.GetFXEnvelope(tr, fi, pi, create_fx and true or false)
+    return env, "fx", string.format("fx %d param %d", fi, pi)
+  end
+  return nil, nil, nil
+end
+
+-- dB -> the volume envelope's native scale (fader scaling aware), and back.
+local function vol_db_to_native(env, db)
+  local mode = reaper.GetEnvelopeScalingMode(env)
+  return reaper.ScaleToEnvelopeMode(mode, 10.0 ^ (db / 20.0))
+end
+
+local function vol_native_to_db(env, native)
+  local mode = reaper.GetEnvelopeScalingMode(env)
+  local linear = reaper.ScaleFromEnvelopeMode(mode, native)
+  -- Same -150 dB floor set_track_params uses: the JSON result never carries -inf.
+  return (linear and linear > 0) and (20.0 * math.log(linear, 10)) or -150.0
+end
+
+HANDLERS.set_envelope_points = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local points = p.points
+  if type(points) ~= "table" or #points == 0 then
+    err("set_envelope_points: points is required and must be non-empty")
+  end
+  if #points > MAX_ENV_POINTS then
+    err("too many envelope points in one call: " .. #points .. " > " .. MAX_ENV_POINTS)
+  end
+  local env, kind, desc = resolve_envelope(tr, p.envelope, true)
+  if not kind then
+    err("set_envelope_points: envelope must be 'volume', 'pan', or {fx_index, param_index}")
+  end
+  if not env then
+    -- No API-side way to CREATE a track volume/pan envelope without touching the
+    -- user's selection state — the human path is explicit instead of a silent no-op.
+    err(desc .. " envelope not visible on track: " .. tostring(p.track) ..
+      " — open it once in REAPER (track envelopes button, enable " .. desc .. " trim/read)")
+  end
+  local clear = p.clear
+  if clear == nil then clear = true end
+
+  reaper.Undo_BeginBlock()
+  local inserted = 0
+  local ok_all, loop_err = pcall(function()
+    if clear then
+      local tmin, tmax = math.huge, -math.huge
+      for _, pt in ipairs(points) do
+        local t = tonumber(pt.time_s) or 0.0
+        if t < tmin then tmin = t end
+        if t > tmax then tmax = t end
+      end
+      -- verify live: DeleteEnvelopePointRange treats the range as [start, end); the
+      -- epsilon makes a pre-existing point at exactly tmax get replaced, not doubled.
+      reaper.DeleteEnvelopePointRange(env, tmin, tmax + 1e-6)
+    end
+    for _, pt in ipairs(points) do
+      local t = tonumber(pt.time_s) or 0.0
+      local v = tonumber(pt.value) or 0.0
+      if kind == "volume" then
+        v = vol_db_to_native(env, v)
+      elseif kind == "pan" then
+        -- verify live: caller semantics match set_track_params' D_PAN (-1 left, +1
+        -- right); confirm the pan ENVELOPE stores the same sign on REAPER 7.x.
+        if v < -1.0 then v = -1.0 elseif v > 1.0 then v = 1.0 end
+      else
+        if v < 0.0 then v = 0.0 elseif v > 1.0 then v = 1.0 end
+      end
+      reaper.InsertEnvelopePoint(env, t, v, 0, 0, false, true)   -- noSortIn=true
+      inserted = inserted + 1
+    end
+    reaper.Envelope_SortPoints(env)
+  end)
+  reaper.Undo_EndBlock(string.format("Orpheus: set %d envelope points (%s)", #points, desc), -1)
+  if not ok_all then err(tostring(loop_err)) end
+  return {
+    track_guid = reaper.GetTrackGUID(tr),
+    envelope = desc,
+    inserted = inserted,
+    cleared = clear and true or false,
+  }
+end
+
+HANDLERS.get_envelope_points = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local env, kind, desc = resolve_envelope(tr, p.envelope, false)
+  if not kind then
+    err("get_envelope_points: envelope must be 'volume', 'pan', or {fx_index, param_index}")
+  end
+  local points = {}
+  if env then
+    local n = reaper.CountEnvelopePoints(env)
+    for i = 0, n - 1 do
+      local ok, t, v = reaper.GetEnvelopePoint(env, i)
+      if ok then
+        if kind == "volume" then v = vol_native_to_db(env, v) end
+        points[#points + 1] = { time_s = t, value = v }
+      end
+    end
+  end
+  -- A missing envelope reads as EMPTY, never an error — "no automation" is a normal
+  -- answer for the analysis loop, unlike a write that would silently go nowhere.
+  return { track_guid = reaper.GetTrackGUID(tr), envelope = desc, points = points }
+end
+
 -- clone_item_region — clone a TIME REGION of a track's audio onto ONE new appended
 -- track at a chosen destination position (motivating case: re-arranging pieces of a
 -- recorded take — e.g. layering a background chant sung in section N over the lyrics

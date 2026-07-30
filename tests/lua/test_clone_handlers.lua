@@ -167,6 +167,47 @@ reaper = {
   end,
 
   UpdateArrange = function() proj.update_arrange_calls = proj.update_arrange_calls + 1 end,
+
+  -- Envelope surface (set_envelope_points / get_envelope_points). An envelope is
+  -- { points = { {t=, v=}, ... } } living in tr.envelopes under "volume"/"pan"/"fxNpM".
+  -- Scaling mode 0 = pass-through, but the bridge code must still CALL the Scale pair.
+  GetTrackEnvelopeByName = function(tr, name)
+    if not tr.envelopes then return nil end
+    if name == "Volume" then return tr.envelopes.volume end
+    if name == "Pan" then return tr.envelopes.pan end
+    return nil
+  end,
+  GetFXEnvelope = function(tr, fi, pi, create)
+    tr.envelopes = tr.envelopes or {}
+    local key = "fx" .. fi .. "p" .. pi
+    if not tr.envelopes[key] and create then tr.envelopes[key] = { points = {} } end
+    return tr.envelopes[key]
+  end,
+  InsertEnvelopePoint = function(env, t, v)
+    env.points[#env.points + 1] = { t = t, v = v }
+    return true
+  end,
+  DeleteEnvelopePointRange = function(env, t0, t1)   -- [t0, t1)
+    local kept = {}
+    for _, pt in ipairs(env.points) do
+      if pt.t < t0 or pt.t >= t1 then kept[#kept + 1] = pt end
+    end
+    env.points = kept
+    return true
+  end,
+  Envelope_SortPoints = function(env)
+    table.sort(env.points, function(a, b) return a.t < b.t end)
+    return true
+  end,
+  CountEnvelopePoints = function(env) return #env.points end,
+  GetEnvelopePoint = function(env, i)
+    local pt = env.points[i + 1]
+    if not pt then return false end
+    return true, pt.t, pt.v, 0, 0, false
+  end,
+  GetEnvelopeScalingMode = function(_) return 0 end,
+  ScaleToEnvelopeMode = function(_, v) return v end,
+  ScaleFromEnvelopeMode = function(_, v) return v end,
   Undo_BeginBlock = function() proj.undo_begins = proj.undo_begins + 1 end,
   Undo_EndBlock = function(desc, flags)
     proj.undo_ends = proj.undo_ends + 1
@@ -531,6 +572,82 @@ M.swap_handlers(M.handlers ~= nil and (function()
 end)() or {})
 local restored = call("set_track_params", { track = "vox" })
 eq(restored.ok, true, "original handlers restored after swap-back")
+
+
+-- --------------------------------------------------------------------------- --
+-- 12. set_envelope_points / get_envelope_points — automation envelope verbs
+-- --------------------------------------------------------------------------- --
+reset()
+local voxe = new_track("vox")
+voxe.envelopes = { volume = { points = {} } }   -- the volume envelope is "visible"
+local r12 = call("set_envelope_points", { track = "vox", envelope = "volume",
+  points = { { time_s = 0.0, value = -6.0 }, { time_s = 2.0, value = 0.0 } } })
+eq(r12.ok, true, "volume envelope write ok")
+eq(r12.result.inserted, 2, "two points inserted")
+eq(r12.result.cleared, true, "clear defaults to true")
+eq(r12.result.envelope, "volume", "envelope described")
+approx(voxe.envelopes.volume.points[1].v, 10.0 ^ (-6.0 / 20.0),
+  "dB converted to native linear gain via the Scale pair", 1e-9)
+eq(proj.undo_begins, 1, "one undo begin")
+eq(proj.undo_ends, 1, "one undo end")
+local g12 = call("get_envelope_points", { track = "vox", envelope = "volume" })
+eq(g12.ok, true, "read ok")
+approx(g12.result.points[1].value, -6.0, "value reads back in dB", 1e-9)
+approx(g12.result.points[2].value, 0.0, "unity point reads back as 0 dB", 1e-9)
+
+-- 12a. clear=true replaces only the new points' time range.
+call("set_envelope_points", { track = "vox", envelope = "volume",
+  points = { { time_s = 0.0, value = -3.0 }, { time_s = 5.0, value = -3.0 },
+             { time_s = 10.0, value = -3.0 } } })
+call("set_envelope_points", { track = "vox", envelope = "volume",
+  points = { { time_s = 4.0, value = -12.0 }, { time_s = 6.0, value = -12.0 } } })
+local g12a = call("get_envelope_points", { track = "vox", envelope = "volume" })
+eq(#g12a.result.points, 4, "point at 5.0 replaced; 0.0 and 10.0 survive")
+approx(g12a.result.points[1].time_s, 0.0, "outside-range point kept", 1e-9)
+approx(g12a.result.points[4].time_s, 10.0, "outside-range point kept (right)", 1e-9)
+
+-- 12b. clear=false stacks.
+call("set_envelope_points", { track = "vox", envelope = "volume",
+  points = { { time_s = 4.0, value = -1.0 } }, clear = false })
+local g12b = call("get_envelope_points", { track = "vox", envelope = "volume" })
+eq(#g12b.result.points, 5, "clear=false adds without deleting")
+
+-- 12c. pan clamps; write to an invisible pan envelope errors with the human path.
+local r12c = call("set_envelope_points", { track = "vox", envelope = "pan",
+  points = { { time_s = 0.0, value = 2.5 } } })
+eq(r12c.ok, false, "invisible pan envelope -> ok=false")
+ok(tostring(r12c.error):find("pan envelope not visible"), "human-path message")
+voxe.envelopes.pan = { points = {} }
+call("set_envelope_points", { track = "vox", envelope = "pan",
+  points = { { time_s = 0.0, value = 2.5 } } })
+approx(voxe.envelopes.pan.points[1].v, 1.0, "pan clamped to 1.0", 1e-9)
+
+-- 12d. FX param envelope auto-creates on write, reads back normalized (clamped).
+local r12d = call("set_envelope_points", { track = "vox",
+  envelope = { fx_index = 0, param_index = 4 },
+  points = { { time_s = 10.0, value = 0.25 }, { time_s = 12.0, value = 1.7 } } })
+eq(r12d.ok, true, "fx envelope write ok (created)")
+eq(r12d.result.envelope, "fx 0 param 4", "fx envelope described")
+local g12d = call("get_envelope_points", { track = "vox",
+  envelope = { fx_index = 0, param_index = 4 } })
+approx(g12d.result.points[2].value, 1.0, "normalized value clamped to 1", 1e-9)
+
+-- 12e. guards: missing envelope reads empty; bad spec; empty points; 513-point cap.
+local g12e = call("get_envelope_points", { track = "vox",
+  envelope = { fx_index = 1, param_index = 0 } })
+eq(g12e.ok, true, "missing fx envelope reads ok")
+eq(#g12e.result.points, 0, "missing envelope reads as empty")
+local r12e = call("set_envelope_points", { track = "vox", envelope = "sidechain",
+  points = { { time_s = 0.0, value = 0.0 } } })
+ok(tostring(r12e.error):find("envelope must be"), "bad spec message")
+local r12f = call("set_envelope_points", { track = "vox", envelope = "volume",
+  points = {} })
+ok(tostring(r12f.error):find("points is required"), "empty points message")
+local big = {}
+for i = 1, 513 do big[i] = { time_s = i * 1.0, value = 0.0 } end
+local r12g = call("set_envelope_points", { track = "vox", envelope = "volume",
+  points = big })
+ok(tostring(r12g.error):find("too many envelope points"), "cap message")
 
 print(string.format("lua clone handlers: %d passed, %d failed", passed, failed_count))
 os.exit(failed_count == 0 and 0 or 1)

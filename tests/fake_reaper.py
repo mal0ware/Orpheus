@@ -113,6 +113,13 @@ class FakeTrack:
     # the `solo` bool (which list_tracks reports) because render_track_region round-trips
     # the exact 0/1/2 value and asserts SIP (=2) on the target during a render (§15.2).
     i_solo: int = 0
+    # Automation envelopes (set_envelope_points / get_envelope_points). Key: "volume" /
+    # "pan" / an ("fx", fx_index, param_index) tuple. Value: list of {"time_s", "value"}
+    # dicts holding the envelope's NATIVE scale (linear gain for volume — scaling mode 0
+    # pass-through, mirroring the Lua stub). A volume/pan key must EXIST for a write to
+    # succeed (GetTrackEnvelopeByName only finds visible envelopes and cannot create);
+    # FX envelopes auto-create on write (GetFXEnvelope create=true), same as the Lua.
+    envelopes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -593,6 +600,91 @@ def make_handlers(project: FakeReaperProject) -> dict:
             tr.pan = max(-1.0, min(1.0, float(p["pan"])))
         return {"track_guid": tr.guid, "volume_db": tr.volume_db, "pan": tr.pan}
 
+    # -- set_envelope_points / get_envelope_points — executable spec for the Lua ------- #
+
+    _MAX_ENV_POINTS = 512
+
+    def _resolve_envelope_key(spec):
+        """Envelope spec -> (key, kind, desc) or (None, None, None) for a bad spec."""
+        if spec in ("volume", "pan"):
+            return spec, spec, spec
+        if isinstance(spec, dict) and "fx_index" in spec and "param_index" in spec:
+            fi, pi = int(spec["fx_index"]), int(spec["param_index"])
+            if fi < 0 or pi < 0:
+                return None, None, None
+            return ("fx", fi, pi), "fx", f"fx {fi} param {pi}"
+        return None, None, None
+
+    def set_envelope_points(p):
+        tr = project.resolve_track(p["track"])
+        points = p.get("points")
+        if not isinstance(points, list) or not points:
+            raise ValueError("set_envelope_points: points is required and must be non-empty")
+        if len(points) > _MAX_ENV_POINTS:
+            raise ValueError(
+                f"too many envelope points in one call: {len(points)} > {_MAX_ENV_POINTS}"
+            )
+        key, kind, desc = _resolve_envelope_key(p.get("envelope"))
+        if kind is None:
+            raise ValueError(
+                "set_envelope_points: envelope must be 'volume', 'pan', or"
+                " {fx_index, param_index}"
+            )
+        if kind == "fx":
+            env = tr.envelopes.setdefault(key, [])  # GetFXEnvelope(create=true)
+        else:
+            env = tr.envelopes.get(key)
+            if env is None:
+                raise ValueError(
+                    f"{desc} envelope not visible on track: {p['track']} — open it once"
+                    f" in REAPER (track envelopes button, enable {desc} trim/read)"
+                )
+        clear = p.get("clear")
+        if clear is None:
+            clear = True
+        undo_desc = f"Orpheus: set {len(points)} envelope points ({desc})"
+        project.undo_events.append(("begin", undo_desc))
+        try:
+            if clear:
+                times = [float(pt.get("time_s") or 0.0) for pt in points]
+                tmin, tmax = min(times), max(times) + 1e-6  # the Lua's [start, end) epsilon
+                env[:] = [pt for pt in env if not (tmin <= pt["time_s"] <= tmax)]
+            for pt in points:
+                t = float(pt.get("time_s") or 0.0)
+                v = float(pt.get("value") or 0.0)
+                if kind == "volume":
+                    v = 10.0 ** (v / 20.0)  # dB -> native linear gain (scaling mode 0)
+                elif kind == "pan":
+                    v = max(-1.0, min(1.0, v))
+                else:
+                    v = max(0.0, min(1.0, v))
+                env.append({"time_s": t, "value": v})
+            env.sort(key=lambda pt: pt["time_s"])  # Envelope_SortPoints
+        finally:
+            project.undo_events.append(("end", undo_desc))
+        return {
+            "track_guid": tr.guid,
+            "envelope": desc,
+            "inserted": len(points),
+            "cleared": bool(clear),
+        }
+
+    def get_envelope_points(p):
+        tr = project.resolve_track(p["track"])
+        key, kind, desc = _resolve_envelope_key(p.get("envelope"))
+        if kind is None:
+            raise ValueError(
+                "get_envelope_points: envelope must be 'volume', 'pan', or"
+                " {fx_index, param_index}"
+            )
+        out = []
+        for pt in tr.envelopes.get(key) or []:  # missing envelope reads as EMPTY
+            v = pt["value"]
+            if kind == "volume":
+                v = (20.0 * math.log10(v)) if v > 0 else -150.0
+            out.append({"time_s": pt["time_s"], "value": v})
+        return {"track_guid": tr.guid, "envelope": desc, "points": out}
+
     def trim_track_items(p):
         tr = project.resolve_track(p["track"])
         w0 = p.get("start_s")
@@ -853,6 +945,8 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "nudge_take_offset": nudge_take_offset,
         "clone_item_region": clone_item_region,
         "trim_track_items": trim_track_items,
+        "set_envelope_points": set_envelope_points,
+        "get_envelope_points": get_envelope_points,
         "add_marker": add_marker,
         "add_fx_by_name": add_fx_by_name,
         "set_fx_param": set_fx_param,
