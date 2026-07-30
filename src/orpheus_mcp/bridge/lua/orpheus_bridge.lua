@@ -1435,6 +1435,47 @@ HANDLERS.nudge_take_offset = function(p)
   }
 end
 
+-- move_track — move one track to a 1-based position (project organization: group the
+-- active stack on top, reference material below, retired scratch at the bottom).
+-- ReorderSelectedTracks needs a selection, so the CURRENT selection is snapshotted and
+-- restored — the user's selection state must survive a programmatic reorder.
+HANDLERS.move_track = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local count = reaper.CountTracks(0)
+  local to = math.floor(tonumber(p.to_index) or 0)
+  if to < 1 or to > count then err("move_track: to_index out of range 1.." .. count) end
+  local sel = {}
+  for i = 0, count - 1 do
+    local t = reaper.GetTrack(0, i)
+    sel[#sel + 1] = { t, reaper.GetMediaTrackInfo_Value(t, "I_SELECTED") }
+  end
+  reaper.SetOnlyTrackSelected(tr)
+  reaper.ReorderSelectedTracks(to - 1, 0)   -- 0-based "move before this index"
+  for _, pair in ipairs(sel) do
+    reaper.SetMediaTrackInfo_Value(pair[1], "I_SELECTED", pair[2])
+  end
+  if reaper.TrackList_AdjustWindows then reaper.TrackList_AdjustWindows(false) end
+  local new_index = -1
+  for i = 0, reaper.CountTracks(0) - 1 do
+    if reaper.GetTrack(0, i) == tr then new_index = i + 1; break end
+  end
+  return { track_guid = reaper.GetTrackGUID(tr), new_index = new_index }
+end
+
+-- rebuild_peaks — rebuild the waveform-peak caches for ALL items (REAPER draws items
+-- from .reapeaks summary files; replacing a media file's CONTENT in place leaves the
+-- cache describing the old audio, so items render blank until re-peaked — the visual
+-- sibling of the refresh_media header trap below). Uses the select-all/rebuild/unselect
+-- action trio; item selection is not restorable state we track, so it ends deselected.
+HANDLERS.rebuild_peaks = function(_)
+  reaper.Main_OnCommand(40182, 0)   -- select all items
+  reaper.Main_OnCommand(40441, 0)   -- rebuild peaks for selected items
+  reaper.Main_OnCommand(40289, 0)   -- unselect all items
+  reaper.UpdateArrange()
+  return { rebuilt = true }
+end
+
 -- refresh_media — force every media source to close and re-open (REAPER's own
 -- "Item: Set all media offline" (40100) then "online" (40101) action pair). Needed
 -- after a media FILE is replaced on disk while the project has it open: REAPER's

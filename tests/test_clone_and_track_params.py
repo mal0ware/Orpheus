@@ -437,3 +437,24 @@ def test_trim_is_one_undo_block(client, project, take_wav):
     client.call("trim_track_items", track="vox", end_s=5.0)
     pairs = [e for e in project.undo_events if "trim items" in e[1]]
     assert [kind for kind, _ in pairs] == ["begin", "end"]
+
+
+# --------------------------------------------------------------------------- #
+# Bridge contract — move_track (project organization)
+# --------------------------------------------------------------------------- #
+
+
+def test_move_track_reorders_and_reports_position(client, project):
+    for name in ("a", "b", "c", "d"):
+        project.tracks.append(FakeTrack(guid=project._next_guid(), name=name))
+    res = client.call("move_track", track="d", to_index=1)
+    assert res["new_index"] == 1
+    assert [t.name for t in project.tracks] == ["d", "a", "b", "c"]
+    client.call("move_track", track="a", to_index=4)
+    assert [t.name for t in project.tracks] == ["d", "b", "c", "a"]
+
+
+def test_move_track_rejects_out_of_range(client, project):
+    project.tracks.append(FakeTrack(guid=project._next_guid(), name="only"))
+    with pytest.raises(BridgeError, match="out of range"):
+        client.call("move_track", track="only", to_index=5)

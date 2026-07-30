@@ -810,6 +810,19 @@ def make_handlers(project: FakeReaperProject) -> dict:
             "delta_s": delta,
         }
 
+    def move_track(p):
+        tr = project.resolve_track(p["track"])
+        to = int(p.get("to_index") or 0)
+        if to < 1 or to > len(project.tracks):
+            raise ValueError(f"move_track: to_index out of range 1..{len(project.tracks)}")
+        project.tracks.remove(tr)
+        project.tracks.insert(to - 1, tr)
+        return {"track_guid": tr.guid, "new_index": project.tracks.index(tr) + 1}
+
+    def rebuild_peaks(_p):
+        project.peak_rebuilds = getattr(project, "peak_rebuilds", 0) + 1
+        return {"rebuilt": True}
+
     def refresh_media(_p):
         project.media_refreshes = getattr(project, "media_refreshes", 0) + 1
         return {"refreshed": True}
@@ -948,6 +961,8 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "set_track_params": set_track_params,
         "nudge_take_offset": nudge_take_offset,
         "refresh_media": refresh_media,
+        "move_track": move_track,
+        "rebuild_peaks": rebuild_peaks,
         "clone_item_region": clone_item_region,
         "trim_track_items": trim_track_items,
         "set_envelope_points": set_envelope_points,
