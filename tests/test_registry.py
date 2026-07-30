@@ -77,6 +77,8 @@ IMPLEMENTED = {
     "verify_stem",
     "characterize",
     "compare_character",
+    # section-diff — the minute-details differential pass (analysis/sectiondiff.py)
+    "compare_sections",
     "transcribe_lyrics",
     "locate_lyric",
     "analyze_reference",

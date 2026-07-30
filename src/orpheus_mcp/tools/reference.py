@@ -61,6 +61,7 @@ __all__ = [
     "verify_stem",
     "characterize",
     "compare_character",
+    "compare_sections",
     "transcribe_lyrics",
     "locate_lyric",
     "analyze_reference",
@@ -795,6 +796,69 @@ def compare_character(
     )
 
 
+def compare_sections(
+    file: str,
+    section_a: list[float],
+    section_b: list[float],
+) -> dict:
+    """Section-diff (the minute-details pass): measure repetition B of a section against
+    repetition A of the same song and flag what CHANGED — a background layer entering, a
+    bassline pattern change, a filter/EQ move, a level ride. Pure-numpy DSP over the
+    decoded audio (``analysis.sectiondiff``); the two windows are envelope-aligned first
+    (±0.5 s lag search) so a sung/played repeat that doesn't land sample-exact is not
+    misread as "everything changed".
+
+    Returns the aligned lag, per-band share deltas (dB, B − A), RMS/centroid/onset-density
+    deltas, residual-layer peaks (windows where B carries energy A does not explain, with
+    their offsets into the section), and human-readable ``flags`` — an EMPTY ``flags`` list
+    is a real measurement ("B measured the same as A"), not an error."""
+    from orpheus_mcp.analysis import sectiondiff
+
+    for name, win in (("section_a", section_a), ("section_b", section_b)):
+        if len(win) != 2 or win[1] <= win[0]:
+            raise ValueError(f"{name} must be [start_s, end_s] with end_s > start_s")
+    pcm = cachefs.decode(file)
+    y = pcm.samples if pcm.samples.ndim == 1 else pcm.samples.mean(axis=1)
+
+    a = (float(section_a[0]), float(section_a[1]))
+    b = (float(section_b[0]), float(section_b[1]))
+    dur_a, dur_b = a[1] - a[0], b[1] - b[0]
+    # corr_threshold=0.0: always group the pair, so a best lag is always estimated —
+    # the caller asserted these ARE repetitions; we only align them, never refuse.
+    groups = sectiondiff.match_repeated_sections(
+        y,
+        pcm.sample_rate,
+        candidates=[a, b],
+        min_len_s=min(1.0, dur_a, dur_b),
+        corr_threshold=0.0,
+    )
+    lag_s = 0.0
+    matched_correlation = None
+    if groups and len(groups[0].members) == 2:
+        lag_s = groups[0].members[1].best_lag_s
+        matched_correlation = groups[0].correlation
+
+    diff = sectiondiff.diff_sections(y, pcm.sample_rate, a, b, lag_s=lag_s)
+    return {
+        "section_a": list(a),
+        "section_b": list(b),
+        "lag_s": lag_s,
+        "matched_correlation": matched_correlation,
+        "band_deltas_db": diff.band_deltas_db,
+        "rms_delta_db": diff.rms_delta_db,
+        "centroid_a_hz": diff.centroid_a_hz,
+        "centroid_b_hz": diff.centroid_b_hz,
+        "onset_density_a": diff.onset_density_a,
+        "onset_density_b": diff.onset_density_b,
+        "low_onset_density_a": diff.low_onset_density_a,
+        "low_onset_density_b": diff.low_onset_density_b,
+        "residual_peaks": [
+            {"offset_s": p.offset_s, "residual_db": p.residual_db} for p in diff.residual_peaks
+        ],
+        "flags": sectiondiff.describe_diff(diff),
+    }
+
+
 def _default_dereverb_engine() -> SeparatorEngine | None:
     """The default engine for the rank-1 dereverb registry entry, or ``None`` when no entry
     exists or [separation] cannot build one — constructing the engine is cheap (heavy deps load
@@ -1310,6 +1374,27 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
         prior calls); Claude is the loop.
         """
         return compare_character(a, b, inventory)
+
+    @mcp.tool(name="compare_sections", annotations=_RO)
+    def compare_sections_tool(
+        file: str, section_a: list[float], section_b: list[float]
+    ) -> dict:
+        """Section-diff (the minute-details pass): measure repetition B of a section
+        against repetition A of the SAME song and flag what changed — a background layer
+        entering (residual-layer peaks localize WHERE), a bassline pattern change
+        (low-band onset density), a filter/EQ move (band-share + centroid deltas), a
+        level ride. ``section_a``/``section_b`` are ``[start_s, end_s]`` windows of the
+        same file (from markers, recon sections, or by ear); the pair is envelope-aligned
+        (±0.5 s) before measuring, so repeats that don't land sample-exact are not
+        misread as "everything changed". An empty ``flags`` list is a real measurement
+        ("B measured the same as A"), never an error.
+
+        Decodes ``file`` (mp3/wav/flac/m4a/ogg/aiff, or an .mp4 music video — audio
+        stream extracted). Pure-numpy DSP, CPU-cheap, no model stack; results are NOT
+        cached (recomputing is faster than a cache round-trip). Does not modify the input
+        file or any REAPER project (``readOnlyHint``).
+        """
+        return compare_sections(file, section_a, section_b)
 
     @mcp.tool(name="locate_lyric", annotations=_RO)
     def locate_lyric_tool(
