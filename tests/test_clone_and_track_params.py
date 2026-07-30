@@ -458,3 +458,11 @@ def test_move_track_rejects_out_of_range(client, project):
     project.tracks.append(FakeTrack(guid=project._next_guid(), name="only"))
     with pytest.raises(BridgeError, match="out of range"):
         client.call("move_track", track="only", to_index=5)
+
+
+def test_set_track_color_round_trip_and_validation(client, project):
+    project.tracks.append(FakeTrack(guid=project._next_guid(), name="bus"))
+    res = client.call("set_track_color", track="bus", color="#29b6f6")
+    assert res["color"] == "#29B6F6"
+    with pytest.raises(BridgeError, match="RRGGBB"):
+        client.call("set_track_color", track="bus", color="blue")

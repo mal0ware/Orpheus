@@ -1435,6 +1435,23 @@ HANDLERS.nudge_take_offset = function(p)
   }
 end
 
+-- set_track_color — custom track color from "#RRGGBB" (project organization's visual
+-- half: group the active stack / reference / retired tiers by color theme).
+HANDLERS.set_track_color = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local hexs = tostring(p.color or ""):gsub("^#", "")
+  if not hexs:match("^%x%x%x%x%x%x$") then
+    err("set_track_color: color must be '#RRGGBB' (got: " .. tostring(p.color) .. ")")
+  end
+  local r = tonumber(hexs:sub(1, 2), 16)
+  local g = tonumber(hexs:sub(3, 4), 16)
+  local b = tonumber(hexs:sub(5, 6), 16)
+  reaper.SetMediaTrackInfo_Value(tr, "I_CUSTOMCOLOR", reaper.ColorToNative(r, g, b) | 0x1000000)
+  if reaper.TrackList_AdjustWindows then reaper.TrackList_AdjustWindows(false) end
+  return { track_guid = reaper.GetTrackGUID(tr), color = "#" .. hexs:upper() }
+end
+
 -- move_track — move one track to a 1-based position (project organization: group the
 -- active stack on top, reference material below, retired scratch at the bottom).
 -- ReorderSelectedTracks needs a selection, so the CURRENT selection is snapshotted and

@@ -810,6 +810,15 @@ def make_handlers(project: FakeReaperProject) -> dict:
             "delta_s": delta,
         }
 
+    def set_track_color(p):
+        tr = project.resolve_track(p["track"])
+        color = str(p.get("color") or "")
+        hexs = color.lstrip("#")
+        if len(hexs) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in hexs):
+            raise ValueError(f"set_track_color: color must be '#RRGGBB' (got: {color})")
+        tr.color = "#" + hexs.upper()
+        return {"track_guid": tr.guid, "color": tr.color}
+
     def move_track(p):
         tr = project.resolve_track(p["track"])
         to = int(p.get("to_index") or 0)
@@ -962,6 +971,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "nudge_take_offset": nudge_take_offset,
         "refresh_media": refresh_media,
         "move_track": move_track,
+        "set_track_color": set_track_color,
         "rebuild_peaks": rebuild_peaks,
         "clone_item_region": clone_item_region,
         "trim_track_items": trim_track_items,
