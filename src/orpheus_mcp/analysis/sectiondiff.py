@@ -66,6 +66,18 @@ _RESIDUAL_HOP_S = 0.5
 _RESIDUAL_FLAG_DB = -6.0
 _RESIDUAL_FLOOR_DB = -80.0
 _MAX_RESIDUAL_PEAKS = 3
+# A peak must stand this far above the section's MEDIAN residual to be a localized
+# "layer enters here" event rather than uniform mismatch.
+_RESIDUAL_PROMINENCE_DB = 6.0
+# Alignment-quality floor = the 25TH-PERCENTILE windowed residual (the best-explained
+# quarter of the section — NOT the median, which a genuine layer covering half the
+# section legitimately drags up). When even the best-explained windows sit above this,
+# the subtraction explained ~nothing anywhere — the repetitions do not align at sample
+# level (free human timing, different performances) and per-window peaks are
+# meaningless. First observed live (2026-07-30): two freely-sung chorus repetitions
+# produced a uniform ~0 dB residual and three confident phantom "new element" flags.
+_RESIDUAL_INCONCLUSIVE_DB = -6.0
+_RESIDUAL_FLOOR_PCTL = 25.0
 # Onset-density flags need BOTH a ratio and an absolute change — a 0.1/s -> 0.2/s
 # "doubling" is noise, not a pattern change.
 _ONSET_RATIO_FLAG = 1.5
@@ -119,6 +131,12 @@ class SectionDiff:
     low_onset_density_a: float  # <250 Hz onsets per second — the bassline proxy
     low_onset_density_b: float
     residual_peaks: list[ResidualPeak]  # loudest first, at most _MAX_RESIDUAL_PEAKS
+    # 25th-percentile windowed residual — the alignment-quality floor (how well the
+    # BEST-explained quarter of the section subtracted). Above
+    # _RESIDUAL_INCONCLUSIVE_DB the subtraction explained ~nothing anywhere
+    # (freely-performed repetitions), residual_peaks is empty by construction, and
+    # describe_diff says "inconclusive" instead of staying silent.
+    residual_floor_db: float
 
 
 # --------------------------------------------------------------------------- #
@@ -343,11 +361,19 @@ def _onset_density(seg: np.ndarray, sr: int, *, max_hz: float | None = None) -> 
     return onsets / (len(seg) / sr)
 
 
-def _residual_peaks(a: np.ndarray, b: np.ndarray, sr: int) -> list[ResidualPeak]:
+def _residual_peaks(a: np.ndarray, b: np.ndarray, sr: int) -> tuple[list[ResidualPeak], float]:
     """Per-window gain-matched residual: for each ~1 s window, the g minimizing
     ``||b − g·a||`` is applied and the residual energy is reported relative to B's own
     energy there. Per-window (not global) gain matching keeps a level RIDE from reading
-    as a new layer — only content A cannot explain at any gain survives."""
+    as a new layer — only content A cannot explain at any gain survives.
+
+    Returns ``(peaks, floor_db)`` where floor_db is the 25th-percentile windowed
+    residual — how well the best-explained quarter subtracted. A peak must both clear
+    the absolute flag threshold AND stand ``_RESIDUAL_PROMINENCE_DB`` above the floor —
+    a localized event, not uniform mismatch. When even the floor is above
+    ``_RESIDUAL_INCONCLUSIVE_DB`` the subtraction explained ~nothing anywhere
+    (repetitions do not align at sample level) and NO peaks are returned: the caller
+    reports "inconclusive" instead."""
     win = max(1, int(round(_RESIDUAL_WIN_S * sr)))
     hop = max(1, int(round(_RESIDUAL_HOP_S * sr)))
     peaks: list[ResidualPeak] = []
@@ -360,9 +386,19 @@ def _residual_peaks(a: np.ndarray, b: np.ndarray, sr: int) -> list[ResidualPeak]
         er = float(np.dot(resid, resid))
         db = 10.0 * np.log10(er / eb + 1e-12)
         peaks.append(ResidualPeak(offset_s=i / sr, residual_db=max(db, _RESIDUAL_FLOOR_DB)))
-    flagged = [p for p in peaks if p.residual_db >= _RESIDUAL_FLAG_DB]
+    if not peaks:
+        return [], _RESIDUAL_FLOOR_DB
+    floor_db = float(np.percentile([p.residual_db for p in peaks], _RESIDUAL_FLOOR_PCTL))
+    if floor_db > _RESIDUAL_INCONCLUSIVE_DB:
+        return [], floor_db
+    flagged = [
+        p
+        for p in peaks
+        if p.residual_db >= _RESIDUAL_FLAG_DB
+        and p.residual_db - floor_db >= _RESIDUAL_PROMINENCE_DB
+    ]
     flagged.sort(key=lambda p: p.residual_db, reverse=True)
-    return flagged[:_MAX_RESIDUAL_PEAKS]
+    return flagged[:_MAX_RESIDUAL_PEAKS], floor_db
 
 
 def diff_sections(
@@ -389,6 +425,7 @@ def diff_sections(
         raise ValueError("diff_sections: a section window is empty after alignment")
     seg_a, seg_b = seg_a[:n], seg_b[:n]
 
+    residual_peaks, residual_floor_db = _residual_peaks(seg_a, seg_b, sr)
     shares_a, centroid_a = _band_shares_and_centroid(seg_a, sr)
     shares_b, centroid_b = _band_shares_and_centroid(seg_b, sr)
     rms_a = float(np.sqrt(np.mean(seg_a**2))) + 1e-12
@@ -406,7 +443,8 @@ def diff_sections(
         onset_density_b=_onset_density(seg_b, sr),
         low_onset_density_a=_onset_density(seg_a, sr, max_hz=_LOW_ONSET_MAX_HZ),
         low_onset_density_b=_onset_density(seg_b, sr, max_hz=_LOW_ONSET_MAX_HZ),
-        residual_peaks=_residual_peaks(seg_a, seg_b, sr),
+        residual_peaks=residual_peaks,
+        residual_floor_db=residual_floor_db,
     )
 
 
@@ -459,9 +497,21 @@ def describe_diff(diff: SectionDiff, threshold_db: float = 3.0) -> list[str]:
                 f"spectral centroid {diff.centroid_a_hz:.0f} Hz -> "
                 f"{diff.centroid_b_hz:.0f} Hz ({direction} — filter/EQ move?)"
             )
-    for peak in diff.residual_peaks:
+    if diff.residual_floor_db > _RESIDUAL_INCONCLUSIVE_DB:
+        # The subtraction explained ~nothing anywhere: the repetitions do not align at
+        # sample level (typical for freely-performed takes). Silence here would falsely
+        # read as "measured same", so the limitation is stated instead of hidden.
         flags.append(
-            f"residual layer at +{peak.offset_s:.1f}s into the section "
-            f"(new element enters, residual {peak.residual_db:+.1f} dB vs repetition B)"
+            f"residual-layer analysis inconclusive (residual floor "
+            f"{diff.residual_floor_db:+.1f} dB — repetitions do not align at sample "
+            "level; rely on the band/onset/centroid deltas above)"
         )
+    else:
+        for peak in diff.residual_peaks:
+            flags.append(
+                f"residual layer at +{peak.offset_s:.1f}s into the section "
+                f"(new element enters, residual {peak.residual_db:+.1f} dB vs "
+                f"repetition B, {peak.residual_db - diff.residual_floor_db:+.1f} dB "
+                "above the section's floor)"
+            )
     return flags

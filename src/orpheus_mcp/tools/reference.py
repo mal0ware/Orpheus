@@ -855,6 +855,7 @@ def compare_sections(
         "residual_peaks": [
             {"offset_s": p.offset_s, "residual_db": p.residual_db} for p in diff.residual_peaks
         ],
+        "residual_floor_db": diff.residual_floor_db,
         "flags": sectiondiff.describe_diff(diff),
     }
 

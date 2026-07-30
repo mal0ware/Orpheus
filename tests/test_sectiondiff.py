@@ -201,3 +201,25 @@ def test_level_ride_alone_is_not_a_residual_layer():
     assert diff.residual_peaks == []
     flags = sectiondiff.describe_diff(diff)
     assert not any("residual layer" in f for f in flags)
+
+
+# --------------------------------------------------------------------------- #
+# 10. misaligned free performances -> "inconclusive", never phantom layers
+# --------------------------------------------------------------------------- #
+
+
+def test_unalignable_repetitions_say_inconclusive_not_phantom_layers():
+    """The live 2026-07-30 failure: two freely-sung repetitions share structure at the
+    envelope level but do not align sample-wise — the residual saturates near 0 dB
+    everywhere. That must yield NO residual-layer flags and one explicit inconclusive
+    note (silence would falsely read as 'measured same')."""
+    rng = np.random.default_rng(7)
+    a = 0.3 * rng.standard_normal(int(round(SECTION_S * SR)))
+    b = 0.3 * rng.standard_normal(int(round(SECTION_S * SR)))  # same character, zero alignment
+    y = make_song([(2.0, a), (12.0, b)])
+    diff = sectiondiff.diff_sections(y, SR, (2.0, 6.0), (12.0, 16.0))
+    assert diff.residual_peaks == []
+    assert diff.residual_floor_db > -6.0
+    flags = sectiondiff.describe_diff(diff)
+    assert not any("residual layer at" in f for f in flags), flags
+    assert any("inconclusive" in f for f in flags), flags
