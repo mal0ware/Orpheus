@@ -810,6 +810,26 @@ def make_handlers(project: FakeReaperProject) -> dict:
             "delta_s": delta,
         }
 
+    def add_sampler_zones(p):
+        tr = project.resolve_track(p["track"])
+        zones = p.get("zones") or []
+        if not zones:
+            raise ValueError("add_sampler_zones: zones is required and must be non-empty")
+        if len(zones) > 32:
+            raise ValueError(f"too many zones: {len(zones)} > 32")
+        added = 0
+        failed = []
+        for i, z in enumerate(zones, start=1):
+            lo = int(z.get("note_lo", -1))
+            hi = int(z.get("note_hi", 128))
+            root = int(z.get("root", -1))
+            if not z.get("file") or lo < 0 or hi > 127 or hi < lo or root < 0:
+                failed.append({"zone": i, "error": "invalid zone spec"})
+                continue
+            tr.fx.append(f"RS5K:{z['file']}:{lo}-{hi}@{root}")
+            added += 1
+        return {"track_guid": tr.guid, "zones_added": added, "failed": failed}
+
     def delete_track(p):
         tr = project.resolve_track(p["track"])
         project.undo_events.append(("begin", f"delete track {tr.name}"))
@@ -1020,6 +1040,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "rename_track": rename_track,
         "set_fx_preset": set_fx_preset,
         "delete_track": delete_track,
+        "add_sampler_zones": add_sampler_zones,
         "get_fx_preset": get_fx_preset,
         "add_region": add_region,
         "rebuild_peaks": rebuild_peaks,

@@ -502,3 +502,18 @@ def test_delete_track_removes_and_reports(client, project):
     assert [k for k, _ in pairs] == ["begin", "end"]
     with pytest.raises(BridgeError):
         client.call("delete_track", track="junk")
+
+
+def test_add_sampler_zones_maps_and_reports(client, project, take_wav):
+    project.tracks.append(FakeTrack(guid=project._next_guid(), name="uke"))
+    res = client.call("add_sampler_zones", track="uke", zones=[
+        {"file": take_wav, "note_lo": 48, "note_hi": 65, "root": 64},
+        {"file": take_wav, "note_lo": 66, "note_hi": 96, "root": 71},
+        {"file": "", "note_lo": 0, "note_hi": 10, "root": 5},
+    ])
+    assert res["zones_added"] == 2
+    assert res["failed"][0]["zone"] == 3
+    tr = project.resolve_track("uke")
+    assert any("48-65@64" in f for f in tr.fx)
+    with pytest.raises(BridgeError, match="non-empty"):
+        client.call("add_sampler_zones", track="uke", zones=[])

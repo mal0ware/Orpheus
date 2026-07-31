@@ -1435,6 +1435,53 @@ HANDLERS.nudge_take_offset = function(p)
   }
 end
 
+-- add_sampler_zones — build a MULTISAMPLED instrument from user-owned one-shots: one
+-- ReaSamplOmatic5000 per zone, each pinned to a note range with semitone pitch-tracking
+-- anchored at the zone's root (the sampled note). RS5K live layout (2026-07-31 dump):
+-- 3/4 note range start/end (n/127), 5/6 pitch@start/end — normalized over -80..+80 st
+-- (semis+80)/160, verify-live: empirically confirmed by pitch-measured renders.
+-- Motivating case: slicing real instrument plucks out of the user's own stems and
+-- playing MIDI through them (owned-audio sampling, zero external content).
+HANDLERS.add_sampler_zones = function(p)
+  local tr, rerr = resolve_track(p.track)
+  if not tr then err(rerr) end
+  local zones = p.zones
+  if type(zones) ~= "table" or #zones == 0 then
+    err("add_sampler_zones: zones is required and must be non-empty")
+  end
+  if #zones > 32 then err("too many zones: " .. #zones .. " > 32") end
+  reaper.Undo_BeginBlock()
+  local added, failed = 0, {}
+  local ok_all, loop_err = pcall(function()
+    for i, z in ipairs(zones) do
+      local file = z.file
+      local lo = math.floor(tonumber(z.note_lo) or -1)
+      local hi = math.floor(tonumber(z.note_hi) or -1)
+      local root = math.floor(tonumber(z.root) or -1)
+      if not file or lo < 0 or hi > 127 or hi < lo or root < 0 then
+        failed[#failed + 1] = { zone = i, error = "invalid zone spec" }
+      else
+        local fx = reaper.TrackFX_AddByName(tr, "ReaSamplOmatic5000", false, -1)
+        if fx < 0 then
+          failed[#failed + 1] = { zone = i, error = "could not add ReaSamplOmatic5000" }
+        else
+          reaper.TrackFX_SetNamedConfigParm(tr, fx, "FILE0", file)
+          reaper.TrackFX_SetNamedConfigParm(tr, fx, "DONE", "")
+          reaper.TrackFX_SetParamNormalized(tr, fx, 3, lo / 127.0)
+          reaper.TrackFX_SetParamNormalized(tr, fx, 4, hi / 127.0)
+          reaper.TrackFX_SetParamNormalized(tr, fx, 5, ((lo - root) + 80) / 160.0)
+          reaper.TrackFX_SetParamNormalized(tr, fx, 6, ((hi - root) + 80) / 160.0)
+          reaper.TrackFX_SetParamNormalized(tr, fx, 11, 0.0)   -- one-shot (natural decay)
+          added = added + 1
+        end
+      end
+    end
+  end)
+  reaper.Undo_EndBlock(string.format("Orpheus: add %d sampler zones", added), -1)
+  if not ok_all then err(tostring(loop_err)) end
+  return { track_guid = reaper.GetTrackGUID(tr), zones_added = added, failed = failed }
+end
+
 -- delete_track — remove a track from the project (user-mandated 2026-07-30; the
 -- original no-delete design stance was overridden by explicit request). Resolves by
 -- name/GUID/index like every verb; the result echoes what was deleted so the caller
