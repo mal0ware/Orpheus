@@ -1474,7 +1474,9 @@ HANDLERS.add_sampler_zones = function(p)
           reaper.TrackFX_SetParamNormalized(tr, fx, 4, hi / 127.0)
           reaper.TrackFX_SetParamNormalized(tr, fx, 5, ((lo - root) + 80) / 160.0)
           reaper.TrackFX_SetParamNormalized(tr, fx, 6, ((hi - root) + 80) / 160.0)
-          reaper.TrackFX_SetParamNormalized(tr, fx, 11, 0.0)   -- one-shot (natural decay)
+          -- one-shot for short percussive one-shots; obey note-offs for long
+          -- sampled notes (a 4 s guitar sample must stop when the note does)
+          reaper.TrackFX_SetParamNormalized(tr, fx, 11, z.obey and 1.0 or 0.0)
           added = added + 1
         end
       end
