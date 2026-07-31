@@ -1467,6 +1467,9 @@ HANDLERS.add_sampler_zones = function(p)
         else
           reaper.TrackFX_SetNamedConfigParm(tr, fx, "FILE0", file)
           reaper.TrackFX_SetNamedConfigParm(tr, fx, "DONE", "")
+          -- pitch tracking requires the semitone-shifted note mode; plain "Sample"
+          -- trigger mode ignores the pitch@start/end params entirely (live 2026-07-31)
+          reaper.TrackFX_SetNamedConfigParm(tr, fx, "MODE", tostring(z.mode or 2))
           reaper.TrackFX_SetParamNormalized(tr, fx, 3, lo / 127.0)
           reaper.TrackFX_SetParamNormalized(tr, fx, 4, hi / 127.0)
           reaper.TrackFX_SetParamNormalized(tr, fx, 5, ((lo - root) + 80) / 160.0)
