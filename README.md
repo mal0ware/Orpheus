@@ -1,94 +1,136 @@
 # 🎵 Orpheus
 
-**An AI agent that doesn't just build music in REAPER — it listens to what you've made, tells you *why* it sounds the way it does, and reshapes it toward the sound you want.**
+Claude's ears and hands inside REAPER.
 
-> *"Why does this beat sound like Dominic Fike?"* · *"Make this sound Classical."*
-> Orpheus analyzes your project, recommends concrete changes **with reasons**, and — on your approval — applies them as real, editable tracks. One `Ctrl+Z` undoes the whole thing.
+Orpheus is an [MCP](https://modelcontextprotocol.io) server that connects Claude (Claude Code,
+Claude Desktop, or any MCP client) to a live [REAPER](https://www.reaper.fm/) session.
 
-> 🚧 **Status: early (pre-alpha), and moving.** What's **built + tested** today: the full architecture, a [documented analysis of the entire Reaper/DAW-MCP frontier](docs/frontier-analysis.md), the music-theory core, the **REAPER bridge** (M0 — connect to a live REAPER and round-trip commands), the **construction core** (M1): track listing/creation, transport (tempo/meter/play-stop-record), and the load-bearing **PPQ-correct MIDI writer** (`insert_midi_notes` / `get_track_midi` / `transpose_notes`) — the model speaks beats, all tick math lives in the bridge, and a note written at beat B reads back at beat B (guarded by the round-trip gate) — and now the first two slices of **M4 GENERATE**: `compose_section` turns a genre + bar count into an editable, audible section in one call, and on top of it a **full-song composer** (`arrange_song`, `build_section`, `create_melody`, `place_lyric_markers`) that turns a natural-language song description into a sectioned, audible song on the timeline — named sections with markers, an in-key melody line where wanted, and original lyric lines placed as markers alongside it. Both are backed by the same atomic composers (`create_chord_progression`, `create_bassline`, `create_drum_pattern`, `humanize_pass`) and a deterministic instrument-selection ladder that **prefers the instruments you already have installed** (`list_installed_fx` was pulled forward from the mix pass to make that possible) before falling back to stock ReaSynth / a synthesized drum kit. All proven by Python + Lua + cross-language tests (186 passed, 2 skipped; 50 Lua assertions; ruff + mypy clean) against a behavioural REAPER fake — **live-REAPER verification of the full-song composer is still pending** (see [`docs/dev-log.md`](docs/dev-log.md)), no real REAPER has confirmed a multi-section song plays or that markers land correctly. **And, on `feat/reference-analysis`, a complete reference-analysis engine now exists**: local recon (tempo/key/loudness/structure), an instrument-activation timeline, a chord lane (an always-on baseline plus an optional model lane), quality-gated stem separation with an escalation ladder, a full `SoundCharacter` descriptor set, a lyrics pipeline (`transcribe_lyrics` / `locate_lyric` — fuzzy "find where this line is sung"), and the actual analyze-and-transform loop this project exists for: `compare_character`'s 14-rule descriptor→intent engine driving real FX-apply verbs (`add_fx_by_name` / `set_fx_param` / `get_fx_params`) in a closed loop **proven to converge** against the behavioural fake, plus a curated free-VST recommendation catalog (`suggest_free_vst`) and cache admin (`clear_analysis_cache`). 689 tests passed (2 skipped), 123 Lua assertions, ruff + mypy clean — but this entire engine is verified against fakes and synthesized fixtures only so far; **live-REAPER and owned-audio verification (ear-checks, a calibration panel, live FX-apply smoke) is the explicit, tracked gap** (see [`docs/dev-log.md`](docs/dev-log.md)'s 2026-07-24 entry). What's **still stubs**: the compositional recommend+apply loop (`recommend_changes` / `apply_changes` / `apply_master_match` — M3 on the [roadmap](docs/roadmap.md)) and a handful of smaller verbs (`apply_mix_balance`, `quantize_notes`, `render_and_audit`, the DSL fuzzy resolvers). So it connects, builds, generates a full song from scratch, and — mechanically, pending the live/owned-audio checks above — can now analyze a reference track and transform your project's *sound* toward it; what it still can't do is recommend-and-apply *compositional* changes (key/harmony/instrumentation) the way the north-star demo below describes. The first feature release (`v0.1`) ships the **understand-and-explain** half; the **transform** half follows in `v0.3`. Star/watch to follow along. ⭐
+It listens to your project and to audio you own: tempo, key, chords, sections, stems, lyrics
+and sound character, each with an honest confidence. It explains what it hears in plain
+language. It works in your session: it builds tracks, writes MIDI, arranges songs, and adds and
+sets effects. It asks before it changes anything, and every change can be undone.
 
-Orpheus is an [MCP](https://modelcontextprotocol.io) server. It plugs into any MCP-compatible client (Claude Desktop, Cursor, Claude Code) and gives the model a set of tools to read, reason about, and edit a live [REAPER](https://www.reaper.fm/) session.
+It's built for one songwriter-producer. Lyrics live in a Google Sheet, Claude reads them, Orpheus
+turns them into a song in REAPER, and you record, mix and refine with Claude's help. It makes
+editable sketches and helps; you make the record.
 
----
+> **Status (2026-10-23):** early, pre-alpha, not on PyPI yet. It has 54 tools in the default profile,
+> 787 Python tests and 368 Lua checks (ruff and mypy clean). Much of it was used for real in July
+> on REAPER 7.78 with a song the owner owns; the rest is tested against a behavioural fake of
+> REAPER. [What works today](#what-works-today) says which is which.
 
-## Why Orpheus exists
+## What you can ask
 
-There is a thriving ecosystem of MCP servers that let an AI **build** music in a DAW by natural language. After reading the source of the leading projects (see [`docs/frontier-analysis.md`](docs/frontier-analysis.md)), one gap is unmistakable:
+- *"What key and tempo is this song, and where does the chorus start?"*
+- *"Split the vocals out of this mp4 I made and put the stems on tracks."*
+- *"Where in the song does the hook come back?"*
+- *"Here are my lyrics and chords from the sheet. Lay out the song: verse, pre-chorus, chorus, bridge."*
+- *"Add a bass line and a half-time drum part under the verse."*
+- *"Make the outro vocal sound like it's coming through a telephone."*
 
-> **The "build me a track" half is solved and even viral. The "look at my track, explain it, and improve it toward a reference" half is completely unclaimed.**
+## What works today
 
-No shipping server can look at your *existing* project, reason over **both its composition and its sound**, propose reasoned changes toward a target style, and apply them back as **editable** tracks. That loop —
+### Listen
 
+All local, on audio you own:
+- tempo, beat grid, downbeats, key, loudness and sections (`recon_reference`);
+- an instrument-activity timeline (`instrument_timeline`);
+- chords (`get_chords`): an always-on baseline plus an optional model lane;
+- stem separation with quality gates and a retry ladder (`separate_region`, `verify_stem`);
+- sound character: spectrum, dynamics, stereo, reverb, pitch (`characterize`);
+- lyrics with word timings, and "find where this line is sung" (`transcribe_lyrics`, `locate_lyric`);
+- comparing two sections of a song that should match (`compare_sections`);
+- one entry point that routes a question to the right analysis and reports what it could and
+  couldn't measure (`analyze_reference`).
+
+It also reads your own project's MIDI for key, harmony and groove (`build_project_spec`,
+`analyze_harmony`, `analyze_groove`).
+
+### Explain
+
+Analyses return measured numbers with confidence values, which lets Claude explain why
+something sounds the way it does (for example "the low band is 6 dB hotter than the
+reference"). `compare_character` turns the difference between two sounds into concrete effect moves, using
+14 rules.
+
+### Work in the session
+
+- Tracks, tempo, meter, transport, and MIDI written in beats, never ticks (a note written at beat B
+  reads back at beat B).
+- Composing: chord progressions, bass lines, drum patterns, melodies, humanizing, whole sections,
+  and `arrange_song` for a full sectioned song with markers and lyric lines.
+- Effects: add by name, set and read parameters, using calibrated maps for REAPER's stock plugins
+  and Surge XT.
+- Audio: import your stems as time-locked tracks, render a track region to WAV, and clone a take
+  onto new tracks (for doubles).
+- Instruments: Orpheus prefers instruments you have installed, and `suggest_free_vst` recommends
+  free ones.
+
+Fifteen more bridge commands were built and used live in July but don't have MCP tools yet:
+renaming, colouring, moving and deleting tracks; regions; automation envelopes; trimming, windowing and
+nudging items; factory presets; refreshing media and peaks; and instruments built from your own
+samples.
+
+### Verified on real REAPER
+
+In July 2026, on REAPER 7.78: the bridge, the effect maps, region rendering,
+stem import, item cloning, those fifteen bridge commands, hot reload, and analysis of an owned
+200-second song (separation, lyrics, sections). The full-song composer and the chord and lyric
+quality still need a live check by ear. The [dev-log](docs/dev-log.md) has the details.
+
+## How a song gets made
+
+1. You write lyrics, sections and chord charts in your Google Sheet.
+2. Claude reads the sheet through the Google Drive connector. Orpheus never signs into Google;
+   it only gets text.
+3. Orpheus lays the song out in REAPER: section markers, chords, bass, drums, a melody, and your
+   lyric lines on the markers.
+4. You record. Orpheus analyses the take, and Claude suggests changes. You approve each one.
+
+Reading the chord-chart and riff-tab notation from the sheet directly, a lead-sheet format, and
+sung sketches are being built now (see [the roadmap](docs/roadmap.md)).
+
+## What it won't do
+
+- Fetch, rip or capture music you don't own. Analysis runs only on files you give it.
+- Need an account, a subscription or a paid API. Everything runs on your machine.
+- Master a track for release, or replace your ears.
+- Change your project without asking first.
+
+## Not built yet
+
+- Lead sheets and notation: reading your chord charts and bass tab, and ABC export/import.
+- Sung sketches through an optional YuE2 backend (below).
+- Beat-map export for cutting music videos in Premiere (OpenTimelineIO).
+- Edit plans applied in one undo step (`apply_changes`) and style-based suggestions
+  (`recommend_changes`). Both are stubs, registered only in the `full` profile.
+- Master rendering and audit (`render_project`, `render_and_audit`) and mix balancing.
+
+## Optional: non-commercial backends
+
+Some useful models allow only non-commercial use: YuE2 (sung song sketches), LarsNet (drum
+splitting). Orpheus is MIT, so these are off by default. You switch each one on by name:
+
+```json
+"env": { "ORPHEUS_NC_BACKENDS": "yue2" }
 ```
-ANALYZE  →  RECOMMEND (with reasons)  →  [you approve]  →  APPLY  →  VERIFY
-```
 
-— is Orpheus's entire reason to exist.
-
-### How it's different from what's out there
-
-| Capability | Control servers (shiehn, xDarkzx, Ableton-MCP) | Analysis servers (dschuler36) | Mix-match tools (Matchering, Ozone) | Neural "genre changers" | **Orpheus** |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Build a track from NL | ✅ | — | — | — | ✅ |
-| Read the *current* project's harmony | — | partial (MIDI-blind) | — | — | ✅ |
-| Explain *why* it sounds like X | — | objective warnings only | — | — | ✅ |
-| Recommend changes **with reasons** | — | — | — | — | ✅ |
-| Human approval gate | — | n/a | — | — | ✅ |
-| Apply changes as **editable** tracks | fire-and-forget | — | audio only | ❌ (baked WAV) | ✅ |
-| Match harmony / instrumentation, not just EQ | — | — | — | ✅ (unexplained) | ✅ |
-
-Orpheus is the first to make a single `CompositionSpec` the contract for an **analyze → recommend → apply** loop over an existing project. The compositional dimensions (key, harmony, instrumentation) are where it's *genuinely first*; the mix/master dimension it assembles from solved parts (it vendors [Matchering](https://github.com/sergree/matchering)).
-
----
-
-## The north-star demo
-
-```
-You:      (open an 8-bar beat in REAPER) "Make this sound Classical."
-
-Orpheus:  Analyzing… detected A minor (confidence 0.71), 120 BPM, a i–iv vamp,
-          drum-forward mix, low band +8 dB hotter than the classical reference.
-
-          Here's my plan (each change, and why):
-            1. 120 → ~70 BPM        — classical phrasing breathes slower
-            2. transpose to A minor — keep your tonal center, lean modal
-            3. i–iv  →  ii–V–i with a secondary dominant — functional harmony is the
-                                                            classical signature
-            4. add a Strings track   (from your installed FX) — idiomatic voice
-            5. master-match tonal balance to the reference — cut ~3 dB at 120 Hz
-
-          Apply all 5?  [you approve]
-
-Orpheus:  Done — wrapped in one undo block. Re-rendered and re-measured:
-          now within 1.2 dB of the reference across all three bands.
-```
-
-Every line of "here's why" is a real diff between **your project** and a cached **style fingerprint** — not a vibe.
-
----
-
-## Architecture (one paragraph)
-
-Orpheus is an external Python [FastMCP](https://gofastmcp.com) server. It **never** calls REAPER's API directly. Instead it speaks to a single hardened **file-based JSON bridge** watched by a persistent Lua [ReaScript](https://www.reaper.fm/sdk/reascript/reascript.php) loop *inside* REAPER — the same dependency-free transport the most comprehensive existing server ships, hardened with a heartbeat lock-file, atomic writes, static dispatch, and per-call note caps. The model talks in **beats**, never ticks; all PPQ/tempo math lives inside the bridge. Read-only `analyze_*` tools build a `CompositionSpec` of your current project; `recommend_changes` diffs it against a style fingerprint into a reason-annotated `EditPlan`; a separate, `destructiveHint`-flagged `apply_changes` executes the approved plan in one undo block. Full detail: [`docs/architecture.md`](docs/architecture.md).
-
-> **Why not `python-reapy` or OSC?** REAPER's OSC can't pass arguments to custom actions, so it [literally cannot create tracks or write MIDI notes](docs/architecture.md#why-not-osc). `python-reapy` is effectively unmaintained (documented REAPER 7 / Python 3.13 failures) and its distant API throttles to ~30–60 calls/sec. The in-REAPER Lua bridge sidesteps both. This is a deliberate divergence from the most-starred prior art — see [the architecture doc](docs/architecture.md) for the full justification.
-
----
+Their weights are never bundled. You download them yourself, under their own licence (CC BY-NC
+4.0 for YuE2), and Orpheus talks to them as a separate program.
 
 ## Install
 
-> Not yet published. These are the **planned** one-line install paths once `v0.1` is on PyPI.
+> Not published yet. These are the planned install paths once `v0.1` is on PyPI.
 
 ```bash
-# 1. Run the server (no clone needed, once published)
+# 1. Run the server
 uvx orpheus-mcp
 
-# 2. Load the in-REAPER bridge script (one-time)
-#    Copies orpheus_bridge.lua into REAPER's Scripts folder and tells you how to run it.
+# 2. Copy the bridge script into REAPER's Scripts folder (one-time)
 orpheus-mcp install-bridge
 ```
 
-Then add to your Claude Desktop config (`claude_desktop_config.json`):
+Then add it to your MCP client, for example Claude Desktop's `claude_desktop_config.json`:
 
 ```json
 {
@@ -98,44 +140,44 @@ Then add to your Claude Desktop config (`claude_desktop_config.json`):
 }
 ```
 
-Restart Claude Desktop, open a project in REAPER, run the Orpheus bridge action, and ask Claude to *"check the Orpheus connection."* Full per-OS steps: [`docs/installation.md`](docs/installation.md).
+Open a project in REAPER, run the Orpheus bridge action, and ask Claude to *"check the Orpheus
+connection."* Per-OS steps: [`docs/installation.md`](docs/installation.md). Working from source:
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
----
+## How it works
 
-## Roadmap
+Orpheus is a Python [FastMCP](https://gofastmcp.com) server. It never calls REAPER's API
+directly. It writes JSON request files that a Lua script running *inside* REAPER picks up,
+executes and answers. The bridge is hardened: atomic writes, a heartbeat, a fixed table of
+commands (nothing evaluated from the wire), per-call caps, and hot reload of new commands without
+restarting REAPER. Claude talks in beats; all tick and tempo math happens in the bridge. Tools that
+change the project are marked `destructiveHint`, so your client can ask you before each one. Engines with
+clashing dependencies (audio-separator, basic-pitch) run in their own environments as separate
+processes. More: [`docs/architecture.md`](docs/architecture.md).
 
-Orpheus ships in honest milestones (full detail + the "why this order" in [`docs/roadmap.md`](docs/roadmap.md)):
+> **Why not `python-reapy` or OSC?** REAPER's OSC can't pass arguments to custom actions, so it
+> [can't create tracks or write MIDI notes](docs/architecture.md#why-not-osc). `python-reapy` is
+> effectively unmaintained and throttles to about 30 to 60 calls a second. A Lua loop inside REAPER
+> avoids both.
 
-| Milestone | What works | Scale |
-|---|---|---|
-| **M0** ✅ | Hardened bridge + FastMCP scaffold + `get_connection_status` | foundation |
-| **M1** ✅ | Build/modify correctly: tracks, transport, PPQ-correct MIDI (FX verbs stubbed) | construction core |
-| **M2** | **Understand** a project: harmony, groove, audio character, theory scaffolding | → `v0.1`: *it explains your track* |
-| **M3** | **Transform**: `recommend_changes` + gated `apply_changes` + style fingerprints | → `v0.3`: *the differentiator* |
-| **M4** | NL ergonomics + generate-from-scratch composers | polish |
-| **M5** | Docs, PyPI, MCP Registry, the launch demo | ship |
-| **M6** | Reach: MIDI recording, audio→reference ingest, groove transfer | post-launch |
+## Credits
 
-**v0.1 (weeks) explains; v0.3 (months) transforms.** The full loop is a real build, scoped honestly.
+Orpheus reimplements patterns from these projects under MIT; it does not copy GPL-licensed code.
+Per-project notes: [`docs/frontier-analysis.md`](docs/frontier-analysis.md).
 
----
+- [shiehn/total-reaper-mcp](https://github.com/shiehn/total-reaper-mcp): the file-JSON bridge pattern and tool profiles.
+- [xDarkzx/Reaper-MCP](https://github.com/xDarkzx/Reaper-MCP): bridge hardening (heartbeat, static dispatch, per-call caps).
+- [ahujasid/ableton-mcp](https://github.com/ahujasid/ableton-mcp): the beats-not-ticks note model and tool granularity.
+- [dschuler36/reaper-mcp-server](https://github.com/dschuler36/reaper-mcp-server): the typed project tree and objective audio checks.
+- [jarmstrong158/waveform-MCP](https://github.com/jarmstrong158/waveform-MCP): the `CompositionSpec` idea and the primitives-vs-composers split (patterns only; its code is GPL-3.0).
+- [bonfire-audio/reaper-mcp](https://github.com/bonfire-audio/reaper-mcp): chord and drum primitives, headless render recipes.
+- [music21](https://music21.org) and [asume21/music-theory-mcp](https://github.com/asume21/music-theory-mcp): the theory layer.
+- [AI TrackMate](https://arxiv.org/pdf/2412.06617): the pattern of analysing, writing a readable report, then giving feedback.
+- [Matchering](https://github.com/sergree/matchering) (GPL-3.0): the likely engine for future master matching. It will be an optional install, not a dependency.
 
-## Standing on shoulders — credits
-
-Orpheus deliberately aggregates the best of a generous open-source ecosystem rather than reinventing it. Full per-project analysis with citations in [`docs/frontier-analysis.md`](docs/frontier-analysis.md).
-
-- **[shiehn/total-reaper-mcp](https://github.com/shiehn/total-reaper-mcp)** — the file-JSON IPC bridge pattern + NL DSL resolvers + tool profiles.
-- **[xDarkzx/Reaper-MCP](https://github.com/xDarkzx/Reaper-MCP)** — bridge hardening (heartbeat, static dispatch, per-call caps).
-- **[ahujasid/ableton-mcp](https://github.com/ahujasid/ableton-mcp)** — beats-not-ticks note model, atomic-tool altitude, the demo-led launch playbook.
-- **[dschuler36/reaper-mcp-server](https://github.com/dschuler36/reaper-mcp-server)** — the typed project tree + four objective audio analyses (the seed of the recommend engine).
-- **[jarmstrong158/waveform-MCP](https://github.com/jarmstrong158/waveform-MCP)** — the `CompositionSpec` IR, primitives-vs-composers split, mix-calibration table (patterns reimplemented under MIT, not copied — its code is GPL-3.0).
-- **[bonfire-audio/reaper-mcp](https://github.com/bonfire-audio/reaper-mcp)** — chord/drum theory primitives + correct headless render recipes.
-- **[music21](https://music21.org)**, **[asume21/music-theory-mcp](https://github.com/asume21/music-theory-mcp)** — the theory + genre knowledge layer.
-- **[Matchering](https://github.com/sergree/matchering)** — the entire mix/master "sound like" layer.
-- **[AI TrackMate](https://arxiv.org/pdf/2412.06617)** — the analyze → "LLM-readable music report" → reasoned-feedback pattern.
-
----
+Model credits and licences for the analysis engines are in
+[`data/model_registry.json`](data/model_registry.json) and [`docs/pins/`](docs/pins/).
 
 ## License
 
-[MIT](LICENSE) © 2026 Mal0ss. Orpheus reimplements *patterns* from the projects above; it does not copy GPL-licensed source.
+[MIT](LICENSE) © 2026 Mal0ss.

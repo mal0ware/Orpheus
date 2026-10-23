@@ -1,68 +1,101 @@
 # Orpheus Roadmap
 
-Built in milestones that each leave the repo in a working, demoable state. The ordering is deliberate: **get the riskiest infrastructure bulletproof first, then build understanding, then transformation.**
+Orpheus is Claude's ears and hands inside REAPER: it listens, explains, and works in the session,
+with the user approving every change
+([definition](specs/2026-10-23-orpheus-definition-design.md)). Work ships in steps that each leave
+the repo working and demoable. The order puts the riskiest infrastructure first, then
+understanding, then the songwriting path, then automated suggestions.
 
-> **The honest framing.** The full *"make this sound like X → here's why → apply"* loop is a multi-month build (≈36 core tools; the hard ones — the PPQ-correct MIDI writer, the audio analyzer, `recommend_changes`, gated `apply_changes` — are all on the critical path). The *weeks*-scale first public release is the **understand-and-explain** half. So Orpheus ships in two acts:
-> - **`v0.1` — it explains your track** (M0–M2)
-> - **`v0.3` — it transforms your track** (M3), the headline differentiator
+"Built" below means implemented and tested against the behavioural REAPER fake and the Lua handler
+suite. "Live" means also checked on real REAPER or real owned audio.
 
 ---
 
-### M0 — Bridge + skeleton *(foundation)* ✅ **DONE**
-A hardened, tested file-JSON IPC bridge and a professional FastMCP scaffold the rest stands on. Riskiest infrastructure — bulletproofed before anything musical.
+## Done
 
-- [x] src-layout `orpheus_mcp` package, `pyproject.toml` console-script, `fastmcp.json`, MIT license, CI.
-- [x] The file-JSON IPC bridge (`orpheus_bridge.lua`), hardened with: persistent `reaper.defer()` loop, static dispatch (no `loadstring`), heartbeat lock-file, **atomic temp-then-rename writes**, `EnumerateFiles` cache invalidation, integer-id filenames, `REAPER_MCP_BRIDGE_DIR` override, stable `$HOME`-based default dir.
-- [x] `BridgeClient` (sequential `request_id`, poll, timeout, `batch` composites) + `get_connection_status` + `install-bridge` command.
-- [x] Wire `server.py` + `registry.py` + toolset gating.
+### M0: bridge + skeleton (2026-06-07, live)
+File-JSON bridge with atomic writes, heartbeat, static dispatch, `EnumerateFiles` cache
+invalidation, integer-id filenames; `BridgeClient`; `get_connection_status`; `install-bridge`.
 
-**Verified:** 12 Python bridge tests, 8 installer tests, 19 Lua-side assertions, and a cross-language integration test (real `BridgeClient` ↔ a real `lua` subprocess running the actual bridge) all green. Remaining for the user: the in-REAPER smoke test (`get_connection_status` against a live REAPER) + the Claude Desktop hammer-icon check.
+### M1: construction core (2026-06-12, merged 2026-07-14, live)
+Project reads, tracks, transport, and the PPQ-correct MIDI writer (`insert_midi_notes`,
+`get_track_midi`, `transpose_notes`). The MIDI round-trip test is a hard gate: a note written at
+beat B reads back at beat B.
 
-### M1 — Construction core *(the APPLY verbs + the load-bearing primitive)* ✅ **CORE DONE**
-The agent can build and modify a project correctly. The load-bearing primitive (PPQ-correct
-MIDI write) and the track/transport verbs ship here; the FX/mix verbs are deferred to a later
-pass (they need the installed-plugin inventory + name→index resolution).
+### M2: understand a project (2026-07, built)
+Theory tools (`get_scale_notes`, `constrain_to_key`, `suggest_chord_progression`,
+`get_genre_profile`); symbolic analysis of the project's MIDI (`analyze_harmony`,
+`analyze_groove`); audio character of a rendered WAV (`analyze_audio_character`);
+`build_project_spec`; `explain_style` against a fingerprint (one ships: `classical`).
 
-- [x] `project` reads-before-writes: `get_project_info`, `list_tracks`, `get_track_midi`. (`get_fx_params` deferred with the FX work.)
-- [x] `transport`: `set_tempo`/`set_time_signature`/`play_stop_record`; `tracks`: `create_track`. (`set_track_volume_pan`, `add_fx_by_name` (inventory-validated), `set_fx_param` (name→index) deferred — FX/mix pass.)
-- [x] `midi`: **`insert_midi_notes`** (beats in, PPQ out, batched) — the load-bearing primitive — plus `create_midi_item`, `transpose_notes`. (`quantize_notes` deferred.)
-- [x] `tests/test_midi_roundtrip.py` is now the **non-negotiable** correctness gate (was xfail; flipped to a hard requirement — a note written at beat B reads back at beat B, through the real wire protocol + a behavioural REAPER fake, plus a self-contained Lua-side handler suite). `render` tools deferred to M2.
+### Reference-analysis engine (2026-07-22..24, live 2026-07-25)
+Spec: [`2026-07-22-reference-analysis-design.md`](specs/2026-07-22-reference-analysis-design.md).
+Recon (tempo, beat grid, key, loudness, sections), instrument timeline, chord lanes, gated stem
+separation with an escalation ladder, `SoundCharacter` descriptors, lyrics with word timings and
+`locate_lyric`, the `analyze_reference` router, `compare_character` (14 descriptor→FX rules), FX
+apply verbs, `suggest_free_vst`, `clear_analysis_cache`. Run on an owned 200 s song on 2026-07-25.
+Still owed by ear: stem, chord and lyric quality checks and the calibration panel.
 
-**Verified:** beats↔PPQ round-trip (incl. fractional/sixteenth-note offsets, bar-relative `at_bar` anchoring, transpose) green through the Python `FakeReaperBridge`/`FakeReaperProject` executable spec; 33 Lua-side assertions green against a stubbed `reaper`; full suite 48 passed with a lua interpreter (46 + 2 lua-gated tests auto-skip without one). The model speaks beats; every tick conversion lives in the bridge.
+### Composers (M4 slices 1 and 2, 2026-07-18, built)
+`create_chord_progression`, `create_bassline`, `create_drum_pattern`, `humanize_pass`,
+`compose_section`, `create_melody`, `build_section`, `arrange_song`, `add_marker`,
+`place_lyric_markers`, and an instrument-selection ladder that prefers installed plugins.
+A live multi-section `arrange_song` run is still to do.
 
-### M2 — Theory + the ANALYZE brain → **`v0.1`** *(north-star half 1)*
-Orpheus can deeply *understand* a project and keep the LLM in-key.
+### Live studio work (2026-07-25..08-01, live)
+`import_audio_files` (time-locked), `render_track_region`, `clone_track_items`,
+`set_track_params`, mp4 input, section-diff analysis, hot reload, and fifteen bridge-only verbs
+(rename/colour/move/delete track, regions, envelopes, trim/window/nudge items, presets,
+refresh media/peaks, sampler instruments). Calibrated FX maps for REAPER's stock plugins and
+Surge XT. See the [dev-log](dev-log.md).
 
-- [ ] `theory`: embedded music21 + reimplemented `music_theory_data` + ported `genre_profiles` (`get_scale_notes`, `suggest_chord_progression`, `constrain_to_key`, `get_genre_profile`).
-- [ ] `analysis/symbolic.py`: music21 key (+confidence/alternatives) / chordify / Roman-numeral harmony with **drum-track filtering**, plus the custom MIDI-PPQ **groove analyzer** → `analyze_harmony` / `analyze_groove` / `analyze_tempo_meter`.
-- [ ] `analysis/audio.py`: librosa/numpy/pyloudnorm features + four objective DSP analyses → `analyze_audio_character`; `render_and_audit` loop.
-- [ ] `build_project_spec` fuses both into `CompositionSpec(current)` + LLM-Readable Report. Unit tests on fixtures (no REAPER).
-- [ ] `explain_style` → ships **`v0.1`: Orpheus explains your track.**
-- [x] **The audio-reference half of "understand" — built as its own engine, `docs/specs/2026-07-22-reference-analysis-design.md`, on `feat/reference-analysis` (12 phases, see [`docs/dev-log.md`](docs/dev-log.md) 2026-07-24 entry).** Recon (tempo/key/loudness/structure), an instrument-activation timeline, a chord lane (rule baseline + optional model lane), quality-gated stem separation with an escalation ladder, `SoundCharacter` descriptors, a lyrics index (`transcribe_lyrics`/`locate_lyric`), and the §9 `analyze_reference` orchestrator tying them into one answer envelope, plus `suggest_free_vst` + `clear_analysis_cache`. 689 tests, 123 Lua assertions, ruff+mypy clean, verified against fakes/synthesized fixtures only — **live-REAPER + owned-audio verification is the tracked remaining gap**, not scoped as "M2 done" until that closes.
+---
 
-### M3 — RECOMMEND + APPLY + fingerprints → **`v0.3`** *(the differentiator)*
-Close the loop with the approval gate — the thing nobody else ships.
+## Upgrades 2026-10 (now)
 
-- [ ] `analysis/fingerprint.py` + `scripts/build_fingerprint.py`; cache `classical.json`, `hiphop.json`, a per-era `dominic-fike-sunburn.json`; `list_style_fingerprints`.
-- [ ] `recommend_changes`: diff vs fingerprint across v1 dimensions → `EditPlan` (`readOnlyHint`), `ToolResult` = prose + structured + meta.
-- [ ] `apply_changes` (undo-block-wrapped, `destructiveHint`) + `apply_master_match` (Matchering → ReaEQ on master). `tests/test_recommend.py`.
+Agreed 2026-10-23, in this order:
 
-### M4 — NL ergonomics + GENERATE stretch *(polish)*
-- [x] `compose` generators as thin orchestrators (`create_chord_progression`, `create_bassline`, `create_drum_pattern`, `humanize_pass`) + `compose_section` (genre-aware one-call section: tempo, drums/chords/bass tracks, groove, per-role instrument selection). **Implemented and tested against the `FakeReaperBridge` + the lupa-driven Lua handler suite (167 passed / 2 skipped; 44 Lua assertions; ruff + mypy clean) — live-REAPER smoke test is still pending** (see [`docs/dev-log.md`](docs/dev-log.md) 2026-07-18 entry for the exact pending-verification list: `EnumInstalledFX` shape, RS5k `FILE0`/note-range params, the `MIDI_DeleteNote` descending-delete idiom, and audible playback).
-- [x] `list_installed_fx` — **pulled forward from the M4 mix pass below** to back `compose_section`'s instrument-selection ladder (prefer the user's installed instruments before stock/pack fallback). Read-only, tested against the fake + Lua stub; live `EnumInstalledFX` behavior unconfirmed.
-- [x] **Slice 2 — the songwriting system (full-song composer) shipped.** `parse_melody` (compact melody notation, in-key snapping), `DRUM_PATTERNS` (named step-grid patterns), the `add_marker` bridge verb + tool (`AddProjectMarker2`), `create_melody`, `build_section`/`_build_section`, `arrange_song` (tempo + sectioned song with markers, one call), `place_lyric_markers` (original-lyrics-only markers). Registry-confirmed: `arrange` category present in `default`/`full`, absent from `explain`. **Tested against `FakeReaperBridge` + the lupa Lua suite (186 passed / 2 skipped; 50 Lua assertions; ruff + mypy clean) — live-REAPER smoke test is still pending** (see [`docs/dev-log.md`](docs/dev-log.md) 2026-07-18 Slice 2 entry: `AddProjectMarker2` live behavior + audible multi-section playback are the new unknowns, on top of the compose-core slice's carried-forward list).
-- [ ] `dsl` resolvers (fuzzy track + role + `SessionContext` pronoun memory) + tool profiles defaulting to a small set.
-- [ ] `mix`: `apply_mix_balance` (genre×role dB table + chain-offset). (`list_installed_fx` shipped early, above.)
-- [ ] `data/instructions/00_core.md` system-prompt teaching notation + in-key rules.
+1. **Docs + merge.** Definition everywhere, dev-log caught up, Matchering out of core deps,
+   instructions loaded from one file, `feat/reference-analysis` merged into `main`.
+2. **Bug fixes**, each with a regression test:
+   - [ ] bridge request ids unique across the process (parallel read-only calls collide today)
+   - [ ] lyric ASR: cuDNN probe + `ORPHEUS_ASR_DEVICE=cpu` (auto-CUDA aborts on the desktop)
+   - [ ] cp1252 `UnicodeDecodeError` in a subprocess reader thread
+   - [ ] section naming collapses a real song into one "verse 1"
+   - [ ] envelopes on JSFX parameters land at the wrong scale
+   - [ ] `add_vst_path_and_rescan` has no Lua handler
+3. **YuE2 test** on the RTX 3080 via yue2.cpp: one 60 s render, VRAM and time recorded in
+   `docs/pins/`, go/no-go.
+4. **Lead sheet + notation:**
+   - [ ] `LeadSheet` model (key, meter, tempo, sections with timed chords, melody, lyrics,
+     reasons), referenced from `CompositionSpec`
+   - [ ] readers for the owner's chord-chart notation (`Am / Fmaj7 | C / E (x4)`) and bass riff
+     tab (`A0 - E1 -`, eight slots per bar)
+   - [ ] MIT ABC writer for YuE2's dialect, a reader (music21 for notes and chords, a sidecar for
+     lyrics), a dialect checker, round-trip tests
+5. **Sung sketches** (if step 3 says go): send an Orpheus-written score to yue2.cpp, import the
+   result onto a "SKETCH (YuE2)" track. Gated by `ORPHEUS_NC_BACKENDS=yue2`.
 
-### M5 — Ship
-- [ ] `docs/` complete; `examples/make_it_classical.md`.
-- [ ] PyPI publish for `uvx orpheus-mcp`; exact Claude Desktop JSON in README; record the `fastmcp dev` Inspector session as the demo GIF.
-- [ ] OIDC `publish-mcp.yml` → PyPI + MCP Registry on `v*` tags.
-- [ ] Post ONE jaw-dropping north-star demo video as the launch.
+## Next
 
-### M6 — Reach *(post-launch)*
-- [ ] MIDI-first virtual-keyboard recording (`arm_virtual_keyboard_record`, `capture_midi`).
-- [x] **Slice 4 — `reference-ingest` — largely superseded, delivered as the standalone reference-analysis engine** (`docs/specs/2026-07-22-reference-analysis-design.md`, `feat/reference-analysis`, [`docs/dev-log.md`](docs/dev-log.md) 2026-07-24 entry) — a much larger scope than the original one-tool sketch: recon/timeline/chords/separation/descriptors/lyrics, a §15.4 curated-catalog `suggest_free_vst` in place of any auto-install, and BasicPitch wired in as its own `[transcribe]` extra (T5 polyphonic transcription) rather than an opt-in flag. Still, faithfully, scoped to audio files the user legally owns — no scraping, no fetching/downloading a reference track the user does not own (the Slice 2 rejection this line originally recorded still stands; see [`docs/dev-log.md`](docs/dev-log.md) 2026-07-18 entry). **Remaining before this is genuinely "reach":** live-REAPER + owned-audio verification (the same gap M2's new bullet tracks) — the mechanism is built and tested against fakes, not yet confirmed against a real reference track or a real REAPER session.
-- [ ] Groove/swing transfer + arrangement reshaping promoted from stretch to applied.
-- [ ] "Here's what I'll do / here's what I did" post-apply action readback (the transparency steal from shiehn).
+- **Beat-map export for music videos.** A read verb for the project's tempo map, markers and
+  regions; `export_beat_map` (JSON + CSV of beats, bars, sections, lyric lines); an
+  OpenTimelineIO file Premiere opens with section and lyric markers. This replaces the
+  standalone lyric-engine repo, which gets archived.
+- **MCP tools for the fifteen bridge-only verbs**, plus a `set_track_mute` verb.
+- **`apply_changes` v1:** run a Claude-written `EditPlan` in one undo block (an `__undo_batch__`
+  handler so hot reload delivers it, and a delete-notes-in-range verb so one section can be
+  rewritten), then a "make it jazzier" demo.
+- **Taste file:** `~/.orpheus/taste.json` with banned plugins and intents and preferred
+  instruments, enforced in `compare_character`, `suggest_free_vst` and instrument selection.
+- **Bridge status in Claude Code:** heartbeat v2 with project name and REAPER version, and a small
+  status panel that reads it.
+
+## Later
+
+- **M3, style suggestions:** fingerprints built from reference tracks the user owns,
+  `recommend_changes` diffing the project against them, `apply_master_match` (Matchering as an
+  optional `[master]` extra).
+- **M4 leftovers:** fuzzy track/role resolvers, `apply_mix_balance`, `quantize_notes`.
+- **M5, ship:** PyPI (`uvx orpheus-mcp`), MCP Registry, a recorded demo.
+- **M6, reach:** MIDI recording from a virtual keyboard, groove transfer, post-apply readback.
