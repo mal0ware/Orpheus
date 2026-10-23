@@ -8,26 +8,28 @@ and are wired up through :mod:`orpheus_mcp.registry`.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastmcp import FastMCP
 
 from orpheus_mcp.registry import register_tools
 
-INSTRUCTIONS = """\
-Orpheus lets you analyze, explain, and reshape music inside a running REAPER project.
+_CORE = Path("instructions") / "00_core.md"
 
-Workflow:
-  1. Always call get_connection_status first to confirm REAPER + the bridge are live.
-  2. To UNDERSTAND a track, use the analyze_* tools, then explain_style for
-     "why does this sound like X".
-  3. To TRANSFORM a track, call recommend_changes (read-only) to get an EditPlan of
-     reasoned changes, surface those reasons to the user, and only then call
-     apply_changes with the approved plan.
 
-Always speak musical time in BEATS, never ticks. Surface harmony-detection confidence
-to the user and let them correct it — key/chord detection is probabilistic, especially
-on drum-heavy material.
-"""
+def load_instructions() -> str:
+    """Claude's operating instructions, read from ``data/instructions/00_core.md``.
+
+    Installed wheel: ``orpheus_mcp/data/...`` (hatch force-include). Source checkout:
+    ``<repo>/data/...``. One file, so what a maintainer edits is what Claude receives.
+    """
+    package_path = Path(__file__).resolve().parent / "data" / _CORE
+    if package_path.exists():
+        return package_path.read_text(encoding="utf-8")
+    return (Path(__file__).resolve().parents[2] / "data" / _CORE).read_text(encoding="utf-8")
+
+
+INSTRUCTIONS = load_instructions()
 
 # The FastMCP instance fastmcp.json points at.
 mcp: FastMCP = FastMCP(name="Orpheus", instructions=INSTRUCTIONS)
