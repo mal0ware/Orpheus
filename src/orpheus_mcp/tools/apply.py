@@ -28,6 +28,6 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
     @mcp.tool(annotations=_DESTRUCTIVE)
     def apply_master_match(fingerprint: str) -> dict:
         """[NOT IMPLEMENTED]
-        The spectral half: render the master → Matchering against the fingerprint's
-        reference WAV → bake the matched curve onto a master-bus ReaEQ + limiter."""
+        The spectral half: render the master → match it (optional Matchering extra) against the
+        fingerprint's reference WAV → bake the matched curve onto a master-bus ReaEQ + limiter."""
         raise NotImplementedError("M3 — see docs/roadmap.md")

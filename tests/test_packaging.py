@@ -43,3 +43,9 @@ def test_core_import_stays_lean():
         capture_output=True,
     )
     assert out.returncode == 0  # analysis extras load lazily, inside functions
+
+
+def test_core_dependencies_have_no_gpl_matchering():
+    # MIT package: GPL-3.0 Matchering may only ever be an optional extra (spec 2026-10-23 §3).
+    deps = _pyproject()["project"]["dependencies"]
+    assert not any(d.lower().startswith("matchering") for d in deps)
