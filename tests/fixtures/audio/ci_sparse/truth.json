@@ -1,0 +1,24 @@
+{
+  "name": "ci_sparse",
+  "genre": "pop",
+  "density": "sparse",
+  "bpm": 116,
+  "bars": 8,
+  "sample_rate": 22050,
+  "key": {
+    "root": "G",
+    "mode": "major"
+  },
+  "progression": "Gmaj7,C/E,D,Em7",
+  "chords": [
+    "Gmaj7",
+    "C",
+    "D",
+    "Em7"
+  ],
+  "roles": {
+    "drums": "stems/drums.flac",
+    "bass": "stems/bass.flac",
+    "chords": "stems/chords.flac"
+  }
+}

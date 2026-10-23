@@ -20,8 +20,8 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Install (with dev + analysis extras)
-        run: uv sync --extra dev --extra analysis
+      - name: Install (dev extra only — proves base-install degradation)
+        run: uv sync --extra dev
 
       - name: Lint
         run: uv run ruff check .
@@ -36,3 +36,31 @@ jobs:
       # on the runner) — same mechanism the dev-log verified it with.
       - name: Lua handler suites (via lupa)
         run: uv run python scripts/run_lua_tests.py
+
+  analysis-cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install (with analysis + dev extras)
+        run: uv sync --extra analysis --extra dev
+
+      - name: Test (excluding desktop and gpu)
+        run: uv run pytest -q -m "not desktop and not gpu"
+
+      # §15.1 calibration smoke: the full pipeline (SDR math -> gate metrics -> ROC ->
+      # JSON emit) over the 2 committed CI fixtures with tests/stub_engines.py fakes —
+      # ZERO checkpoint downloads (Task 0.1 CI invariant), no GPU, no real separators.
+      - name: Gate-calibration smoke (stub engines, no downloads)
+        run: uv run python scripts/calibrate_gates.py --ci-smoke

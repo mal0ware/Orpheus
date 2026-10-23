@@ -1,0 +1,438 @@
+[
+  {
+    "id": "4stem-a/bsroformer",
+    "task": "multi-stem",
+    "targets": [
+      "vocals",
+      "drums",
+      "bass",
+      "other"
+    ],
+    "engine": "audio-separator",
+    "checkpoint_url": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v1.0.12/model_bs_roformer_ep_17_sdr_9.6568.ckpt",
+    "sha256": "3e9daecd70aaed5b5a0d1f861cc4d77eaa45afb3fc6301b1cf32c1be0f5868fb",
+    "vram_gb": 6.5,
+    "rt_factor": null,
+    "benchmark": "MUSDB test avg SDR 9.65 (bass 8.48, drums 11.61, vocals 11.08, other 7.44) - ZFTurbo MSST-Training, BS-RoFormer ep17, 4-stem",
+    "license": "MIT",
+    "rank": 3,
+    "engine_status": "no-engine",
+    "engine_status_note": "audio-separator cannot load ZFTurbo's ep_17 4-stem BS-RoFormer checkpoint - no compatible entry in audio-separator's own model registry (audio_separator_model is null here too). Evidence: Task 4.1 pin-run findings (task-4.1-report.md carried problem 2). Pin/hash kept for a future vendored BS-RoFormer inference path (post-v1 registry TODO, D12) - resolve() skips this entry until then.",
+    "tagger_classes": [
+      "Singing",
+      "Speech",
+      "Drum kit",
+      "Drum machine",
+      "Drum",
+      "Snare drum",
+      "Bass guitar"
+    ],
+    "tagger_classes_by_target": {
+      "vocals": ["Singing", "Speech"],
+      "drums": ["Drum kit", "Drum machine", "Drum", "Snare drum"],
+      "bass": ["Bass guitar"],
+      "other": []
+    }
+  },
+  {
+    "id": "4stem-b/scnet-xl",
+    "task": "multi-stem",
+    "targets": [
+      "vocals",
+      "drums",
+      "bass",
+      "other"
+    ],
+    "engine": "msst",
+    "checkpoint_url": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v1.0.13/model_scnet_ep_54_sdr_9.8051.ckpt",
+    "sha256": "fd889cc1d97619ccac59280ecc859c190cd3cc1b1557fbe3a19b1610bb67e410",
+    "vram_gb": 8.0,
+    "rt_factor": 0.076,
+    "benchmark": "MUSDB test avg SDR 9.80 (bass 9.23, drums 11.51, vocals 11.05, other 7.41) - ZFTurbo MSST-Training, SCNet-XL, 4-stem",
+    "license": "MIT",
+    "rank": 1,
+    "native_sr": 44100,
+    "tagger_classes": [
+      "Singing",
+      "Speech",
+      "Drum kit",
+      "Drum machine",
+      "Drum",
+      "Snare drum",
+      "Bass guitar"
+    ],
+    "tagger_classes_by_target": {
+      "vocals": ["Singing", "Speech"],
+      "drums": ["Drum kit", "Drum machine", "Drum", "Snare drum"],
+      "bass": ["Bass guitar"],
+      "other": []
+    }
+  },
+  {
+    "id": "4stem-c/htdemucs-ft",
+    "audio_separator_model": "htdemucs_ft.yaml",
+    "task": "multi-stem",
+    "targets": [
+      "vocals",
+      "drums",
+      "bass",
+      "other"
+    ],
+    "engine": "audio-separator",
+    "checkpoint_url": [
+      "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/f7e0c4bc-ba3fe64a.th",
+      "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/d12395a8-e57c48e6.th",
+      "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/92cfc3b6-ef3bcb9c.th",
+      "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/04573f0d-f3cf25b2.th"
+    ],
+    "sha256": [
+      "ba3fe64ae8ef66ac9a4857222ce48efbdc5eb3ad375cb79dd13debee5aaa4066",
+      "e57c48e6b0e38af4f7118d7bd08c49f0a0c0edf7d09143bdd902ea0d237303e6",
+      "ef3bcb9c8b40d14ae5d51b6db2587339cc12c6b77c0be151ce6d69002e087bf2",
+      "f3cf25b222c4eed7cd49dd8b2c9597d50c18bd154090f7b919cfa5f93cf22c49"
+    ],
+    "vram_gb": 0.0,
+    "rt_factor": null,
+    "benchmark": "Hybrid Transformer Demucs, fine-tuned 4-source. htdemucs_ft is upstream a bag-of-4 single-source models; checkpoint_url is the list of all 4 .th files @ dl.fbaipublicfiles.com/demucs/hybrid_transformer/ (Task 0.2 review flag \u2014 the registry schema accepts a list here). Run via the audio-separator env, which also resolves htdemucs_ft by name.",
+    "license": "MIT",
+    "rank": 2,
+    "tagger_classes": [
+      "Singing",
+      "Speech",
+      "Drum kit",
+      "Drum machine",
+      "Drum",
+      "Snare drum",
+      "Bass guitar"
+    ],
+    "tagger_classes_by_target": {
+      "vocals": ["Singing", "Speech"],
+      "drums": ["Drum kit", "Drum machine", "Drum", "Snare drum"],
+      "bass": ["Bass guitar"],
+      "other": []
+    }
+  },
+  {
+    "id": "vocals/melroformer",
+    "task": "single-target",
+    "targets": [
+      "vocals"
+    ],
+    "engine": "audio-separator",
+    "checkpoint_url": "https://huggingface.co/KimberleyJSN/melbandroformer/resolve/main/MelBandRoformer.ckpt",
+    "sha256": "87201f4d31afb5bc79993230fc49446918425574db48c01c405e44f365c7559e",
+    "vram_gb": 5.0,
+    "rt_factor": null,
+    "benchmark": "Mel-Band RoFormer vocal model (KimberleyJensen/KimberleyJSN, community-trained, widely used as audio-separator's default vocal model)",
+    "license": "MIT",
+    "rank": 1,
+    "tagger_classes": [
+      "Singing",
+      "Speech"
+    ]
+  },
+  {
+    "id": "6stem/bsroformer-sw",
+    "audio_separator_model": "BS-Roformer-SW.ckpt",
+    "task": "multi-stem",
+    "targets": [
+      "vocals",
+      "drums",
+      "bass",
+      "guitar",
+      "piano",
+      "other"
+    ],
+    "engine": "audio-separator",
+    "checkpoint_url": "https://huggingface.co/lainlives/audio-separator-models/resolve/main/BS-Roformer-SW.ckpt",
+    "sha256": "24e7d35ee9c64415673d3fd33e06a67cac2c103c5df6267ba1576459c775916e",
+    "vram_gb": 7.0,
+    "rt_factor": null,
+    "benchmark": "BS-Roformer-SW 6-stem (vocals/drums/bass/guitar/piano/other)",
+    "license": "unspecified (community checkpoint mirror; the original jarredou HF account that hosted this model was deleted 2026-06 - re-verify at pin time, Task 0.3)",
+    "rank": 1,
+    "tagger_classes": [
+      "Singing",
+      "Speech",
+      "Drum kit",
+      "Drum machine",
+      "Drum",
+      "Snare drum",
+      "Bass guitar",
+      "Guitar",
+      "Electric guitar",
+      "Acoustic guitar",
+      "Piano"
+    ],
+    "tagger_classes_by_target": {
+      "vocals": ["Singing", "Speech"],
+      "drums": ["Drum kit", "Drum machine", "Drum", "Snare drum"],
+      "bass": ["Bass guitar"],
+      "guitar": ["Guitar", "Electric guitar", "Acoustic guitar"],
+      "piano": ["Piano"],
+      "other": []
+    }
+  },
+  {
+    "id": "6stem-fallback/htdemucs-6s",
+    "audio_separator_model": "htdemucs_6s.yaml",
+    "task": "multi-stem",
+    "targets": [
+      "vocals",
+      "drums",
+      "bass",
+      "guitar",
+      "piano",
+      "other"
+    ],
+    "engine": "audio-separator",
+    "checkpoint_url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th",
+    "sha256": "34c22ccb381c6f9fdbf324f04e1e2fe21aaaf293f5ded163a162697ff9a02ddd",
+    "vram_gb": 0.0,
+    "rt_factor": null,
+    "benchmark": "Demucs htdemucs_6s official 6-source (guitar+piano added; upstream notes piano quality is weak)",
+    "license": "MIT",
+    "rank": 2,
+    "tagger_classes": [
+      "Singing",
+      "Speech",
+      "Drum kit",
+      "Drum machine",
+      "Drum",
+      "Snare drum",
+      "Bass guitar",
+      "Guitar",
+      "Electric guitar",
+      "Acoustic guitar",
+      "Piano"
+    ],
+    "tagger_classes_by_target": {
+      "vocals": ["Singing", "Speech"],
+      "drums": ["Drum kit", "Drum machine", "Drum", "Snare drum"],
+      "bass": ["Bass guitar"],
+      "guitar": ["Guitar", "Electric guitar", "Acoustic guitar"],
+      "piano": ["Piano"],
+      "other": []
+    }
+  },
+  {
+    "id": "guitar/melroformer-becruily",
+    "task": "single-target",
+    "targets": [
+      "guitar"
+    ],
+    "engine": "audio-separator",
+    "checkpoint_url": "https://huggingface.co/becruily/mel-band-roformer-guitar/resolve/main/becruily_guitar.ckpt",
+    "sha256": "83472bbf125774af5282d2e0b86df89eaf2dd45e8a4ec8d68e820ebf3e42a83c",
+    "vram_gb": 5.0,
+    "rt_factor": null,
+    "benchmark": "becruily guitar Mel-RoFormer (community)",
+    "license": "unspecified (community HF release, free download)",
+    "rank": 1,
+    "tagger_classes": [
+      "Guitar",
+      "Electric guitar",
+      "Acoustic guitar"
+    ]
+  },
+  {
+    "id": "drumsep",
+    "audio_separator_model": "MDX23C-DrumSep-aufr33-jarredou.ckpt",
+    "task": "drumkit-split",
+    "targets": [
+      "kick",
+      "snare",
+      "toms",
+      "hats",
+      "cymbals"
+    ],
+    "engine": "audio-separator",
+    "checkpoint_url": "https://huggingface.co/Politrees/UVR_resources/resolve/main/models/MDX23C/MDX23C-DrumSep-aufr33-jarredou.ckpt",
+    "sha256": "d2a4aa53eb584d21eead358a4e66d1882ad182911be018f052b5da73be9096d0",
+    "vram_gb": 4.0,
+    "rt_factor": null,
+    "benchmark": "MDX23C DrumSep (aufr33 + jarredou), community mirror (SDR ~10.8 avg per MSST-WebUI's copy of the same checkpoint)",
+    "license": "unspecified (community checkpoint, free redownload)",
+    "rank": 1,
+    "tagger_classes": [
+      "Drum kit",
+      "Drum machine",
+      "Drum",
+      "Snare drum",
+      "Hi-hat",
+      "Cymbal",
+      "Bass drum"
+    ],
+    "tagger_classes_by_target": {
+      "kick": ["Bass drum"],
+      "snare": ["Snare drum"],
+      "toms": [],
+      "hats": ["Hi-hat"],
+      "cymbals": ["Cymbal"]
+    }
+  },
+  {
+    "id": "drumkit-split/larsnet",
+    "task": "drumkit-split",
+    "targets": [
+      "kick",
+      "snare",
+      "toms",
+      "hats",
+      "cymbals"
+    ],
+    "engine": "audio-separator",
+    "checkpoint_url": "https://drive.google.com/uc?id=1U8-5924B1ii1cjv9p0MTPzayb00P4qoL&export=download",
+    "sha256": "2f821131f2e2f80be078f721f33ba8091dc3893963a2c4ed029c8cb62cc4513a",
+    "vram_gb": 4.0,
+    "rt_factor": null,
+    "benchmark": "LarsNet: parallel per-drum U-Nets, 5-stem drum demix, faster than real-time (paper: 'Toward Deep Drum Source Separation'). Google Drive host - Task 0.3 pin run must confirm the direct-download link still resolves without a confirmation-token prompt",
+    "license": "CC BY-NC 4.0",
+    "rank": 2,
+    "tagger_classes": [
+      "Drum kit",
+      "Drum machine",
+      "Drum",
+      "Snare drum",
+      "Hi-hat",
+      "Cymbal",
+      "Bass drum"
+    ],
+    "tagger_classes_by_target": {
+      "kick": ["Bass drum"],
+      "snare": ["Snare drum"],
+      "toms": [],
+      "hats": ["Hi-hat"],
+      "cymbals": ["Cymbal"]
+    }
+  },
+  {
+    "id": "dereverb/anvuew",
+    "audio_separator_model": "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt",
+    "task": "dereverb",
+    "targets": [
+      "vocals"
+    ],
+    "engine": "audio-separator",
+    "checkpoint_url": "https://huggingface.co/anvuew/dereverb_mel_band_roformer/resolve/main/dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt",
+    "sha256": "9262877b87e9ebb0fb808a456b0a411fa677f5df31c8383c1254af531c078970",
+    "vram_gb": 5.0,
+    "rt_factor": null,
+    "benchmark": "dereverb Mel-Band RoFormer, SDR 19.17 (vocal-only training domain; repo also ships 'less_aggressive' and 'mono' variants)",
+    "license": "unspecified (community HF release, free download)",
+    "rank": 1,
+    "tagger_classes": [
+      "Singing",
+      "Speech"
+    ]
+  },
+  {
+    "id": "tagger/panns-sed",
+    "task": "tagger",
+    "targets": [],
+    "engine": "panns",
+    "checkpoint_url": "https://zenodo.org/record/3987831/files/Cnn14_DecisionLevelMax_mAP%3D0.385.pth?download=1",
+    "sha256": "dd3b4043a87d4ec13df8082c0fcfee3fb5084151808e47e060987a95eabdd142",
+    "vram_gb": 0.0,
+    "rt_factor": null,
+    "benchmark": "Cnn14_DecisionLevelMax framewise SED, mAP 0.385 (AudioSet). Task 2.2's \u00a715.6 script (scripts/pick_sed_head.py) scored Max/Avg/Att frame-F1 on the desktop fixture set (docs/pins/2026-07-model-pins.md, pin run d); the three heads tied exactly (panns-inference only loads the DecisionLevelMax architecture regardless of head today) and the tie resolved to DecisionLevelAtt per \u00a715.6.",
+    "license": "MIT",
+    "rank": 1,
+    "tagger_classes": [],
+    "head": "DecisionLevelAtt"
+  },
+  {
+    "id": "chord/btc-large-voca",
+    "task": "chord",
+    "targets": [
+      "chord"
+    ],
+    "engine": "btc",
+    "checkpoint_url": "https://github.com/jayg996/BTC-ISMIR19/raw/master/test/btc_model_large_voca.pt",
+    "sha256": "1673d23f8f9a55ae7f9e8b80a51da616debb22675b8d8b67ea6ce0ef37b0ab51",
+    "vram_gb": 2.0,
+    "rt_factor": null,
+    "benchmark": "BTC large-voca, 170-class chord vocabulary (ISMIR 2019). Verified: btc_model_large_voca.pt is committed directly in the repo's test/ dir (matches spec's 'ckpt in-repo' note) - no separate release asset needed",
+    "license": "MIT",
+    "rank": 1,
+    "tagger_classes": []
+  },
+  {
+    "id": "chord/musicxlab-ismir2019",
+    "task": "chord",
+    "targets": [
+      "chord"
+    ],
+    "engine": "musicxlab",
+    "checkpoint_url": null,
+    "sha256": null,
+    "vram_gb": 1.5,
+    "rt_factor": null,
+    "benchmark": "music-x-lab ISMIR2019 large-vocabulary chord transcription via chord structure decomposition (extensions + inversions). checkpoint_url intentionally null: the repo ships no in-repo checkpoint; the only Google Drive link found in the README is explicitly the 'with label reweighting' variant, not confidently this entry's default - needs verification at Task 9.1's pin run",
+    "license": "MIT",
+    "rank": 2,
+    "engine_status": "no-engine",
+    "engine_status_note": "Task 9.1 pin run: no pinnable, no-auth checkpoint exists for this entry (checkpoint_url stays null - the only upstream Google Drive link is the 'with label reweighting' variant, not confidently this default; cannot be sha256-pinned). MusicXLabChordModel is implemented as a ChordModel-protocol SKELETON (analysis/harmony.py) so the rank-2 cross-check seam is real the day a checkpoint is pinned; resolve() skips this entry until then (D12 precedent), and the §13 disagreement path is exercised by a scripted stub, never a fabricated checkpoint.",
+    "tagger_classes": []
+  },
+  {
+    "id": "chord/internal-baseline",
+    "task": "chord",
+    "targets": [
+      "chord"
+    ],
+    "engine": "internal",
+    "checkpoint_url": null,
+    "sha256": null,
+    "vram_gb": 0.0,
+    "rt_factor": null,
+    "benchmark": null,
+    "license": "MIT",
+    "rank": 3,
+    "tagger_classes": []
+  },
+  {
+    "id": "lyrics/faster-whisper-large-v3",
+    "task": "lyrics-asr",
+    "targets": [
+      "lyrics"
+    ],
+    "engine": "fasterwhisper",
+    "checkpoint_url": [
+      "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/model.bin",
+      "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/tokenizer.json",
+      "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/vocabulary.json",
+      "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/config.json",
+      "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/preprocessor_config.json"
+    ],
+    "sha256": [
+      "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1",
+      "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca",
+      "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+      "a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9",
+      "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711"
+    ],
+    "vram_gb": 6.0,
+    "rt_factor": null,
+    "benchmark": "faster-whisper large-v3 (CTranslate2, FP16), word timestamps. Full CT2 snapshot pinned (Task 8.1/infra fix wave 1): model.bin (3.09 GB) plus the tokenizer.json/vocabulary.json/config.json/preprocessor_config.json sidecars from the same Systran/faster-whisper-large-v3 repo - all 5 required for WhisperModel to load; hashes recorded from the files already present in checkpoint_dir (fetched ad hoc by Task 8.1's desktop smoke), positionally matched to the url list above",
+    "license": "MIT",
+    "rank": 1,
+    "tagger_classes": []
+  },
+  {
+    "id": "transcribe/basic-pitch",
+    "task": "transcription",
+    "targets": [
+      "notes"
+    ],
+    "engine": "basicpitch",
+    "checkpoint_url": null,
+    "sha256": null,
+    "vram_gb": 0.0,
+    "rt_factor": null,
+    "benchmark": "basic-pitch (Spotify), instrument-agnostic note transcription. checkpoint_url intentionally null: weights ship inside the basic-pitch PyPI package itself (basic_pitch/saved_models/) - nothing separate to fetch",
+    "license": "Apache-2.0",
+    "rank": 1,
+    "tagger_classes": []
+  }
+]

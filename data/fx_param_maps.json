@@ -1,0 +1,94 @@
+{
+  "_notes": "v1 param map for the §8 step 3 FX apply loop (Task 11.1). LIVE-VERIFIED 2026-07-25 against REAPER 7.78/x64 via the bridge (get_fx_params full dumps on real instances): every 'live_verified': true index below was read back from the actual plugin, and the JSFX TrackFX_AddByName strings all resolved as-is (real fx_name comes back 'JS: <name>'). Entries whose UNIT/RANGE semantics remain approximate say so in their notes — an index can be verified while the min/max normalized taper is still an engineering estimate. Unmapped plugins/params never get a guessed index -- tools/mix.py routes them to the human-instructions path instead.",
+  "_to_normalized_formulas": {
+    "linear": "norm = (value - min) / (max - min)",
+    "log": "norm = log(value / min) / log(max / min)  -- for frequency-type (Hz) params, which are perceived/tapered in octaves, not linearly"
+  },
+  "ReaEQ": {
+    "notes": "LIVE 7.78 layout (default 5-band instance): idx 0-2 Low Shelf, 3-5 Band 2 (the first BELL), 6-8 Band 3, 9-11 High Shelf 4, 12-14 High Pass 5, 15 Global Gain, 16 Bypass, 17 Wet, 18 Delta. The apply layer's 'bell' therefore targets BAND 2 (3/4/5) -- the original band-1 assumption was wrong (band 1 is a shelf). 'q' maps to 'BW-Band 2', which REAPER expresses as BANDWIDTH IN OCTAVES, not Q -- unit below reflects that; the min/max taper is approximate (index verified, range estimate). TRAP (live 2026-07-27, vocal-match session): the High Pass 5 band's params are SETTABLE but INERT in a default instance -- per-band ENABLE is not an automatable param and band 5 ships disabled, so a programmatic HPF silently does nothing (values read back fine; render proves no DSP). Bands 1-4 (low shelf, both bells, high shelf) ARE enabled by default -- render-verified. For a programmatic low cut use the LOW SHELF (0-2) with negative gain instead.",
+    "params": {
+      "freq": {"index": 3, "unit": "hz", "min": 20.0, "max": 20000.0, "to_normalized": "log", "live_verified": true},
+      "gain": {"index": 4, "unit": "db", "min": -24.0, "max": 24.0, "to_normalized": "linear", "live_verified": true},
+      "q": {"index": 5, "unit": "oct", "min": 0.1, "max": 4.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
+  "ReaComp": {
+    "notes": "Single-band stock compressor. LIVE 7.78: Threshold(0)/Ratio(1)/Attack(2)/Release(3) confirmed EXACTLY as mapped -- the review's suspected thr/attack/release/ratio ordering was wrong. 'makeup_gain' repointed to idx 11 'Wet' (the output gain; idx 4 is 'Pre-comp', not makeup); its dB range/taper is approximate (index verified).",
+    "params": {
+      "threshold": {"index": 0, "unit": "db", "min": -60.0, "max": 12.0, "to_normalized": "linear", "live_verified": true},
+      "ratio": {"index": 1, "unit": "ratio", "min": 1.0, "max": 20.0, "to_normalized": "linear", "live_verified": true},
+      "attack": {"index": 2, "unit": "ms", "min": 0.01, "max": 500.0, "to_normalized": "linear", "live_verified": true},
+      "release": {"index": 3, "unit": "ms", "min": 10.0, "max": 5000.0, "to_normalized": "linear", "live_verified": true},
+      "makeup_gain": {"index": 11, "unit": "db", "min": -24.0, "max": 12.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
+  "ReaDelay": {
+    "notes": "LIVE 7.78 layout: 0 Wet, 1 Dry, then PER-TAP params from idx 2 ('1: Enabled', default-on for tap 1): 3 '1: Length (time)', 4 '1: Length (musical)', 5 '1: Feedback', 6 Lowpass, 7 Hipass, 8 Resolution, 9 Stereo width, 10 Volume, 11 Pan, then 12 Bypass/13 Wet/14 Delta. 'time' = tap-1 time-length; 'time_musical' = the musical-division length rule 11's tempo-snap wants (set ONE of the two, not both); 'level' = global Wet (0). Tap-1 ms/ratio tapers approximate (indices verified).",
+    "params": {
+      "time": {"index": 3, "unit": "ms", "min": 0.0, "max": 3000.0, "to_normalized": "linear", "live_verified": true},
+      "time_musical": {"index": 4, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true},
+      "feedback": {"index": 5, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true},
+      "level": {"index": 0, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
+  "ReaVerb": {
+    "notes": "ReaVerb is convolution-based (impulse-response driven) in its full UI, not a simple algorithmic reverb -- this map exposes only the wet/dry mix knob, which is the one control the §8 apply loop needs (reverb intents recommend a curated free algorithmic reverb -- §8.1 -- for anything beyond a wet-level nudge on an already-loaded IR). LIVE 7.78: 0 Wet confirmed (1 Dry, 2 Pre-verb, 3 Max FFT size, 4 Width, 5 Pan, ...).",
+    "params": {
+      "wet": {"index": 0, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
+  "ReaXcomp": {
+    "notes": "Multiband compressor, PER-BAND params. LIVE 7.78 band-1 layout (12 params per band): 0 '1-Band top frequency', 1 '1-Gain', 2 '1-Threshold', 3 '1-Ratio', 4 '1-Knee', 5 '1-Attack', 6 '1-Release', 7 '1-RMS', 8 '1-Make Up Gain', 9 '1-Auto Release', 10 '1-FeedBack Detector', 11 '1-Active' (band 2 starts at 12). The original 0..4 mapping was entirely wrong and is corrected below. Rule 13 (de-ess) still requires configuring the band's frequency range: 'band_top_freq' (0) sets band 1's upper edge -- a 5-9 kHz de-ess band needs band edges set via top-freqs (UI or this param), see rule 13's docs. Tapers approximate (indices verified).",
+    "params": {
+      "band_top_freq": {"index": 0, "unit": "hz", "min": 20.0, "max": 20000.0, "to_normalized": "log", "live_verified": true},
+      "threshold": {"index": 2, "unit": "db", "min": -60.0, "max": 12.0, "to_normalized": "linear", "live_verified": true},
+      "ratio": {"index": 3, "unit": "ratio", "min": 1.0, "max": 20.0, "to_normalized": "linear", "live_verified": true},
+      "attack": {"index": 5, "unit": "ms", "min": 0.01, "max": 500.0, "to_normalized": "linear", "live_verified": true},
+      "release": {"index": 6, "unit": "ms", "min": 10.0, "max": 5000.0, "to_normalized": "linear", "live_verified": true},
+      "gain": {"index": 8, "unit": "db", "min": -24.0, "max": 24.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
+  "Transient Control": {
+    "notes": "Stock JSFX transient shaper. LIVE 7.78: TrackFX_AddByName('Transient Control') resolves to 'JS: Transient Controller'; params 0 'Attack (%)', 1 'Sustain (%)', 2 'Output (dB)'. Units are PERCENT (not dB as originally guessed); min/max tapers approximate (indices + name verified).",
+    "params": {
+      "attack": {"index": 0, "unit": "pct", "min": 0.0, "max": 200.0, "to_normalized": "linear", "live_verified": true},
+      "sustain": {"index": 1, "unit": "pct", "min": 0.0, "max": 200.0, "to_normalized": "linear", "live_verified": true},
+      "output": {"index": 2, "unit": "db", "min": -24.0, "max": 24.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
+  "Saturation": {
+    "notes": "Stock JSFX saturator. LIVE 7.78: resolves to 'JS: Saturation'; params 0 'Amount (%)', 1 'Bypass', 2 'Wet', 3 'Delta'. 'mix' repointed from 1 (Bypass -- the original guess would have BYPASSED the plugin instead of mixing) to 2 'Wet'.",
+    "params": {
+      "drive": {"index": 0, "unit": "pct", "min": 0.0, "max": 100.0, "to_normalized": "linear", "live_verified": true},
+      "mix": {"index": 2, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
+  "ReaPitch": {
+    "notes": "Stock pitch shifter, PER-SHIFTER params from idx 2 ('1: Enabled', default-on): 3 '1: Shift (full range)', 4 '1: Shift (cents)', 5 '1: Shift (semitones)', 6 '1: Shift (oct)', 7-9 formant, 10 '1: Volume', 11 '1: Pan'; 0 Wet (default 0.5 = unity), 1 Dry (default 0). LIVE 7.78 2026-07-27, EMPIRICALLY CALIBRATED via ReaSynth A4 tone renders through the bridge: 'semitones' is exactly linear at 36 st/unit centered on 0.5 -> range -18..+18 st (measured +8.998 st @ 0.75, +17.998 @ 1.00); 'cents' range -200..+200 (measured +197.9 @ 1.00 -- small shifter-algorithm deviation, sub-audible at detune depths). These are MEASURED tapers, not estimates. Sliders are additive; set ONE of cents/semitones per intent (detune -> cents, harmony -> semitones).",
+    "params": {
+      "cents": {"index": 4, "unit": "cents", "min": -200.0, "max": 200.0, "to_normalized": "linear", "live_verified": true},
+      "semitones": {"index": 5, "unit": "st", "min": -18.0, "max": 18.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
+  "ReaTune": {
+    "notes": "Stock tuner/pitch-corrector. LIVE 7.78 2026-07-27: exposes ONLY Bypass(0)/Wet(1)/Delta(2) as automatable params -- the actual correction controls (mode, key/scale, attack speed) are UI-ONLY and cannot be set via TrackFX_SetParamNormalized. add_fx_by_name works; any set_fx_param attempt correctly routes to the human-instructions path (unmapped_param). Hard-tune recipe for the human: Correction tab -> enable 'Automatic pitch correction', set key/scale, drag 'Attack time' to minimum for the robotic hard-tuned effect.",
+    "params": {}
+  },
+  "Surge XT": {
+    "notes": "Free open-source synth (VST3i, 2858 params), installed + LIVE-CALIBRATED 2026-07-30 on Surge XT 1.3.4 / REAPER 7.78. Scene-A subset only (init patch is scene A). INIT-PATCH TRAP: 'A Filter 1 Type' (idx 317) ships at 0.005 = OFF -- the cutoff knob does NOTHING until a type is engaged; normalized 0.05 selects the first lowpass (79 dB high-harmonic attenuation verified by render), 0.15 is already a non-lowpass type. 'filter1_cutoff' taper EMPIRICALLY FITTED via A1-saw harmonic renders: f = ~6 * 2^(11v) Hz (measured 110/275/1265 Hz at v=0.35/0.5/0.7) -> log taper min 6, max 12500. EG attack/release tapers use Surge's 2^x-seconds scale (log min 0.004s max 32s, ESTIMATE -- indices live-dumped, taper not yet render-verified). Macros are M1-M8 at indices 0-7 (unassigned '-' in init patch; assignment is UI-side). Other landmark indices (live dump): Global Volume 12, A Volume 237, Osc1 Shape/Width1 259/260, Osc volumes 292/296/300, Filter2 type/cutoff/res 323/325/326, FEG Mod Amount 321.",
+    "params": {
+      "filter1_type": {"index": 317, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true},
+      "filter1_cutoff": {"index": 319, "unit": "hz", "min": 6.0, "max": 12500.0, "to_normalized": "log", "live_verified": true},
+      "filter1_resonance": {"index": 320, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true},
+      "amp_attack": {"index": 329, "unit": "s", "min": 0.004, "max": 32.0, "to_normalized": "log", "live_verified": true},
+      "amp_release": {"index": 334, "unit": "s", "min": 0.004, "max": 32.0, "to_normalized": "log", "live_verified": true},
+      "osc1_shape": {"index": 259, "unit": "ratio", "min": 0.0, "max": 1.0, "to_normalized": "linear", "live_verified": true}
+    }
+  },
+  "Stereo Width": {
+    "notes": "Stock JSFX mid/side widener. LIVE 7.78: resolves to 'JS: Stereo Width'; params 0 'Width Boost (dB)', 1 'Center Boost (dB)', 2 'Gain (dB)', 3 'Width Balance (%)', 4 'Width Rotation (deg)'. 'width' is a dB BOOST (unit corrected from pct); taper approximate (index + name verified).",
+    "params": {
+      "width": {"index": 0, "unit": "db", "min": -24.0, "max": 24.0, "to_normalized": "linear", "live_verified": true}
+    }
+  }
+}

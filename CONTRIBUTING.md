@@ -18,6 +18,12 @@ uv run pytest
 uv run ruff check .
 ```
 
+On a machine with an NVIDIA GPU, use `--extra separation` instead of `--extra analysis`. It
+includes everything in `analysis` plus stem separation and lyrics, with the CUDA build of torch.
+The two extras pin different torch builds, so don't switch between them in one environment. On
+2026-07-30, `--extra analysis` swapped the CUDA torch for the CPU one and broke torchaudio and
+faster-whisper until a `uv sync --locked --extra separation --extra dev` restored it.
+
 The analysis and theory layers are **protocol-independent pure functions** (`src/orpheus_mcp/analysis/`, `src/orpheus_mcp/theory/`) — they're unit-testable without REAPER running. Most logic should live there; the `tools/` layer is a thin FastMCP wrapper.
 
 ## Architecture & tool conventions

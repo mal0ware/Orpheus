@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "rule_id": 1,
+      "trigger": {"descriptor": "band_2000_5000_db", "op": "delta_gt", "value": 3.0},
+      "intent": "presence_boost",
+      "apply": {"plugin": "ReaEQ", "shape": "bell", "freq_hz": 3500, "gain_from": "delta"},
+      "explanation": "The reference has {delta:+.1f} dB more presence (2-5 kHz); a bell boost at 3.5 kHz closes it.",
+      "vocal_only": false,
+      "inventory_keywords": ["eq", "nova", "pro-q", "slickeq", "fabfilter"]
+    },
+    {
+      "rule_id": 2,
+      "trigger": {"descriptor": "band_200_400_db", "op": "delta_lt", "value": -3.0},
+      "intent": "mud_cut",
+      "apply": {"plugin": "ReaEQ", "shape": "bell_cut", "freq_hz": 300, "gain_from": "delta"},
+      "explanation": "The reference is {delta:+.1f} dB leaner around 200-400 Hz; a cut near 300 Hz clears the mud.",
+      "vocal_only": false,
+      "inventory_keywords": ["eq", "nova", "pro-q", "slickeq"]
+    },
+    {
+      "rule_id": 3,
+      "trigger": {"descriptor": "band_10000_16000_db", "op": "delta_gt", "value": 3.0},
+      "intent": "air_shelf",
+      "apply": {"plugin": "ReaEQ", "shape": "high_shelf", "freq_hz": 12000, "gain_from": "delta"},
+      "explanation": "The reference has {delta:+.1f} dB more air (10-16 kHz); a high shelf at 12 kHz closes it.",
+      "vocal_only": false,
+      "inventory_keywords": ["eq", "nova", "slickeq", "span"]
+    },
+    {
+      "rule_id": 4,
+      "trigger": {"descriptor": "band_100_250_db", "op": "delta_gt", "value": 3.0},
+      "intent": "warmth_shelf",
+      "apply": {"plugin": "ReaEQ", "shape": "low_shelf", "freq_hz": 180, "gain_from": "delta"},
+      "explanation": "The reference is {delta:+.1f} dB fuller around 100-250 Hz; a low shelf at 180 Hz closes it.",
+      "vocal_only": false,
+      "inventory_keywords": ["eq", "nova", "slickeq"]
+    },
+    {
+      "rule_id": 5,
+      "trigger": {"descriptor": "tilt_db_per_oct", "op": "delta_gt", "value": 1.5},
+      "intent": "tilt",
+      "apply": {
+        "plugin": "ReaEQ",
+        "shape": "two_shelf",
+        "low_freq_hz": 180,
+        "high_freq_hz": 6000,
+        "gain_from": "delta"
+      },
+      "explanation": "The reference's spectral tilt is {delta:+.1f} dB/oct brighter; a two-shelf tilt correction closes it.",
+      "vocal_only": false,
+      "inventory_keywords": ["eq", "nova", "slickeq"]
+    },
+    {
+      "rule_id": 6,
+      "trigger": {"descriptor": "attack_ms_p50", "op": "abs_delta_gt", "value": 5.0},
+      "intent": "transient_snap",
+      "apply": {"plugin": "JS: transient controller", "param": "attack", "gain_from": "delta"},
+      "explanation": "Median attack time differs by {delta:+.1f} ms; a transient shaper snaps/softens attacks to match.",
+      "vocal_only": false,
+      "inventory_keywords": ["transient", "punch", "oxford"]
+    },
+    {
+      "rule_id": 7,
+      "trigger": {"descriptor": "crest_db", "op": "delta_lt", "value": -4.0},
+      "intent": "compression",
+      "apply": {"plugin": "ReaComp", "ratio_from": "delta", "attack_ms": 10, "release_ms": 100},
+      "explanation": "The reference's crest factor is {delta:+.1f} dB tighter; compression (ratio/attack derived from the delta) closes it.",
+      "vocal_only": false,
+      "inventory_keywords": ["comp", "compressor", "kotelnikov", "xfer", "ott"]
+    },
+    {
+      "rule_id": 8,
+      "trigger": {"descriptor": "even_db", "op": "delta_gt", "value": 3.0},
+      "intent": "saturation_warm_even",
+      "apply": {"plugin": "JS: Airwindows Consolidated", "flavor": "tape", "drive_from": "delta"},
+      "explanation": "The reference has {delta:+.1f} dB more even-harmonic energy; tape/tube-flavored saturation closes it.",
+      "vocal_only": false,
+      "inventory_keywords": ["satur", "tape", "airwindows", "chow"]
+    },
+    {
+      "rule_id": 9,
+      "trigger": {"descriptor": "odd_db", "op": "delta_gt", "value": 3.0},
+      "intent": "saturation_drive_odd",
+      "apply": {"plugin": "JS: Airwindows Consolidated", "flavor": "drive", "drive_from": "delta"},
+      "explanation": "The reference has {delta:+.1f} dB more odd-harmonic energy; drive/clip-flavored saturation closes it.",
+      "vocal_only": false,
+      "inventory_keywords": ["satur", "drive", "clip", "airwindows"]
+    },
+    {
+      "rule_id": 10,
+      "trigger": {"descriptor": "width_mid", "op": "abs_delta_gt", "value": 0.10},
+      "intent": "widen",
+      "apply": {
+        "plugin": "JS: stereo width",
+        "band": "mid",
+        "width_from": "delta",
+        "mono_safety_corr_min": 0.5
+      },
+      "cfg_params": {"mono_safety_corr_min": "WIDEN_MONO_SAFETY_CORR_MIN"},
+      "explanation": "Mid-band M/S width differs by {delta:+.2f}; a band-scoped width adjustment (widen when the reference is wider, narrow when yours is) closes it (mono-safety checked post-apply).",
+      "vocal_only": false,
+      "inventory_keywords": ["width", "widen", "wider", "polyverse"]
+    },
+    {
+      "rule_id": 11,
+      "trigger": {"descriptor": "delay_ms", "op": "present_in_a_only", "min_conf": 0.5},
+      "intent": "delay",
+      "apply": {
+        "plugin": "ReaDelay",
+        "time_snap": "project_tempo",
+        "feedback_from": "reference",
+        "mix_from": "reference"
+      },
+      "tail_sensitive": true,
+      "explanation": "An echo (~{delay_ms:.0f} ms in the reference, confidence {delay_conf:.2f}) is absent from the user's track; ReaDelay, snapped to the nearest musical division of the user's project, closes it.",
+      "vocal_only": false,
+      "inventory_keywords": ["delay", "echo", "readelay", "supermassive"]
+    },
+    {
+      "rule_id": 12,
+      "trigger": {
+        "op": "joint",
+        "of": [
+          {"descriptor": "reverb_wet_dry", "op": "delta_gt", "value": 0.15},
+          {"descriptor": "reverb_rt60_class", "op": "differs"}
+        ]
+      },
+      "intent": "reverb",
+      "apply": {
+        "plugin": "ReaVerb",
+        "ir_bank": "bundled",
+        "size_from": "reverb_rt60_class",
+        "mix_from": "reverb_wet_dry"
+      },
+      "tail_sensitive": true,
+      "explanation": "The reference is {reverb_wet_dry_delta:+.2f} wetter with a different decay class ({reverb_rt60_class_a} vs {reverb_rt60_class_b}); ReaVerb with a matched bundled IR closes it.",
+      "vocal_only": false,
+      "inventory_keywords": ["reverb", "valhalla", "dragonfly", "verb"]
+    },
+    {
+      "rule_id": 13,
+      "trigger": {"descriptor": "band_5000_9000_dyn_db", "op": "abs_delta_gt", "value": 2.0},
+      "intent": "de_ess",
+      "apply": {
+        "plugin": "ReaXcomp",
+        "band_lo_hz": 5000,
+        "band_hi_hz": 9000,
+        "threshold_from": "delta"
+      },
+      "explanation": "5-9 kHz dynamic variation (sibilance) differs by {delta:+.1f} dB on this vocal; a ReaXcomp de-ess band closes it.",
+      "vocal_only": true,
+      "inventory_keywords": ["de-ess", "deess", "xcomp", "nova"]
+    },
+    {
+      "rule_id": 14,
+      "trigger": {
+        "op": "joint",
+        "of": [
+          {"descriptor": "lufs_i", "op": "delta_gt", "value": 2.0},
+          {"descriptor": "crest_db", "op": "delta_lt", "value": -2.0}
+        ]
+      },
+      "intent": "limiting",
+      "apply": null,
+      "requires_opt_in": "master_bus",
+      "explanation": "The reference is {lufs_i_delta:+.1f} LUFS louder with {crest_db_delta:+.1f} dB less crest; loudness/limiting on the MASTER BUS ONLY, with explicit opt-in, closes it.",
+      "vocal_only": false,
+      "inventory_keywords": ["limit", "loudness", "kotelnikov"]
+    }
+  ]
+}

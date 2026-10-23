@@ -2,6 +2,12 @@
 
 > This document is the result of reading the actual source of the leading AI-DAW projects in mid-2026. It maps the landscape, credits what each project does right, isolates the white space, and states exactly what Orpheus aggregates and where it goes further. It is the design substrate for the whole repo.
 
+> **Dated note (2026-10-23).** This survey was written in June 2026, when Orpheus's pitch was the
+> style-fingerprint "analyze → recommend → apply" loop. The project's definition has since changed
+> ([definition](specs/2026-10-23-orpheus-definition-design.md)), and Matchering is no longer a
+> dependency; it may return as an optional extra for master matching. The survey itself is kept
+> as written.
+
 ## TL;DR
 
 There is a thriving, fast-moving ecosystem of MCP servers that let an AI agent build music inside a DAW by natural language. After fetching and reading the actual source of the leading projects, one conclusion is unambiguous: **the CONSTRUCTION half ("build me a track") is a solved, beloved, even viral pattern — and the ANALYZE → RECOMMEND-WITH-REASONS → APPLY half is completely unclaimed whitespace.** No shipping server can look at your existing project, tell you *why* it sounds the way it does, propose concrete reasoned changes toward a reference, and apply them back as editable tracks. That loop is Orpheus's reason to exist.

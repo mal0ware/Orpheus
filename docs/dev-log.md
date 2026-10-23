@@ -4,6 +4,215 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-10-23 — Definition agreed, docs caught up, environment repaired (branch `feat/reference-analysis`)
+
+**Definition.** Orpheus keeps Claude in sync with the owner's REAPER session, first and foremost
+(the owner's words: "first and foremost REAPER synced, but it should be all of those"). Sync means
+four things: REAPER is home base, Orpheus always knows the session, bars follow REAPER's tempo and
+meter map, and the Google Sheet stays in step. On top of that it listens (project + owned audio),
+explains, and works in the session, asking first and keeping every change undoable. It's built for
+one songwriter-producer whose lyrics live in Google Sheets. Every decision is in [`specs/2026-10-23-orpheus-definition-design.md`](specs/2026-10-23-orpheus-definition-design.md):
+Claude reads the sheet through the Drive connector (Orpheus never talks to Google); Orpheus will
+parse the owner's chord-chart and bass-tab notation; lyric-engine folds into Orpheus as a
+beat-map/OTIO export (the repo gets archived later, on a separate OK); non-commercial backends are
+switched on per name with `ORPHEUS_NC_BACKENDS`; the Mac had no unpushed work.
+
+**Done today:**
+- `server.py` loads its MCP instructions from `data/instructions/00_core.md` (rewritten). Before,
+  the hard-coded text pointed Claude at `recommend_changes`/`apply_changes`, stubs outside the
+  default profile, and 00_core.md was loaded by nothing. `tests/test_server_instructions.py` fails
+  if the instructions name a tool the default profile doesn't register.
+- Matchering (GPL-3.0) removed from core dependencies. Nothing imported it. Re-lock dropped
+  matchering, patsy and statsmodels; resampy left the environment with them (nothing uses it).
+- README, architecture and roadmap rewritten to the definition. The README no longer implies the
+  fifteen bridge-only verbs are MCP tools, and no longer says Orpheus "vendors" Matchering.
+
+**Environment drift found and repaired.** The first full run today gave 12 failures and a native
+crash on exit (code 139). The failures were order-dependent: each test passed alone. Cause: on
+2026-07-30 18:38 the venv had been synced with `--extra analysis`, which swapped torch
+2.6.0+cu124 for 2.13.0+cpu (left next to torchaudio 2.6.0+cu124, whose native library then failed
+to load) and set setuptools to 83 (no `pkg_resources`, so faster-whisper failed to import). The
+failing tests all died inside torch's own `__init__` (`partially initialized module 'torch' has
+no attribute 'library'`); most likely an earlier, swallowed failed import of torchaudio left torch
+half-loaded. The exact chain wasn't traced, because the repair made it moot. Fix: `uv sync --locked --extra separation --extra dev`
+swapped three packages back (torch, setuptools, sympy) from uv's cache. Rule for this desktop:
+always that sync; never `--extra analysis`. CONTRIBUTING now says so.
+
+**Numbers (2026-10-23):** 787 tests collected; 768 passed, 2 skipped, 14 deselected (`-m "not
+desktop and not gpu"`); 368 Lua handler checks pass; ruff and mypy clean. 54 tools in the default
+profile (65 in `full`), 37 bridge verbs plus `__batch__`.
+
+**Next** (spec §4): merge into `main` on the owner's OK, then the bug-fix branch (request ids,
+ASR device guard, cp1252 reader, section naming, JSFX envelope scale, `add_vst_path_and_rescan`)
+with the YuE2 test on the 3080 alongside it, then REAPER sync (timeline read, tempo/meter-map
+bars, heartbeat v2, hand-edit detection), then the lead sheet and ABC, then sheet↔REAPER sync.
+
+---
+
+## 2026-07-25 → 08-01 — Live in REAPER 7.78, first real-music run, vocal session, fifteen new verbs
+
+Recorded at the time in [`pins/2026-07-model-pins.md`](pins/2026-07-model-pins.md) and the
+gitignored `.superpowers/sdd/progress-refanalysis.md`; summarised here.
+
+**07-25, live smoke on REAPER 7.78.** All eight FX parameter maps read back from real plugin
+instances: three had wrong indices (ReaEQ, ReaDelay, ReaXcomp) and Saturation's "mix" pointed at
+bypass; all corrected and marked `live_verified` (63d362e). The WAV-32f render blob was wrong
+(rendered 24-bit); the minimal blob renders float (88ad409). `render_track_region` rendered exact
+durations and restored solos every time, and the silence check correctly refused a silent region.
+Still open: no master-track addressing, so the master can't be rendered.
+
+**07-25, first real-music run** on an owned 200 s mp4 (mp4 input added, e2444f7). Decode 0.5 s,
+recon 21 s, PANNs timeline 4 s on GPU, SCNet-XL 4-stem 44 s (real-time factor 0.22), CPU Whisper +
+alignment 170 s for 152 s of vocals; 327 words; `locate_lyric` found all three occurrences of the
+hook at score 1.00. Calibration evidence: PANNs under-fires on a loud master (singing peaked 0.064
+against a 0.30 threshold) and gate 1 read −14.2 dB where it passes at −20. Three new issues,
+carried to 2026-10: production ASR auto-picks CUDA and aborts natively on this PC; a cp1252
+`UnicodeDecodeError` in a subprocess reader thread; section naming merged everything into
+"verse 1". The cuDNN probe added that day (88ee4af, a275f67, c7c9947) protects only pytest.
+
+**07-26/27, stems into the project.** `import_audio_files` (3a8f57e, 67913de), live-verified 4/4
+stems. A later `set_tempo` stretched them to "half speed" because items were on beat timebase;
+fixed by pinning time base and play rate 1.0 on import (f4394e9, live-verified).
+`clone_track_items` and `set_track_params` (27c317d) built a lead plus doubles and a harmony from
+one take. ReaPitch and ReaTune were calibrated by rendering a test tone and measuring it: ReaPitch
+shift is linear over ±18 semitones; ReaTune exposes only bypass/wet/delta, so pitch-correction
+setup is a human step. Traps pinned: ReaEQ's high-pass band is settable but inert by default (use
+the low shelf), and saturation after a high-cut regenerates the cut band, so band-limiting goes
+last. New verbs `nudge_take_offset`, `clone_item_region`, `trim_track_items`, and **hot reload**
+(ae3e694): the bridge re-reads its own file and swaps handlers live.
+
+**07-30, analysis and tidy-up.** Automation-envelope verbs (bb0f6db), section-diff analysis of
+repeated sections (450140c) with an honest "inconclusive" verdict when repetitions don't line up
+(f8c62c0), `refresh_media` after replacing a file on disk (269a331; REAPER otherwise renders
+silence from its header cache), Surge XT calibrated map (28fcffe), `move_track`, `rebuild_peaks`,
+`set_track_color`, `rename_track`, `add_region`, `set/get_fx_preset`, `delete_track`, and UTF-8
+IPC on the client side (bedbbce; an em dash crashed the cp1252 default). Vocal tuning was done
+with a PSOLA pipeline run outside Orpheus (`uv run --with praat-parselmouth`); a natural
+note-centre retune replaced an "autotune" first pass after the owner's feedback.
+
+**07-30/31, rebuilding the band as MIDI.** 3045 transcribed notes (bass by pitch tracking, keys via
+basic-pitch, drums by band-classified onsets) were written with `insert_midi_notes`, then refined:
+bass re-segmented and verified against render metrics; drums re-transcribed in the two filtered
+pre-choruses the first pass missed. `add_sampler_zones` (602a5d9, 528e55e, 786505d) builds
+RS5k instruments from owned one-shots: mode 2 is required for pitch tracking, and an "obey note-off"
+flag stops long samples. A PANNs listening check now judges every render, and it confirmed the
+owner's complaints (one version heard as organ, another as synthesizer). The final guitar and bass
+use FreePats CC0 samples. An envelope on a JSFX parameter landed at the wrong scale (1.0 arrived as
+0.01), flagged VERIFY-LIVE and carried to 2026-10.
+
+**Third-party text fetched.** On 07-30/31, guitar and bass tabs for the reference song were read
+from Ultimate Guitar and UkuTabs to cross-check the transcriptions (98% agreement with the
+measured bass). This was text only; no audio was fetched.
+
+**08-01, stopped.** The owner had been hearing tuned vocals over the rebuilt MIDI band since the
+first MIDI demo, so solo-render checks could never catch the gap with the record; every iteration
+made a better karaoke band. The known-good mix was restored (reference instrumental up, MIDI band
+muted and kept as an editable layer). **Lesson: MIDI rebuilt from a produced master is an editable
+sketch, not a replacement. Say so before the experiment, not after six iterations.**
+
+---
+
+## 2026-07-24 — Reference Analysis Engine BUILT (Phases 0–12, branch `feat/reference-analysis`)
+
+The whole engine designed in the 2026-07-22 spec is now implemented, on `feat/reference-analysis`,
+against `docs/plans/2026-07-23-reference-analysis.md` (SDD-tracked task-by-task in the gitignored
+`.superpowers/sdd/progress-refanalysis.md`). Twelve phases: **Phase 0** — packaging (conflict-
+partitioned `[analysis]`/`[separation]` extras), `CacheFS` (decoded-PCM-hash keying, per-artifact
+`meta.json` sidecars, LRU + pinning), the model registry with all 13 registry slots hash-pinned,
+vendored MSST SCNet (GPU-verified), 24 committed audio fixtures (75.7 MB, `ci_sparse`/`ci_vocal`),
+and both isolated envs (audio-separator's own uv env, D9; basic-pitch's ≤3.11 env). **Phase 1** —
+`recon.py` (T1: LUFS, tempo/beat-grid/downbeat/meter + grid confidence, tuning offset, key +
+alternates, sections, 8-band sketch) + `recon_reference`. **Phase 2** — `timeline.py` (PANNs SED),
+`instrument_timeline` + the §3.1 exposure/absent pre-gate rules. **Phase 3** — the always-available
+CPU chord baseline lane (`harmony.py`: template+Viterbi recognizer, extensions, bass-informed
+slash/inversion, music21 theory) + `get_chords`. **Phase 4** — both separation engines
+(audio-separator subprocess adapter + vendored MSST), §5 verification gates 1–3 (mix consistency,
+bleed, silence honesty), `separate_region`. **Phase 5** — gate 4 (cross-model agreement) + the §6
+R1–R6 escalation ladder, `verify_stem`, and full empirical calibration
+(`data/calibrated_thresholds.json`, agreement fitted 0.997/J=0.76). **Phase 6** — `descriptors.py`
+(§7 `SoundCharacter`: spectral/dynamics/harmonics/stereo/time-fx/pitch) + `characterize`.
+**Phase 7** — the `render_track_region` bridge verb (§15.2), Lua data-chunk-aware silence scan.
+**Phase 8** — the lyrics pipeline (VAD-gated faster-whisper ASR + whisperX alignment + line/section
+assembly) + `transcribe_lyrics`/`locate_lyric` (§14.2's phonetic/masked-profanity fuzzy quote
+resolver). **Phase 9** — the §13 chord MODEL lane (vendored BTC-ISMIR19; music-x-lab as a
+no-engine skeleton, D12) engaging at T3. **Phase 10** — the 14-rule §15.3 descriptor→intent engine
+(`data/intent_rules.json` + `analysis/intents.py`) + `compare_character`. **Phase 11** — the FX
+apply verbs (`add_fx_by_name`/`set_fx_param`/`get_fx_params`) + ReaPlugs/JSFX param maps, and a
+closed-loop convergence test that drives characterize→compare→apply→render→re-compare against the
+fake bridge with a BLIND corrective Q. **Phase 12** — the §9 `analyze_reference` orchestrator (12.1:
+answer envelope, question-class routing, the D15 T3→T4 tier-ceiling bump for `sound_at`/
+`compare_track`) and, this task (12.2), the last build task: `data/vst_catalog.json` (§8.1's
+instruments + effects tables transcribed, 26 entries — Valhalla's Supermassive/FreqEcho/
+SpaceModulator and Voxengo SPAN/Youlean Loudness Meter split into per-plugin rows so intent
+matching doesn't blur distinct effects together), `suggest_free_vst` (pure keyword lookup, zero
+network calls, recommend-only), and `clear_analysis_cache` (wraps `CacheFS.clear`,
+`destructiveHint`).
+
+**Pins recorded:** engines (pin a, Phase 0 — all 13 registry slots hash-pinned; owned-mp3 timing
+re-run still human-deferred, see below); the SED head (pin d, Phase 2 — resolved as an honest tie:
+upstream `panns-inference` only ships `Cnn14_DecisionLevelMax` regardless of the head string
+requested, so `DecisionLevelAtt` is recorded as that same engine, a documented scope limit, not a
+fabricated distinction); calibration (Phase 5.3 — agreement gate fitted 0.997/J=0.76, five §16
+constants live at their fallback values with provenance recorded, and the absent-fire guard TRIPPED
+exactly as designed, refusing a fitted value that would have suppressed 24% of frames). Chord
+ear-check (pin b) and lyrics ear-check (pin c) are **not** pinned — they need a human ear on owned
+audio and are carried into the deferred checklist below.
+
+**The 15 Deviations** (full table: `docs/plans/2026-07-23-reference-analysis.md`'s Deviations Log,
+D1–D15; all deliberate, all reasoned there) — condensed: D1 reordered the spec's four pin
+prerequisites to match when their slice deliverables actually exist. D2 split "gated stems" into
+gates 1–3 (Phase 4, no second-model dependency) vs. the agreement gate + ladder (Phase 5). D3 gave
+the tagger and the intent rule engine explicit module homes (`timeline.py`, `intents.py`) the spec's
+module list never named. D4 renders test fixtures headlessly (MIDI → `sfizz_render` CLI + CC0
+samples) instead of through a live REAPER, for CI-safety. D5 places FX-loop iteration/plateau
+enforcement on Claude, not Orpheus (no session state to count against) — the two guard constants are
+exported in tool docstrings, never silently enforced server-side. D6 lets the Phase-0 pin run swap a
+404'd/broken registry slot for its documented alternate as a data change. D7 moves calibrated
+thresholds into `data/calibrated_thresholds.json`, loaded as config overrides with a hash that busts
+stale gate caches on re-calibration. D8 makes `ci_vocal`'s vocal lane deterministic Windows-SAPI TTS
+reading known lines, so the lyrics accuracy bar is machine-checkable on any box. D9 (exec-discovered)
+moved audio-separator into its own isolated env — every release transitively caps `fastmcp<3.4`,
+incompatible with the MCP server's own floor. D10 (exec-discovered) split `BeatGrid.confidence`
+(grid alignment) from an additive `meter_confidence` (3-vs-4 margin ratio) — one field was
+overloaded for two signals. D11 (exec-discovered) scoped the ≥90% majmin baseline bar to
+synthesized progressions and the fixture's chords STEM, not the dense full mix (~0.20, template
+matching's honest ceiling there — the model lane's job). D12 (exec-discovered) recorded that
+audio-separator cannot actually load BS-RoFormer ep17 (a false spec claim); it's marked
+`engine_status:"no-engine"` and the 4-stem rank order became SCNet-XL (MSST) > htdemucs-ft
+(audio-separator). D13 (exec-discovered) gave multi-target registry entries per-stem
+`tagger_classes_by_target`, closing a bleed-gate blind spot where a union class list let vocal
+energy read as clean on a drums stem. D14 (exec-discovered) shipped `verify_stem`'s contract as the
+flat `GateSet` model instead of the spec's nested shape, for one shared shape across every §9 gate
+surface. D15 (exec-discovered) has `_class_ceiling` permit a T3→T4 climb for `sound_at`/
+`compare_track` — a literal `min(QUESTION_TIERS, max_tier)` would make the R3-complement escalation
+rung the plan itself carries forward permanently unreachable.
+
+**Carried, closed here:** Task 11.2's carry — §15.3 rule 1 (presence boost, ReaEQ bell) has no
+encoded Q/bandwidth policy in `data/intent_rules.json`'s `apply` block. No data change: the Q Claude
+sets on the actual `ReaEQ` band when applying the rule is Claude-side judgment, same as every
+un-mapped third-party-plugin instruction — the rule table fixes the trigger, the shape, and the
+center frequency; bandwidth is not part of the closed-form contract.
+
+**Deferred to a human** (full detail in `.superpowers/sdd/progress-refanalysis.md`'s Deferred
+section — gitignored, summarized here since nothing else records it): re-running the Phase-0 engine
+pins against an OWNED mp3 with an actual ear-check on the resulting stems (timings/downloads are
+already automated; only the listening is pending), plus an owned-audio spot-listen on the `ci_sparse`
+fixture; the full desktop calibration run + a 6-song owned-audio ear panel to re-fit the §16 fallback
+constants outside the fixture domain; live-REAPER render + FX smoke — specifically the ReaComp/
+ReaXcomp param-ORDER warning carried since Task 11.1 (mapped as threshold/ratio/attack/release,
+unverified against the real plugin), the `render_track_region` WAV-format blob, `I_FXEN` master-bypass
+behavior, and real float-WAV header layout through the silence scan; the chord (pin b) and lyrics
+(pin c) hand-check certifications against owned songs; and hardening `fetch-models`'s audio-separator
+config-sidecar warm-up (Task 4.1's Important#1 carry — it currently fetches sidecars at first
+separation, a cold-box §1.1 violation until pre-staged at install).
+
+**Gate this session (Task 12.2 — the catalog/cache-admin/docs task closing Phase 12):**
+`pytest -q -m "not desktop and not gpu"` → **684 passed, 2 skipped, 14 deselected** (was 655/2/14 at
+Task 12.1; +29 for `data/vst_catalog.json` + `suggest_free_vst` + `clear_analysis_cache`);
+`scripts/run_lua_tests.py` → **123 passed, 0 failed** (unchanged — this task touched no Lua); `ruff
+check` clean; `mypy src` clean. Every build task in the plan is now complete; what remains is the
+deferred-human list above plus the live end-to-end demo (12.3).
+
 ## 2026-07-22 — Reference Analysis Engine spec (docs-only session, off-site)
 
 Hotel session, no code by design (home PC has local-only work in flight). Produced the full
