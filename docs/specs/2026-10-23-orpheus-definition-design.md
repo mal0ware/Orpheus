@@ -1,7 +1,8 @@
 # Orpheus: definition, scope and the October 2026 upgrade
 
 - **Date:** 2026-10-23
-- **Status:** Agreed with the owner, decision by decision, on 2026-10-23.
+- **Status:** Agreed with the owner, decision by decision, on 2026-10-23. Definition revised the
+  same day to put REAPER sync first, at the owner's direction.
 - **Supersedes:** the README pitch that led with "make this sound Classical" (the style-fingerprint
   recommend/apply loop). That loop stays on the roadmap; it is no longer the headline.
 - **Later specs:** the lead-sheet + ABC design and the YuE2 sketch-backend design get their own
@@ -11,20 +12,43 @@
 
 ## 1. Definition
 
-Orpheus gives Claude ears and hands inside REAPER.
+Orpheus keeps Claude in sync with your REAPER session.
 
-It **listens** to your project and to audio you own: tempo, key, chords, sections, stems, lyrics
-and sound character, each reported with an honest confidence. It **explains** what it hears in
-plain language. It **works** in your session: it builds tracks, writes MIDI, arranges a song from a
-lead sheet, adds and sets effects, and can render a rough sung sketch through an optional YuE2
-backend. It asks before it changes anything, and every change can be undone.
+**REAPER is home base.** Orpheus reads the live project (tracks, tempo map, markers, regions,
+what's playing), notices what you change by hand, and everything it does lands back in the
+project as editable tracks, MIDI, markers and effects, on REAPER's own bars and beats. Your Google
+Sheet stays in step: sections and chords from the sheet become markers and regions, and changes in
+REAPER can flow back to the sheet.
 
-**Who it's for:** one songwriter-producer working in REAPER. Lyrics live in Google Sheets. Claude
-reads them, Orpheus turns them into a song in REAPER, and you record, mix and refine with Claude's
-help. It is published as open source (MIT) for anyone with the same setup.
+On top of that, it **listens** to your project and to audio you own (tempo, key, chords, sections,
+stems, lyrics and sound character, each with an honest confidence), **explains** what it hears in
+plain language, and **works** in your session: building tracks, writing MIDI, arranging songs from
+a lead sheet, setting effects, and (optionally) rendering a rough sung sketch with YuE2. It asks
+before it changes anything, and every change can be undone.
+
+**Who it's for:** one songwriter-producer working in REAPER, lyrics in Google Sheets. It is
+published as open source (MIT) for anyone with the same setup.
 
 **What it won't do:** fetch or rip music you don't own, need accounts or paid services, master for
-release, or replace your ears. It makes editable sketches and helps; you make the record.
+release, or replace your ears.
+
+### What "REAPER synced" means (agreed 2026-10-23)
+
+All four of these, in this priority:
+
+1. **Home base.** Everything is read from and lands in the live REAPER project. Nothing important
+   lives anywhere else.
+2. **Always knows the session.** Orpheus can report the open project's name and path, tempo map,
+   time-signature changes, markers, regions, tracks and play state, and picks up edits made by
+   hand. Today `get_project_info` reports the tempo, the starting meter, project length, track
+   count and play state, but no markers, regions, tempo or meter changes, or project name; that gap
+   is the REAPER-sync step (§4).
+3. **Synced to the beat.** Bars and beats follow REAPER's own tempo and meter map, so nothing Orpheus
+   writes drifts across a tempo or meter change. Today the bridge's `bar_start_qn` multiplies by one
+   bar length, so `at_bar` assumes a single meter for the whole song.
+4. **Sheet and REAPER in step.** Sections and chords from the Google Sheet become markers and regions;
+   changes in REAPER can be written back to the sheet. Orpheus never talks to Google: Claude does
+   the sheet side through the Drive connector, with the owner's yes before any write.
 
 ## 2. How it fits the songwriting workflow
 
@@ -59,7 +83,7 @@ patterns like the ones above. No lyrics or song titles from the owner's sheets g
 
 | Question | Decision | Why |
 |---|---|---|
-| What is Orpheus at its core? | **Studio partner** (§1). | Matches what is built and what was used live in July, and takes in songwriting and sketches. |
+| What is Orpheus at its core? | **REAPER-synced first**, then a studio partner (§1): all four meanings of sync, plus listen / explain / work. | Owner: "first and foremost REAPER synced, but it should be all of those." |
 | How do lyrics get in? | **Claude reads the sheet** via the Drive connector; Orpheus takes text. | Keeps Orpheus local-only with no accounts. |
 | How much notation does Orpheus parse? | **Chord charts and riff tab.** | It is how the owner already writes; parsing it makes bar timing exact. |
 | What is lyric-engine? | **Folded into Orpheus.** Orpheus will export a beat + section + lyric timeline that Premiere can open (OpenTimelineIO). lyric-engine gets archived. | Orpheus already finds beats, sections and word timings. Archiving the repo is a separate GitHub action and needs its own OK. |
@@ -67,6 +91,7 @@ patterns like the ones above. No lyrics or song titles from the owner's sheets g
 | Matchering (GPL-3.0, unused core dependency)? | **Removed for now.** It comes back as an optional extra only when master-matching is built. | An MIT package should not hard-depend on GPL code it doesn't use. The README's "vendored" claim was wrong. |
 | How are non-commercial models switched on? | **Per backend, by name:** `ORPHEUS_NC_BACKENDS=yue2` (comma-separated) in the MCP config. Off by default. | Turning on YuE2 must not also turn on LarsNet and change stem results. Feeds the existing `model_registry.resolve(allow_nc=...)` filter. |
 | Where do Claude's operating instructions live? | **One file, loaded:** `data/instructions/00_core.md`, rewritten to §1 and read by the server at startup. | One place to edit; what you read is what Claude gets. Today's copies point at tools that don't exist. |
+| Where does REAPER-sync work go? | **Right after the bug fixes**, before the lead sheet; sheet↔REAPER sync after the lead sheet. | The request-id fix must land before more read verbs; sheet sync needs the chord-chart reader. |
 | Order of work | §4. | Each step can be checked on its own. |
 
 ## 4. Order of work
@@ -86,10 +111,17 @@ patterns like the ones above. No lyrics or song titles from the owner's sheets g
 3. **YuE2 test**, outside the repo, alongside step 2: build yue2.cpp, download the two weight files
    (about 4.3 GB) after the owner says yes, render one 60 s song on the RTX 3080, record VRAM and
    time in `docs/pins/`, and make the go/no-go call together.
-4. **Lead sheet and notation:** the LeadSheet model (referenced from `CompositionSpec`), chord-chart
+4. **REAPER sync:** a read verb for the live timeline (project name and path, tempo and
+   time-signature markers, markers, regions, play state) with a tool and fake-bridge support;
+   bar/beat math that follows REAPER's tempo and meter map instead of assuming one meter;
+   heartbeat v2 carrying project identity; a way to notice hand edits (a cheap project-state
+   fingerprint Claude can compare between calls).
+5. **Lead sheet and notation:** the LeadSheet model (referenced from `CompositionSpec`), chord-chart
    and riff-tab readers, an MIT ABC writer for YuE2's dialect, a reader (music21 for notes and
    chords, a sidecar for lyrics), a dialect checker, and round-trip tests.
-5. **Sketch renderer**, only if step 3 says go: Orpheus sends its own score to yue2.cpp and puts the
+6. **Sheet ↔ REAPER sync:** sections and chords from the sheet become markers and regions; the live
+   timeline can be written back to the sheet by Claude (with a yes).
+7. **Sketch renderer**, only if step 3 says go: Orpheus sends its own score to yue2.cpp and puts the
    result on a "SKETCH (YuE2)" track.
 
 ## 5. Corrections to the 2026-10-22 breakdown

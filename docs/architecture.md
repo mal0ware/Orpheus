@@ -2,7 +2,8 @@
 
 What Orpheus is and isn't for is settled in
 [`specs/2026-10-23-orpheus-definition-design.md`](specs/2026-10-23-orpheus-definition-design.md).
-This page covers how it's built.
+This page covers how it's built. The short version: REAPER is home base. Orpheus reads the live
+project through the bridge, and everything it does lands back in the project.
 
 ## The shape, in one picture
 

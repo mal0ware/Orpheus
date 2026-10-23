@@ -1,7 +1,7 @@
 # Orpheus Roadmap
 
-Orpheus is Claude's ears and hands inside REAPER: it listens, explains, and works in the session,
-with the user approving every change
+Orpheus keeps Claude in sync with the user's REAPER session first; on top of that it listens,
+explains, and works in the session, with the user approving every change
 ([definition](specs/2026-10-23-orpheus-definition-design.md)). Work ships in steps that each leave
 the repo working and demoable. The order puts the riskiest infrastructure first, then
 understanding, then the songwriting path, then automated suggestions.
@@ -66,20 +66,29 @@ Agreed 2026-10-23, in this order:
    - [ ] `add_vst_path_and_rescan` has no Lua handler
 3. **YuE2 test** on the RTX 3080 via yue2.cpp: one 60 s render, VRAM and time recorded in
    `docs/pins/`, go/no-go.
-4. **Lead sheet + notation:**
+4. **REAPER sync:**
+   - [ ] read verb + tool for the live timeline: project name and path, tempo and time-signature
+     markers, markers, regions, play state (fake bridge and Lua suite included)
+   - [ ] bar/beat math that follows REAPER's tempo and meter map (today `bar_start_qn` assumes one
+     meter for the whole song)
+   - [ ] heartbeat v2 with project identity (needs one manual bridge re-run)
+   - [ ] notice hand edits: a cheap project-state fingerprint Claude compares between calls
+5. **Lead sheet + notation:**
    - [ ] `LeadSheet` model (key, meter, tempo, sections with timed chords, melody, lyrics,
      reasons), referenced from `CompositionSpec`
    - [ ] readers for the owner's chord-chart notation (`Am / Fmaj7 | C / E (x4)`) and bass riff
      tab (`A0 - E1 -`, eight slots per bar)
    - [ ] MIT ABC writer for YuE2's dialect, a reader (music21 for notes and chords, a sidecar for
      lyrics), a dialect checker, round-trip tests
-5. **Sung sketches** (if step 3 says go): send an Orpheus-written score to yue2.cpp, import the
+6. **Sheet ↔ REAPER in step:** sheet sections and chords become markers and regions; the live
+   timeline can be written back to the sheet (Claude does the sheet side through the Drive
+   connector, with a yes).
+7. **Sung sketches** (if step 3 says go): send an Orpheus-written score to yue2.cpp, import the
    result onto a "SKETCH (YuE2)" track. Gated by `ORPHEUS_NC_BACKENDS=yue2`.
 
 ## Next
 
-- **Beat-map export for music videos.** A read verb for the project's tempo map, markers and
-  regions; `export_beat_map` (JSON + CSV of beats, bars, sections, lyric lines); an
+- **Beat-map export for music videos.** Built on step 4's timeline read: `export_beat_map` (JSON + CSV of beats, bars, sections, lyric lines); an
   OpenTimelineIO file Premiere opens with section and lyric markers. This replaces the
   standalone lyric-engine repo, which gets archived.
 - **MCP tools for the fifteen bridge-only verbs**, plus a `set_track_mute` verb.
@@ -88,8 +97,7 @@ Agreed 2026-10-23, in this order:
   rewritten), then a "make it jazzier" demo.
 - **Taste file:** `~/.orpheus/taste.json` with banned plugins and intents and preferred
   instruments, enforced in `compare_character`, `suggest_free_vst` and instrument selection.
-- **Bridge status in Claude Code:** heartbeat v2 with project name and REAPER version, and a small
-  status panel that reads it.
+- **Bridge status in Claude Code:** a small status panel that reads heartbeat v2 (step 4).
 
 ## Later
 

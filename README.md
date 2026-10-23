@@ -1,23 +1,29 @@
 # 🎵 Orpheus
 
-Claude's ears and hands inside REAPER.
+Keeps Claude in sync with your REAPER session.
 
 Orpheus is an [MCP](https://modelcontextprotocol.io) server that connects Claude (Claude Code,
 Claude Desktop, or any MCP client) to a live [REAPER](https://www.reaper.fm/) session.
 
-It listens to your project and to audio you own: tempo, key, chords, sections, stems, lyrics
-and sound character, each with an honest confidence. It explains what it hears in plain
-language. It works in your session: it builds tracks, writes MIDI, arranges songs, and adds and
-sets effects. It asks before it changes anything, and every change can be undone.
+REAPER is home base. Orpheus reads the live project (tracks, tempo map, markers, regions, what's
+playing), notices what you change by hand, and everything it does lands back in the project as
+editable tracks, MIDI, markers and effects, on REAPER's own bars and beats. Your Google Sheet
+stays in step: sections and chords from the sheet become markers and regions, and changes in
+REAPER can flow back to the sheet.
 
-It's built for one songwriter-producer. Lyrics live in a Google Sheet, Claude reads them, Orpheus
-turns them into a song in REAPER, and you record, mix and refine with Claude's help. It makes
-editable sketches and helps; you make the record.
+On top of that, it listens to your project and to audio you own (tempo, key, chords, sections,
+stems, lyrics and sound character, each with an honest confidence), explains what it hears in
+plain language, and works in your session: building tracks, writing MIDI, arranging songs,
+setting effects, and (optionally) rendering a rough sung sketch with YuE2. It asks before it
+changes anything, and every change can be undone.
+
+It's built for one songwriter-producer working in REAPER, with lyrics in Google Sheets.
 
 > **Status (2026-10-23):** early, pre-alpha, not on PyPI yet. It has 54 tools in the default profile,
 > 787 Python tests and 368 Lua checks (ruff and mypy clean). Much of it was used for real in July
 > on REAPER 7.78 with a song the owner owns; the rest is tested against a behavioural fake of
-> REAPER. [What works today](#what-works-today) says which is which.
+> REAPER. [What works today](#what-works-today) says which is which. Most of the sync side
+> (timeline reads, tempo-map-aware bars, sheet sync) is the next thing being built.
 
 ## What you can ask
 
@@ -99,6 +105,12 @@ sung sketches are being built now (see [the roadmap](docs/roadmap.md)).
 
 ## Not built yet
 
+- REAPER sync: reading the live timeline (markers, regions, tempo and meter changes, project
+  name), noticing hand edits, and bars that follow REAPER's tempo and meter map. Today Orpheus
+  reads the tempo, starting meter, length, track count and play state, and places bars assuming
+  one meter for the whole song.
+- Sheet and REAPER in step: sheet sections and chords as markers and regions, and REAPER changes
+  written back to the sheet (Claude does the sheet side, with your yes).
 - Lead sheets and notation: reading your chord charts and bass tab, and ABC export/import.
 - Sung sketches through an optional YuE2 backend (below).
 - Beat-map export for cutting music videos in Premiere (OpenTimelineIO).

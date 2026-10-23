@@ -6,10 +6,12 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ## 2026-10-23 — Definition agreed, docs caught up, environment repaired (branch `feat/reference-analysis`)
 
-**Definition.** Orpheus is now defined as a studio partner: Claude's ears and hands inside
-REAPER. It listens (project + owned audio), explains, and works in the session, asking first and
-keeping every change undoable. It's built for one songwriter-producer whose lyrics live in Google
-Sheets. Every decision is in [`specs/2026-10-23-orpheus-definition-design.md`](specs/2026-10-23-orpheus-definition-design.md):
+**Definition.** Orpheus keeps Claude in sync with the owner's REAPER session, first and foremost
+(the owner's words: "first and foremost REAPER synced, but it should be all of those"). Sync means
+four things: REAPER is home base, Orpheus always knows the session, bars follow REAPER's tempo and
+meter map, and the Google Sheet stays in step. On top of that it listens (project + owned audio),
+explains, and works in the session, asking first and keeping every change undoable. It's built for
+one songwriter-producer whose lyrics live in Google Sheets. Every decision is in [`specs/2026-10-23-orpheus-definition-design.md`](specs/2026-10-23-orpheus-definition-design.md):
 Claude reads the sheet through the Drive connector (Orpheus never talks to Google); Orpheus will
 parse the owner's chord-chart and bass-tab notation; lyric-engine folds into Orpheus as a
 beat-map/OTIO export (the repo gets archived later, on a separate OK); non-commercial backends are
@@ -41,8 +43,9 @@ desktop and not gpu"`); 368 Lua handler checks pass; ruff and mypy clean. 54 too
 profile (65 in `full`), 37 bridge verbs plus `__batch__`.
 
 **Next** (spec §4): merge into `main` on the owner's OK, then the bug-fix branch (request ids,
-ASR device guard, cp1252 reader, section naming, JSFX envelope scale, `add_vst_path_and_rescan`),
-the YuE2 test on the 3080 alongside it, then the lead-sheet and ABC work.
+ASR device guard, cp1252 reader, section naming, JSFX envelope scale, `add_vst_path_and_rescan`)
+with the YuE2 test on the 3080 alongside it, then REAPER sync (timeline read, tempo/meter-map
+bars, heartbeat v2, hand-edit detection), then the lead sheet and ABC, then sheet↔REAPER sync.
 
 ---
 
