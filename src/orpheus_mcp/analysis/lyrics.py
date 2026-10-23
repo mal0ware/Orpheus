@@ -31,10 +31,13 @@ owns — never fetched from lyric services, never embedded into project files.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
+import subprocess
 import sys
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -58,6 +61,8 @@ from orpheus_mcp.models import (
 )
 
 _LYRICS_TASK = "lyrics-asr"
+
+logger = logging.getLogger(__name__)
 
 
 class LyricsAsrEnvMissing(Exception):
@@ -163,6 +168,93 @@ def _flatten_clips(windows: list[Window]) -> list[float]:
     return clips
 
 
+# --- ASR device choice ------------------------------------------------------ #
+#
+# torch can see the GPU while ctranslate2 still cannot run on it: on the owner's desktop
+# ctranslate2 4.4 (whisperx 3.3.1 pins it below 4.5) links cuDNN 8, torch bundles cuDNN 9,
+# WhisperModel loads fine, and the first transcribe aborts the WHOLE process natively
+# ("Could not locate cudnn_ops_infer64_8.dll", exit 127). Nothing in-process can catch that, so
+# "auto" proves CUDA in a throwaway child before the server process ever touches it.
+
+ASR_DEVICE_ENV = "ORPHEUS_ASR_DEVICE"
+_ASR_DEVICE_CHOICES = ("auto", "cpu", "cuda")
+_CUDA_PROBE_TIMEOUT_S = 300.0
+_CUDA_PROBE_RESULT: bool | None = None  # per process: probed at most once
+_CUDA_PROBE_LOCK = threading.Lock()
+
+# A real (tiny) CUDA transcription: loading alone succeeds even without cuDNN ops; only
+# inference trips the abort. Runs with ORPHEUS_ASR_DEVICE=cuda so it never probes again.
+_CUDA_PROBE_CODE = """import os, tempfile
+import numpy as np, soundfile as sf
+from orpheus_mcp.analysis.lyrics import FasterWhisperAsr
+from orpheus_mcp.models import Window
+t = np.arange(16000) / 16000.0
+wav = os.path.join(tempfile.mkdtemp(), "probe.wav")
+sf.write(wav, (0.3 * np.sin(2 * np.pi * 220.0 * t)).astype("float32"), 16000)
+asr = FasterWhisperAsr()
+asr.transcribe(wav, [Window(start_s=0.0, end_s=1.0)])
+print("OK", asr._device)
+"""
+
+
+def _probe_cuda_asr_in_child() -> bool:
+    """True only if a child process completed a CUDA transcription. A native abort, a timeout or
+    a CPU fallback in the child all count as "CUDA is not usable here"."""
+    env = {**os.environ, ASR_DEVICE_ENV: "cuda", "PYTHONIOENCODING": "utf-8"}
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _CUDA_PROBE_CODE],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_CUDA_PROBE_TIMEOUT_S,
+            env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return proc.returncode == 0 and "OK cuda" in (proc.stdout or "")
+
+
+def resolve_asr_device() -> str:
+    """``"cpu"`` or ``"cuda"`` for lyric ASR.
+
+    ``ORPHEUS_ASR_DEVICE``: ``cpu`` forces CPU; ``cuda`` forces CUDA without the safety probe
+    (and is what the probe child runs with); ``auto`` (default) uses CUDA only if torch sees a
+    GPU AND a child process proved a CUDA transcription works, probed once per process.
+    """
+    raw = os.environ.get(ASR_DEVICE_ENV, "auto")
+    choice = raw.strip().lower() or "auto"
+    if choice not in _ASR_DEVICE_CHOICES:
+        raise ValueError(
+            f"{ASR_DEVICE_ENV}={raw!r} is not one of {', '.join(_ASR_DEVICE_CHOICES)}."
+        )
+    if choice != "auto":
+        return choice
+
+    try:
+        import torch
+
+        cuda = bool(torch.cuda.is_available())
+    except ImportError:
+        cuda = False
+    if not cuda:
+        return "cpu"
+
+    global _CUDA_PROBE_RESULT
+    with _CUDA_PROBE_LOCK:
+        if _CUDA_PROBE_RESULT is None:
+            with model_registry.GPU_SEMAPHORE:  # the child uses the GPU: nothing else may
+                _CUDA_PROBE_RESULT = _probe_cuda_asr_in_child()
+            if not _CUDA_PROBE_RESULT:
+                logger.warning(
+                    "Lyric ASR: CUDA is visible but a test transcription failed in a child "
+                    "process (usually a cuDNN mismatch), so ASR runs on CPU. Set %s=cpu to "
+                    "skip this probe.",
+                    ASR_DEVICE_ENV,
+                )
+        return "cuda" if _CUDA_PROBE_RESULT else "cpu"
+
+
 def _register_torch_cuda_dll_dir() -> None:
     """Windows-only: put torch's bundled cuDNN DLLs on the OS DLL search path.
 
@@ -228,13 +320,8 @@ class FasterWhisperAsr:
                 "(`pip install 'orpheus-mcp[separation]'`) to run lyric transcription."
             ) from exc
 
-        try:
-            import torch
-
-            cuda = bool(torch.cuda.is_available())
-        except ImportError:
-            cuda = False
-        self._device = "cuda" if cuda else "cpu"
+        self._device = resolve_asr_device()
+        cuda = self._device == "cuda"
         self._compute_type = "int8_float16" if cuda else "int8"
 
         if cuda:

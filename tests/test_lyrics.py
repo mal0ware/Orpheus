@@ -658,6 +658,10 @@ def test_faster_whisper_asr_load_registers_dll_dir_before_model_on_cuda(monkeypa
     import orpheus_mcp.analysis.lyrics as lyrics_mod
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    # "auto" proves CUDA in a child first (tests/test_asr_device.py); say it passed.
+    monkeypatch.delenv("ORPHEUS_ASR_DEVICE", raising=False)
+    monkeypatch.setattr(lyrics_mod, "_CUDA_PROBE_RESULT", None)
+    monkeypatch.setattr(lyrics_mod, "_probe_cuda_asr_in_child", lambda: True)
 
     calls: list[str] = []
     monkeypatch.setattr(
@@ -690,6 +694,7 @@ def test_faster_whisper_asr_load_skips_dll_registration_on_cpu(monkeypatch, tmp_
     import orpheus_mcp.analysis.lyrics as lyrics_mod
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.delenv("ORPHEUS_ASR_DEVICE", raising=False)
 
     calls: list[str] = []
     monkeypatch.setattr(
@@ -733,34 +738,12 @@ def _overlap(truth_line: str, transcript: str) -> float:
 
 
 def _ctranslate2_cuda_usable() -> bool:
-    """Ground-truth probe: attempt the EXACT operation that fails — a CUDA WhisperModel
-    construction via ``FasterWhisperAsr._load()`` — in a throwaway subprocess. On this box
-    ctranslate2 aborts natively at cuDNN-ops load (exit 127, uncatchable in-process: it once
-    ate an entire ``-m gpu`` batch; ``get_cuda_device_count()==1`` and torch's bundled cuDNN 9
-    DLLs both LIE about usability, since ctranslate2 links the cuDNN 8 family). The child
-    contains any abort; "OK cuda" means the real load genuinely works on GPU."""
-    import subprocess
-    import sys
+    """Ground truth for the gpu smoke test: the production child-process probe
+    (``lyrics._probe_cuda_asr_in_child``) runs a real tiny CUDA transcription and contains any
+    native cuDNN abort. On the owner's desktop it is False (ctranslate2 4.4 links cuDNN 8)."""
+    from orpheus_mcp.analysis import lyrics as lyrics_mod
 
-    # Load alone is NOT enough: WhisperModel construction succeeds without cuDNN-ops, and
-    # the fast-fail (0xC0000409, "Cannot locate cudnn_ops_infer64_8.dll") only fires at
-    # TRANSCRIBE time — so the child must run a real (tiny) inference to prove the path.
-    probe_code = (
-        "import numpy as np, soundfile as sf, tempfile, os\n"
-        "from orpheus_mcp.analysis.lyrics import FasterWhisperAsr\n"
-        "from orpheus_mcp.models import Window\n"
-        "t = np.arange(16000) / 16000.0\n"
-        "wav = (0.3 * np.sin(2 * np.pi * 220.0 * t)).astype('float32')\n"
-        "f = os.path.join(tempfile.mkdtemp(), 'probe.wav')\n"
-        "sf.write(f, wav, 16000)\n"
-        "a = FasterWhisperAsr()\n"
-        "a.transcribe(f, [Window(start_s=0.0, end_s=1.0)])\n"
-        "print('OK', a._device)\n"
-    )
-    probe = subprocess.run(
-        [sys.executable, "-c", probe_code], capture_output=True, text=True, timeout=300
-    )
-    return probe.returncode == 0 and "OK cuda" in probe.stdout
+    return lyrics_mod._probe_cuda_asr_in_child()
 
 
 @pytest.mark.desktop
