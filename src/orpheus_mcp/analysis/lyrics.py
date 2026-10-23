@@ -477,21 +477,50 @@ def _ends_sentence(word: str) -> bool:
 
 
 def _split_lines(words: list[LyricWord]) -> list[LyricLine]:
-    """Words → lines: a new line starts on a word gap greater than ``CFG.LYRIC_LINE_GAP_S`` or
-    immediately after a sentence-ending-punctuation word (§14.1.4)."""
+    """Words → lines (§14.1.4).
+
+    Hard breaks: a word gap over ``CFG.LYRIC_LINE_GAP_S`` or sentence-ending punctuation.
+    Soft breaks, which sung transcripts need because Whisper punctuates them sparsely: a word
+    ending in ``CFG.LYRIC_SOFT_PUNCT`` or a breath longer than ``CFG.LYRIC_LINE_BREATH_S``, taken
+    only once the line has ``CFG.LYRIC_LINE_MIN_WORDS`` words. A line still longer than
+    ``CFG.LYRIC_LINE_MAX_WORDS`` splits at its widest pause, recursively.
+    """
     if not words:
         return []
-    lines: list[LyricLine] = []
+    runs: list[list[int]] = []
     cur: list[int] = [0]
     for i in range(1, len(words)):
         gap = words[i].start_s - words[i - 1].end_s
-        if gap > CFG.LYRIC_LINE_GAP_S or _ends_sentence(words[i - 1].word):
-            lines.append(_build_line(words, cur))
+        prev = words[i - 1].word.rstrip()
+        hard = gap > CFG.LYRIC_LINE_GAP_S or _ends_sentence(prev)
+        soft = (gap > CFG.LYRIC_LINE_BREATH_S or prev.endswith(tuple(CFG.LYRIC_SOFT_PUNCT))) and (
+            len(cur) >= CFG.LYRIC_LINE_MIN_WORDS
+        )
+        if hard or soft:
+            runs.append(cur)
             cur = [i]
         else:
             cur.append(i)
-    lines.append(_build_line(words, cur))
+    runs.append(cur)
+
+    lines: list[LyricLine] = []
+    for run in runs:
+        for piece in _split_long(words, run):
+            lines.append(_build_line(words, piece))
     return lines
+
+
+def _split_long(words: list[LyricWord], idxs: list[int]) -> list[list[int]]:
+    """Split an over-long run at its widest pause, keeping both halves at least
+    ``CFG.LYRIC_LINE_MIN_WORDS`` long; recurse until every piece fits."""
+    lo = CFG.LYRIC_LINE_MIN_WORDS
+    if len(idxs) <= CFG.LYRIC_LINE_MAX_WORDS or len(idxs) < 2 * lo:
+        return [idxs]
+    cut = max(
+        range(lo, len(idxs) - lo + 1),
+        key=lambda k: words[idxs[k]].start_s - words[idxs[k - 1]].end_s,
+    )
+    return _split_long(words, idxs[:cut]) + _split_long(words, idxs[cut:])
 
 
 def _build_line(words: list[LyricWord], idxs: list[int]) -> LyricLine:
