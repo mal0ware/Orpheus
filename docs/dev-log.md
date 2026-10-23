@@ -4,6 +4,55 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-10-23 (later) — Six bugs fixed, YuE2 is a GO, sound pack rebuilt (branch `fix/2026-10-bugs`)
+
+**Bugs, each with a test that failed first:**
+- **Request ids** (07a37fd). Every tool built a fresh `BridgeClient` counting from 1, and parallel
+  read-only calls collided on `request_1.json`. On Windows all 16 threads of the new test died with
+  `PermissionError` on the shared `.tmp` file. Ids now come from one lock-protected, clock-based
+  allocator (microseconds, < 2**53, plain digits); a lupa test proves the real Lua bridge answers a
+  16-digit id with the exact filename.
+- **Lyric ASR crash** (6439da1). Reproduced: CUDA transcription aborts with exit 127 ("Could not
+  locate cudnn_ops_infer64_8.dll"): ctranslate2 4.4, pinned below 4.5 by whisperx 3.3.1, wants
+  cuDNN 8 while torch ships 9. `auto` now proves CUDA in a throwaway child once per process (about
+  10 s) and falls back to CPU with a warning; `ORPHEUS_ASR_DEVICE=cpu|cuda` overrides. On this PC it
+  resolves to CPU. GPU lyrics would need a whisperx upgrade (open question for the owner).
+- **cp1252 decoding** (d4445c9). ffmpeg prints tags and paths as UTF-8; byte 0x9D killed the reader
+  thread and returned `stderr=None`, which also crashed the ffmpeg-failure path and hid its
+  message. audio-separator had the same mismatch. Both decode as UTF-8 with replacement now.
+- **basic-pitch stdout** (0567a24, found while fixing the above). It inherited the server's stdout,
+  which is the MCP JSON-RPC channel; its banner could corrupt the stream. Now captured.
+- **JSFX envelope scale** (d9ac092). FX envelope points live in the parameter's native range
+  (`TrackFX_GetParam` min..max); a JSFX slider's 0..100 turned normalized 1.0 into 0.01. Writes and
+  reads now map through the range. Handler change, so hot reload delivers it. Still verify-live.
+- **Section naming** (1c6008a). Re-ran the owned July song locally (lyrics kept out of the repo):
+  327 words became 5 lines because Whisper gave 1 full stop, 26 commas and 3 pauses over 1 s, so
+  repeats could not match. Soft breaks at commas and breaths (> 0.5 s, lines of 3+ words) and a
+  12-word cap give 49 lines and verse 1 / chorus 1 / verse 2 / chorus 2, lining up with the
+  audio-measured choruses. The song's ending still splits into short alternating pieces.
+- **`add_vst_path_and_rescan`** (c9aa7d1). The handler never existed, and the pack it served never
+  worked (placeholder URLs and hashes; sfizz would have loaded silent). Replaced by the sound pack
+  below; the dead bridge call is gone.
+
+**YuE2 spike: GO** (e37311e, [`pins/2026-10-yue2-backend.md`](pins/2026-10-yue2-backend.md)).
+yue2.cpp `8af0174` built with the VS 2022 tools and CUDA 13.2 in about 3 minutes; weights from
+Serveurperso/YuE2-GGUF hash-verified. A 60 s song rendered in 28.8 s, peaking at 7.2 GB total VRAM
+(about 5.2 GB above the desktop). A bring-your-own ABC score rendered correctly. The owner listened
+and said go.
+
+**Sound pack** (c9aa7d1). Three CC0 FreePats instruments (Spanish classical guitar, picked electric
+bass YR, Upright Piano KW loud layer; 106 files, 24.5 MB), fetched per file from GitHub at pinned
+commits and sha256-checked, read by a minimal SFZ parser and played through RS5k zones. Verified
+end to end against the pinned copies; not yet rendered in REAPER.
+
+**Numbers:** 825 passed, 2 skipped (`-m "not desktop and not gpu"`); 376 Lua checks; ruff and mypy
+clean.
+
+**Owed on live REAPER** (needs `orpheus-mcp install-bridge` once, then hot reload): a JSFX envelope
+point reading back in slider units, and one note rendered through each sound-pack instrument.
+
+---
+
 ## 2026-10-23 — Definition agreed, docs caught up, environment repaired (branch `feat/reference-analysis`)
 
 **Definition.** Orpheus keeps Claude in sync with the owner's REAPER session, first and foremost

@@ -58,14 +58,14 @@ Agreed 2026-10-23, in this order:
 1. **Docs + merge.** Definition everywhere, dev-log caught up, Matchering out of core deps,
    instructions loaded from one file, `feat/reference-analysis` merged into `main`.
 2. **Bug fixes**, each with a regression test:
-   - [ ] bridge request ids unique across the process (parallel read-only calls collide today)
-   - [ ] lyric ASR: cuDNN probe + `ORPHEUS_ASR_DEVICE=cpu` (auto-CUDA aborts on the desktop)
-   - [ ] cp1252 `UnicodeDecodeError` in a subprocess reader thread
-   - [ ] section naming collapses a real song into one "verse 1"
-   - [ ] envelopes on JSFX parameters land at the wrong scale
-   - [ ] `add_vst_path_and_rescan` has no Lua handler
-3. **YuE2 test** on the RTX 3080 via yue2.cpp: one 60 s render, VRAM and time recorded in
-   `docs/pins/`, go/no-go.
+   - [x] bridge request ids unique across the process (2026-10-23)
+   - [x] lyric ASR: child-process CUDA probe + `ORPHEUS_ASR_DEVICE` (2026-10-23)
+   - [x] cp1252 `UnicodeDecodeError` in subprocess readers, plus basic-pitch's stdout leak (2026-10-23)
+   - [x] section naming on sparsely punctuated sung lyrics (2026-10-23)
+   - [x] FX envelopes in the parameter's native range (2026-10-23; live check owed)
+   - [x] dead `add_vst_path_and_rescan` call removed; sound pack rebuilt on CC0 FreePats + RS5k (2026-10-23)
+3. **YuE2 test: GO** (2026-10-23): 60 s in 28.8 s, 7.2 GB peak; see
+   [`pins/2026-10-yue2-backend.md`](pins/2026-10-yue2-backend.md).
 4. **REAPER sync:**
    - [ ] read verb + tool for the live timeline: project name and path, tempo and time-signature
      markers, markers, regions, play state (fake bridge and Lua suite included)
