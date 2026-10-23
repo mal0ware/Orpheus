@@ -120,6 +120,9 @@ class FakeTrack:
     # succeed (GetTrackEnvelopeByName only finds visible envelopes and cannot create);
     # FX envelopes auto-create on write (GetFXEnvelope create=true), same as the Lua.
     envelopes: dict = field(default_factory=dict)
+    # TrackFX_GetParam's (min, max) per (fx_index, param_index). Missing = (0.0, 1.0), the VST
+    # norm; JSFX sliders keep their own range. FX envelope points are stored in this range.
+    fx_param_ranges: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -615,6 +618,11 @@ def make_handlers(project: FakeReaperProject) -> dict:
             return ("fx", fi, pi), "fx", f"fx {fi} param {pi}"
         return None, None, None
 
+    def _fx_env_range(tr, key):
+        """The Lua's fx_env_range: TrackFX_GetParam's (min, max), degenerate -> (0, 1)."""
+        lo, hi = tr.fx_param_ranges.get((key[1], key[2]), (0.0, 1.0))
+        return (0.0, 1.0) if hi <= lo else (float(lo), float(hi))
+
     def set_envelope_points(p):
         tr = project.resolve_track(p["track"])
         points = p.get("points")
@@ -642,6 +650,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         clear = p.get("clear")
         if clear is None:
             clear = True
+        lo, hi = _fx_env_range(tr, key) if kind == "fx" else (0.0, 1.0)
         undo_desc = f"Orpheus: set {len(points)} envelope points ({desc})"
         project.undo_events.append(("begin", undo_desc))
         try:
@@ -657,7 +666,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
                 elif kind == "pan":
                     v = max(-1.0, min(1.0, v))
                 else:
-                    v = max(0.0, min(1.0, v))
+                    v = lo + max(0.0, min(1.0, v)) * (hi - lo)  # normalized -> native range
                 env.append({"time_s": t, "value": v})
             env.sort(key=lambda pt: pt["time_s"])  # Envelope_SortPoints
         finally:
@@ -678,10 +687,13 @@ def make_handlers(project: FakeReaperProject) -> dict:
                 " {fx_index, param_index}"
             )
         out = []
+        lo, hi = _fx_env_range(tr, key) if kind == "fx" else (0.0, 1.0)
         for pt in tr.envelopes.get(key) or []:  # missing envelope reads as EMPTY
             v = pt["value"]
             if kind == "volume":
                 v = (20.0 * math.log10(v)) if v > 0 else -150.0
+            elif kind == "fx":
+                v = (v - lo) / (hi - lo)  # native -> normalized
             out.append({"time_s": pt["time_s"], "value": v})
         return {"track_guid": tr.guid, "envelope": desc, "points": out}
 

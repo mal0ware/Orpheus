@@ -1194,6 +1194,20 @@ local function resolve_envelope(tr, spec, create_fx)
   return nil, nil, nil
 end
 
+-- FX envelopes store the parameter's NATIVE value, in TrackFX_GetParam's [min, max]: 0..1
+-- for most VSTs, but a JSFX slider keeps its own range (0..100, 20..20000 Hz, ...). The wire
+-- speaks normalized 0..1 (like set_fx_param), so map in and out. Writing normalized values raw
+-- was the 2026-07-31 live bug: 1.0 on a 0..100 JSFX slider landed as 0.01 of the range.
+-- verify live: confirm on REAPER 7.x that a JSFX slider envelope point reads back in slider units.
+local function fx_env_range(tr, spec)
+  local fi = math.floor(tonumber(spec.fx_index) or 0)
+  local pi = math.floor(tonumber(spec.param_index) or 0)
+  local _, lo, hi = reaper.TrackFX_GetParam(tr, fi, pi)
+  lo, hi = tonumber(lo) or 0.0, tonumber(hi) or 1.0
+  if hi <= lo then lo, hi = 0.0, 1.0 end   -- degenerate range: treat as plain 0..1
+  return lo, hi
+end
+
 -- dB -> the volume envelope's native scale (fader scaling aware), and back.
 local function vol_db_to_native(env, db)
   local mode = reaper.GetEnvelopeScalingMode(env)
@@ -1229,6 +1243,8 @@ HANDLERS.set_envelope_points = function(p)
   end
   local clear = p.clear
   if clear == nil then clear = true end
+  local fx_lo, fx_hi = 0.0, 1.0
+  if kind == "fx" then fx_lo, fx_hi = fx_env_range(tr, p.envelope) end
 
   reaper.Undo_BeginBlock()
   local inserted = 0
@@ -1255,6 +1271,7 @@ HANDLERS.set_envelope_points = function(p)
         if v < -1.0 then v = -1.0 elseif v > 1.0 then v = 1.0 end
       else
         if v < 0.0 then v = 0.0 elseif v > 1.0 then v = 1.0 end
+        v = fx_lo + v * (fx_hi - fx_lo)   -- normalized -> the parameter's native range
       end
       reaper.InsertEnvelopePoint(env, t, v, 0, 0, false, true)   -- noSortIn=true
       inserted = inserted + 1
@@ -1280,11 +1297,14 @@ HANDLERS.get_envelope_points = function(p)
   end
   local points = {}
   if env then
+    local fx_lo, fx_hi = 0.0, 1.0
+    if kind == "fx" then fx_lo, fx_hi = fx_env_range(tr, p.envelope) end
     local n = reaper.CountEnvelopePoints(env)
     for i = 0, n - 1 do
       local ok, t, v = reaper.GetEnvelopePoint(env, i)
       if ok then
-        if kind == "volume" then v = vol_native_to_db(env, v) end
+        if kind == "volume" then v = vol_native_to_db(env, v)
+        elseif kind == "fx" then v = (v - fx_lo) / (fx_hi - fx_lo) end   -- native -> 0..1
         points[#points + 1] = { time_s = t, value = v }
       end
     end
