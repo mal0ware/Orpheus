@@ -89,21 +89,67 @@ async def test_install_sound_pack_requires_confirm(mcp_client):
     assert "confirm=True" in res.data["note"]
 
 
-async def test_install_sound_pack_installs_with_confirm(mcp_client, monkeypatch, tmp_path):
-    installed_to = {}
+async def test_install_sound_pack_installs_with_confirm(mcp_client, monkeypatch):
+    calls = []
 
-    def fake_install(dest_dir, fetch=None):
-        installed_to["dir"] = dest_dir
-        return {"installed": True, "placed": ["sfizz.vst3", "orpheus_gm.sfz"], "dir": str(dest_dir)}
+    def fake_install(root=None, fetch=None, manifest=None):
+        calls.append(root)
+        return {"installed": True, "instruments": ["guitar", "bass", "piano"], "dir": "x",
+                "downloaded_files": 106, "already_present": 0}
 
     monkeypatch.setattr("orpheus_mcp.soundpack.install_sound_pack", fake_install)
     async with mcp_client as c:
         res = await c.call_tool("install_sound_pack", {"confirm": True})
-    assert res.data["installed"] is True
-    assert installed_to["dir"]  # placed into ~/.orpheus/vst, not asserting exact path
-    # The fake bridge has no "add_vst_path_and_rescan" verb, so the tool must fall back
-    # to the manual-instruction note rather than raising.
-    assert "rescan" in res.data
+    assert res.data["installed"] is True and calls == [None]  # the default pack folder
+    assert res.data["instruments"] == ["guitar", "bass", "piano"]
+
+
+def _install_piano_sfz(pack_root):
+    import shutil
+    from pathlib import Path
+
+    fix = Path(__file__).resolve().parent / "fixtures" / "sfz" / "UprightPianoKW-20220221.sfz"
+    (pack_root / "piano").mkdir(parents=True, exist_ok=True)
+    shutil.copy(fix, pack_root / "piano" / fix.name)
+
+
+async def test_load_sound_pack_instrument_sends_zones_in_batches(mcp_client, project, monkeypatch,
+                                                                 tmp_path):
+    monkeypatch.setenv("ORPHEUS_SOUNDPACK_DIR", str(tmp_path / "pack"))
+    _install_piano_sfz(tmp_path / "pack")
+    project.tracks.append(_make_track(project, "keys"))
+    async with mcp_client as c:
+        res = await c.call_tool(
+            "load_sound_pack_instrument", {"track": "keys", "instrument": "piano"}
+        )
+    assert res.data["zones_added"] == 36 and res.data["failed"] == []  # loud layer: 32 + 4
+    zones = [fx for fx in project.resolve_track("keys").fx if fx.startswith("RS5K:")]
+    assert len(zones) == 36
+
+
+def test_composers_use_the_pack_when_installed(client, project, monkeypatch, tmp_path):
+    from orpheus_mcp import soundpack
+    from orpheus_mcp.instruments import choose_instrument, load_instrument
+
+    project.installed_fx = ["VSTi: ReaSynth (Cockos)"]  # nothing on the allowlist
+    monkeypatch.setenv("ORPHEUS_SOUNDPACK_DIR", str(tmp_path / "pack"))
+    piano = next(i for i in soundpack.load_manifest()["instruments"] if i["id"] == "piano")
+    monkeypatch.setattr(
+        soundpack, "installed_instruments", lambda root=None, manifest=None: [piano]
+    )
+    _install_piano_sfz(tmp_path / "pack")
+    project.tracks.append(_make_track(project, "chords"))
+
+    choice = choose_instrument("keys", project.installed_fx)
+    assert choice == {"kind": "pack", "name": "piano", "source": "pack"}
+    res = load_instrument(client, "chords", choice)
+    assert res["zones_added"] == 36
+
+
+def test_composers_fall_back_to_stock_without_a_pack(project):
+    from orpheus_mcp.instruments import choose_instrument
+
+    assert choose_instrument("keys", ["VSTi: ReaSynth (Cockos)"])["source"] == "stock"
 
 
 def test_clear_track_midi_empties_take(client, project):

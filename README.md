@@ -70,7 +70,8 @@ reference"). `compare_character` turns the difference between two sounds into co
 - Audio: import your stems as time-locked tracks, render a track region to WAV, and clone a take
   onto new tracks (for doubles).
 - Instruments: Orpheus prefers instruments you have installed, and `suggest_free_vst` recommends
-  free ones.
+  free ones. An optional sound pack (`install_sound_pack`, about 24.5 MB) adds three public-domain
+  FreePats instruments (guitar, bass, upright piano) that play through REAPER's own sampler.
 
 Fifteen more bridge commands were built and used live in July but don't have MCP tools yet:
 renaming, colouring, moving and deleting tracks; regions; automation envelopes; trimming, windowing and
@@ -121,7 +122,8 @@ sung sketches are being built now (see [the roadmap](docs/roadmap.md)).
 ## Optional: non-commercial backends
 
 Some useful models allow only non-commercial use: YuE2 (sung song sketches), LarsNet (drum
-splitting). Orpheus is MIT, so these are off by default. You switch each one on by name:
+splitting). Orpheus is MIT, so these are off by default. Once the YuE2 backend lands, you'll
+switch each one on by name:
 
 ```json
 "env": { "ORPHEUS_NC_BACKENDS": "yue2" }
@@ -129,6 +131,17 @@ splitting). Orpheus is MIT, so these are off by default. You switch each one on 
 
 Their weights are never bundled. You download them yourself, under their own licence (CC BY-NC
 4.0 for YuE2), and Orpheus talks to them as a separate program.
+
+## Settings
+
+Set these in the `env` block of your MCP client config.
+
+| Variable | Values | What it does |
+|---|---|---|
+| `ORPHEUS_TOOLSET` | `default`, `explain`, `full` | Which tools Claude sees. `full` adds the not-built stubs. |
+| `ORPHEUS_ASR_DEVICE` | `auto` (default), `cpu`, `cuda` | Where lyric transcription runs. `auto` uses CUDA only after a test run in a separate process succeeds, so a broken cuDNN setup falls back to CPU instead of crashing the server. |
+| `REAPER_MCP_BRIDGE_DIR` | a folder | Where the bridge's request and response files live (default `~/.orpheus_bridge`). |
+| `ORPHEUS_NC_BACKENDS` | e.g. `yue2` | Planned: switches on named non-commercial backends. |
 
 ## Install
 

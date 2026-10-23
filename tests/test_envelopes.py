@@ -110,6 +110,26 @@ def test_fx_param_envelope_auto_creates_and_round_trips_normalized(client, proje
     assert got["points"][1]["value"] == pytest.approx(1.0)  # clamped to normalized range
 
 
+def test_fx_envelope_points_live_in_the_params_native_range(client, project):
+    """JSFX sliders keep their own range; REAPER envelopes store that native value. The wire
+    stays normalized (2026-07-31 live bug: 1.0 written raw landed as 0.01 of a 0..100 slider)."""
+    tr = _track(project, "vox")
+    tr.fx_param_ranges[(0, 2)] = (0.0, 100.0)  # e.g. a JSFX percentage slider
+    tr.fx_param_ranges[(0, 3)] = (20.0, 20000.0)  # e.g. a JSFX cutoff in Hz
+    pct, hz = {"fx_index": 0, "param_index": 2}, {"fx_index": 0, "param_index": 3}
+    client.call("set_envelope_points", track="vox", envelope=pct,
+                points=[{"time_s": 0.0, "value": 1.0}, {"time_s": 1.0, "value": 0.5}])
+    client.call("set_envelope_points", track="vox", envelope=hz,
+                points=[{"time_s": 0.0, "value": 0.5}])
+
+    assert [pt["value"] for pt in tr.envelopes[("fx", 0, 2)]] == [100.0, 50.0]
+    assert tr.envelopes[("fx", 0, 3)][0]["value"] == pytest.approx(10010.0)
+    got = client.call("get_envelope_points", track="vox", envelope=pct)
+    assert [pt["value"] for pt in got["points"]] == pytest.approx([1.0, 0.5])
+    got = client.call("get_envelope_points", track="vox", envelope=hz)
+    assert got["points"][0]["value"] == pytest.approx(0.5)
+
+
 # --------------------------------------------------------------------------- #
 # clear semantics
 # --------------------------------------------------------------------------- #

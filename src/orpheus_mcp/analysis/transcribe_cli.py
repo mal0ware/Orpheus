@@ -123,11 +123,16 @@ def transcribe(wav_path: Path, out_dir: Path) -> list[NoteEvent]:
     # console codepage (cp1252) can't encode it and the subprocess crashes with a
     # UnicodeEncodeError (verified live on this box). Force UTF-8 stdio for the child only.
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
-    subprocess.run(
-        [str(cli), str(out_dir), str(wav_path), "--save-note-events"],
-        check=True,
-        env=env,
+    argv = [str(cli), str(out_dir), str(wav_path), "--save-note-events"]
+    # Capture, never inherit: inside the MCP server stdout is the JSON-RPC channel, and the
+    # banner would corrupt it. Decode as UTF-8 (the child writes UTF-8), not the cp1252 locale.
+    proc = subprocess.run(
+        argv, capture_output=True, encoding="utf-8", errors="replace", env=env, check=False
     )
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode, argv, output=proc.stdout, stderr=proc.stderr
+        )
 
     csv_path = out_dir / f"{wav_path.stem}_basic_pitch.csv"
     return _parse_note_events_csv(csv_path.read_text(encoding="utf-8"))

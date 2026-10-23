@@ -164,7 +164,11 @@ def _decode_via_ffmpeg(p: Path) -> tuple[np.ndarray, int, str]:
     with tempfile.TemporaryDirectory() as td:
         tmp_wav = Path(td) / "decoded.wav"
         argv = ["ffmpeg", "-y", "-i", str(p), "-vn", str(tmp_wav)]
-        proc = subprocess.run(argv, capture_output=True, text=True, check=False)
+        # UTF-8, not the Windows locale: ffmpeg prints tags and paths as UTF-8, and a cp1252
+        # reader thread dies on bytes like 0x9D and hands back stderr=None.
+        proc = subprocess.run(
+            argv, capture_output=True, encoding="utf-8", errors="replace", check=False
+        )
         if proc.returncode != 0:
             stderr_tail = "\n".join(proc.stderr.strip().splitlines()[-_STDERR_TAIL_LINES:])
             raise DecodeError(
@@ -181,7 +185,8 @@ def _decode_via_ffmpeg(p: Path) -> tuple[np.ndarray, int, str]:
 def _ffmpeg_version() -> str:
     try:
         proc = subprocess.run(
-            ["ffmpeg", "-version"], capture_output=True, text=True, check=False
+            ["ffmpeg", "-version"], capture_output=True, encoding="utf-8", errors="replace",
+            check=False,
         )
         first_line = proc.stdout.splitlines()[0] if proc.stdout else ""
         parts = first_line.split()

@@ -40,6 +40,7 @@ IMPLEMENTED = {
     "list_installed_fx",
     "add_instrument",
     "install_sound_pack",
+    "load_sound_pack_instrument",
     # theory (M2)
     "get_scale_notes",
     "suggest_chord_progression",

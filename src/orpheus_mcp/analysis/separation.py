@@ -206,7 +206,9 @@ class AudioSeparatorEngine:
         # audio-separator prints a rich banner; force UTF-8 child stdio so the Windows cp1252
         # console codepage can't crash the subprocess (same fix as transcribe_cli).
         env = dict(os.environ, PYTHONIOENCODING="utf-8")
-        proc = subprocess.run(argv, capture_output=True, text=True, env=env, check=False)
+        proc = subprocess.run(  # UTF-8 + replace: never the cp1252 locale (see cachefs)
+            argv, capture_output=True, encoding="utf-8", errors="replace", env=env, check=False
+        )
         if proc.returncode != 0:
             tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-15:])
             raise SeparationError(

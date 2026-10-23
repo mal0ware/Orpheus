@@ -1,0 +1,577 @@
+{
+  "schema_version": 1,
+  "source": "FreePats, https://freepats.zenvoid.org (GitHub mirrors at pinned commits)",
+  "license": "CC0-1.0",
+  "license_note": "Every instrument here is published under the Creative Commons CC0 1.0 public domain dedication.",
+  "instruments": [
+    {
+      "id": "guitar",
+      "role": "guitar",
+      "name": "Spanish Classical Guitar (FreePats, 2019-06-18)",
+      "repo": "freepats/spanish-classical-guitar",
+      "commit": "6f4eb1b092acc88f5448cea1a0001bd07b971af8",
+      "sfz": "SpanishClassicalGuitar-20190618.sfz",
+      "velocity": 100,
+      "widen": null,
+      "files": [
+        {
+          "path": "SpanishClassicalGuitar-20190618.sfz",
+          "size": 2450,
+          "sha256": "7edec559c98c0658e9ad9e38156ef16346f81049fab96c6166fbb872f3f7d92e"
+        },
+        {
+          "path": "LICENSE",
+          "size": 7048,
+          "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+        },
+        {
+          "path": "README.md",
+          "size": 660,
+          "sha256": "441fd174c3cf718bdd6e00f9bc8e19ee16b69aebb551450bd8bdef378b746e94"
+        },
+        {
+          "path": "samples/A#1.flac",
+          "size": 302163,
+          "sha256": "c00a81011c1a3b1ae44768021f56c1732f49392cb5035b939cbf6a2a6e6d64fc"
+        },
+        {
+          "path": "samples/A#3.flac",
+          "size": 65413,
+          "sha256": "41f39ff65aa2ba1ec3db52f17a88970a905cbb9d374c3b3e0e489413f7dc6db5"
+        },
+        {
+          "path": "samples/A#4.flac",
+          "size": 67526,
+          "sha256": "2d69375350528ea02dbe078ab4e66bc37da0117ee1969ec8667c21ea770f959c"
+        },
+        {
+          "path": "samples/A#5.flac",
+          "size": 44256,
+          "sha256": "7043ece80f1027b712dce4b9b0195893ca74eaef7fab62761bd8dcda7ae37a80"
+        },
+        {
+          "path": "samples/A1.flac",
+          "size": 241760,
+          "sha256": "1f1e96a5f182f51bf9cedef97f5c7bcbb5aa1d459b32e320ca650b69eb8c7604"
+        },
+        {
+          "path": "samples/A2.flac",
+          "size": 122471,
+          "sha256": "692be630714f59824b612502034b53e9c376374386cb255b81a0bd3c4cdcdd92"
+        },
+        {
+          "path": "samples/A3.flac",
+          "size": 64016,
+          "sha256": "08d2e90e80839bdb77342d7dcc8a73e0ec8849607d1a750ce433f9e7f0789e06"
+        },
+        {
+          "path": "samples/A4.flac",
+          "size": 104527,
+          "sha256": "bac918520eb26172cd734e79df9c53fc206e5aab60884583dd7d9ab5b17d16d1"
+        },
+        {
+          "path": "samples/A5.flac",
+          "size": 53914,
+          "sha256": "a0111ff90a40a7d68155803d0708c3c025cc1db44c3e222270c900d56b845a43"
+        },
+        {
+          "path": "samples/B1.flac",
+          "size": 258837,
+          "sha256": "28d643b0a8003000b021dddb39b5d7fa260ae3b1690474358a074054ad6fd227"
+        },
+        {
+          "path": "samples/B2.flac",
+          "size": 94276,
+          "sha256": "fa2881b3cbeec65770890b16f74bcec8c0295952292b52ab3ffe95d130c0e879"
+        },
+        {
+          "path": "samples/B3.flac",
+          "size": 61734,
+          "sha256": "eb1c29a7ab345357ef5f783c581adc6a0e3c8164b712c723c1716b906567306a"
+        },
+        {
+          "path": "samples/B4.flac",
+          "size": 57831,
+          "sha256": "ca2b8e768bd7ce5b0037c3645b4c60aeaf077bb128ce3dd8eef98fcd3a36f778"
+        },
+        {
+          "path": "samples/B5.flac",
+          "size": 36008,
+          "sha256": "0c417e8aa71eb880d612e298285e78dc9762277a46227f9b04345e8be7d17066"
+        },
+        {
+          "path": "samples/C#2.flac",
+          "size": 233497,
+          "sha256": "de24503cc86d6619cf253443915aa6a1f9629c2ab4c06a256d6ab5d5db9177e4"
+        },
+        {
+          "path": "samples/C#4.flac",
+          "size": 76764,
+          "sha256": "fb19d94abb7a70ff13d4cdd33e27f77dd05f627cf65ee496d0caf1257518bc78"
+        },
+        {
+          "path": "samples/C#5.flac",
+          "size": 54098,
+          "sha256": "3004eac9668ec8d8858a54f8962ab6dec25ccc773c4d7d08b2b7d6e2dbb61e3b"
+        },
+        {
+          "path": "samples/C2.flac",
+          "size": 275304,
+          "sha256": "6997c7134ce02d437717dc3e279af9f390cefa87aa7f11fa2f350e9b9de50810"
+        },
+        {
+          "path": "samples/C3.flac",
+          "size": 97009,
+          "sha256": "eac0fe1fc03225d81f813667babee072662c101800bc5ad7fb12d9ef3324b986"
+        },
+        {
+          "path": "samples/C4.flac",
+          "size": 66583,
+          "sha256": "e8fcd63c262ebef3e84d1f24242918cc578f8b0db54049ad109815b01d1226f0"
+        },
+        {
+          "path": "samples/C5.flac",
+          "size": 52003,
+          "sha256": "84b8a00c7caff015d8b7165330f0c868fd73d300adb3199cb15452841d1c5444"
+        },
+        {
+          "path": "samples/C6.flac",
+          "size": 34382,
+          "sha256": "3de4c476b133858e67f701f28caf249598ffd37e25c9aba1301000a345c5293f"
+        },
+        {
+          "path": "samples/D#2.flac",
+          "size": 202512,
+          "sha256": "3e0417158950d47e4cc83980966dc4225d9886a96f59563b41b30840b4b7863e"
+        },
+        {
+          "path": "samples/D#4.flac",
+          "size": 81425,
+          "sha256": "7df36cee17712043580d868ec292076321e586fac46799c15bc147d9a3f6f0a8"
+        },
+        {
+          "path": "samples/D#5.flac",
+          "size": 44669,
+          "sha256": "9fa313d7dd5d00c84947552e0bdcdc9f92be9fd80b68bf0d641b92ead1d99dad"
+        },
+        {
+          "path": "samples/D2.flac",
+          "size": 172252,
+          "sha256": "5d98684b41724026109468f8b5ab9489f5bfee1311d3db1aae7d18631e0c0e7c"
+        },
+        {
+          "path": "samples/D3.flac",
+          "size": 120701,
+          "sha256": "c4c08268b1147446afcd7c872355aa71d03822c12fb1b56c7f275617ab2b01a1"
+        },
+        {
+          "path": "samples/D4.flac",
+          "size": 80992,
+          "sha256": "1fe411c50d107374e59bc6a89e6513d32f4608783c8be8c36f0b81fdab5dd321"
+        },
+        {
+          "path": "samples/D5.flac",
+          "size": 47330,
+          "sha256": "611132fb0b34979c9681a7a4d826a12f36dd678447e83e5689837e4c2e11221d"
+        },
+        {
+          "path": "samples/E2.flac",
+          "size": 122883,
+          "sha256": "18ce73f4243991132901b47efe3affa155c1b934d838cf02a29df5c62c8706a8"
+        },
+        {
+          "path": "samples/E3.flac",
+          "size": 109663,
+          "sha256": "f8cc3192a328f10cdb774ff3bf5efb06d1015e64c5ae141c1c31143bb329c915"
+        },
+        {
+          "path": "samples/E4.flac",
+          "size": 98031,
+          "sha256": "b8882fbba2b6a9d0cbae02867be4273aa8f0fddd00bc6f3d993dff6c77997246"
+        },
+        {
+          "path": "samples/E5.flac",
+          "size": 47804,
+          "sha256": "f8323fb0fb66dd655683e1944f0073281e44a6244fdb3f2922851a9cb120bc81"
+        },
+        {
+          "path": "samples/F#3.flac",
+          "size": 100951,
+          "sha256": "e948bee94ac13c463de192d4d03589fe249d2bf425055be0142d6864541d4b59"
+        },
+        {
+          "path": "samples/F#4.flac",
+          "size": 84744,
+          "sha256": "bff470dc100007504ffa6f4e1dc0ced43962b4f37a1904f616e92d09edd636d0"
+        },
+        {
+          "path": "samples/F#5.flac",
+          "size": 48294,
+          "sha256": "10c4a73031ad13aba597453053382bce13bc7c4beee6ee845e69ab269857b0b6"
+        },
+        {
+          "path": "samples/F2.flac",
+          "size": 120165,
+          "sha256": "12da0a9f876a3feaa2ec8960f13f1465a3da04d662d1bf5518bab97908411c8a"
+        },
+        {
+          "path": "samples/F3.flac",
+          "size": 103480,
+          "sha256": "ea752040ff5373601d41eaf55127b294b5e9f3524f23ddbbd21f1b5edbd0e5ea"
+        },
+        {
+          "path": "samples/F4.flac",
+          "size": 84382,
+          "sha256": "8d66344aa2f261aec62d984370a39e479f33398be887df30543430fb5812f1e1"
+        },
+        {
+          "path": "samples/F5.flac",
+          "size": 50703,
+          "sha256": "e4096ad0b1812adf7e3f71f231c18d3c356658cc688f058f5bc05a92e2996a0e"
+        },
+        {
+          "path": "samples/G#1.flac",
+          "size": 304146,
+          "sha256": "cc38eedf15892f79515972192b55889d3c39415caa17f86ef610a1069fc3302c"
+        },
+        {
+          "path": "samples/G#3.flac",
+          "size": 79319,
+          "sha256": "47a68a55575dd6159525189ad1bd26e0d66e04d49b5efc0775a3719c31298756"
+        },
+        {
+          "path": "samples/G#5.flac",
+          "size": 37387,
+          "sha256": "76c833e28076431b23c21e40ad1348a36ed37b4fa12d90ffccf97dc44ff948dc"
+        },
+        {
+          "path": "samples/G1.flac",
+          "size": 327869,
+          "sha256": "c0821f508a325de97aaba935484705501b972ffeee6d730f20f32cf1705174d9"
+        },
+        {
+          "path": "samples/G2.flac",
+          "size": 122348,
+          "sha256": "71e69e5eff738f668b4e3e2f53f72de7725fd3b7969339bb44aba8e7c1df78d2"
+        },
+        {
+          "path": "samples/G3.flac",
+          "size": 109718,
+          "sha256": "d4f3277f48067a3b7e1818b34d08eeec66d727101c744554632397aeb7dd844d"
+        },
+        {
+          "path": "samples/G4.flac",
+          "size": 71824,
+          "sha256": "5e3423ab0440fe8cc337ada529c2bb1696914e4465b336d3635630b4ea7b4916"
+        },
+        {
+          "path": "samples/G5.flac",
+          "size": 49878,
+          "sha256": "0d887f7f14d526e5af1a1aa7060af92c49e3dc57f1e534c215ce93b8e3f31cc8"
+        }
+      ]
+    },
+    {
+      "id": "bass",
+      "role": "bass",
+      "name": "Picked Electric Bass YR (FreePats, 2019-09-30)",
+      "repo": "freepats/electric-bass-YR",
+      "commit": "8dcb7ea9116f417273ef8c030d15e7b3aa654301",
+      "sfz": "PickedBassYR 20190930.sfz",
+      "velocity": 100,
+      "widen": [
+        24,
+        55
+      ],
+      "files": [
+        {
+          "path": "PickedBassYR 20190930.sfz",
+          "size": 827,
+          "sha256": "08e69035ccd7fc6b47ab79f216614858e14a408a900801b89fc517d404a54626"
+        },
+        {
+          "path": "LICENSE.txt",
+          "size": 7048,
+          "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+        },
+        {
+          "path": "README.txt",
+          "size": 571,
+          "sha256": "5a5cba6c7c44bdebd3ca195e4e3077c477bbfbee7947a6a37da52b2249649c2f"
+        },
+        {
+          "path": "samples/pick/A#.flac",
+          "size": 224803,
+          "sha256": "73687cb604b3f689f2556700b818f30f88008439c4183dd320229b99c411eedc"
+        },
+        {
+          "path": "samples/pick/A.flac",
+          "size": 270047,
+          "sha256": "2addffa45abc40373e2e878d1385b4a06673b99c61e845f82d74571e4f77eb35"
+        },
+        {
+          "path": "samples/pick/B.flac",
+          "size": 207027,
+          "sha256": "921526901e3a377ce20e05b391995788a09ea97100d00bbc79ed4626a0b4d31d"
+        },
+        {
+          "path": "samples/pick/C#.flac",
+          "size": 195625,
+          "sha256": "6ac9dfefcda934527bf835c2436c3e9cef26a4ca5c8032514a35c35951065f1b"
+        },
+        {
+          "path": "samples/pick/C.flac",
+          "size": 195990,
+          "sha256": "82401893346e48108ae217deead6cd228da1e305e74227ade91c1e7c2e0c0d95"
+        },
+        {
+          "path": "samples/pick/D#.flac",
+          "size": 167989,
+          "sha256": "4a1ad4995f0a3b79c28355dde89a997b4564937d478045aab9bb31c9603ca2a1"
+        },
+        {
+          "path": "samples/pick/D.flac",
+          "size": 184792,
+          "sha256": "2778406fe171395f4d44095dff80ed7a3cc2e85f4c8c6181e665cc4810d8ff18"
+        },
+        {
+          "path": "samples/pick/E.flac",
+          "size": 334354,
+          "sha256": "64759164edef31bafe90920831ee40bb2d1c4ca3e5196ad6efa917ddcd5b5ed1"
+        },
+        {
+          "path": "samples/pick/E2.flac",
+          "size": 134436,
+          "sha256": "7fc53bd65409dad7c18e8c6141a37f77f2cff744516d42e51768e3fafee59ae5"
+        },
+        {
+          "path": "samples/pick/F#.flac",
+          "size": 276452,
+          "sha256": "cbf8ed46549ab215c3348d9ada87405df8b343b20973b04bf93e801bd31e518e"
+        },
+        {
+          "path": "samples/pick/F.flac",
+          "size": 278721,
+          "sha256": "cbfc49150e357e79e0ffe7197979bf773de628cf495e38db468e243f8a9d1b13"
+        },
+        {
+          "path": "samples/pick/G#.flac",
+          "size": 223344,
+          "sha256": "52a6c5963e0bd9b368a2ff1081809f792766d8e949ab7c73506dc627479f1b82"
+        },
+        {
+          "path": "samples/pick/G.flac",
+          "size": 228251,
+          "sha256": "6839132e55073e6d69dee7c193dc80e2b453050748b799be4e5c22e98a750513"
+        }
+      ]
+    },
+    {
+      "id": "piano",
+      "role": "keys",
+      "name": "Upright Piano KW, loud layer (FreePats, 2022-02-21)",
+      "repo": "freepats/upright-piano-KW",
+      "commit": "570f6c60ed2eff67accad3b85d5b452e57a3ad28",
+      "sfz": "UprightPianoKW-20220221.sfz",
+      "velocity": 100,
+      "widen": null,
+      "files": [
+        {
+          "path": "UprightPianoKW-20220221.sfz",
+          "size": 6554,
+          "sha256": "c820c9442e9c1852e5a4f265b52085eddf311b31b5c4ddfe3a84ba9d8929217e"
+        },
+        {
+          "path": "LICENSE",
+          "size": 7048,
+          "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+        },
+        {
+          "path": "README.md",
+          "size": 881,
+          "sha256": "6cd95a20c43ebe8c9abb899137afd72bfc17120c07f073890a3692eaf99def3f"
+        },
+        {
+          "path": "samples/A0vH.flac",
+          "size": 631461,
+          "sha256": "1f45f97db950585373723a551cbefa493e27a11df4c3213252563cd9310b08b6"
+        },
+        {
+          "path": "samples/A1vH.flac",
+          "size": 998694,
+          "sha256": "92dd7c7af24bb5789aadadcfb9baa99627c341eaae808849cce0ac72f0ee23b7"
+        },
+        {
+          "path": "samples/A3vH.flac",
+          "size": 418953,
+          "sha256": "0dd04df799269779ea705dffec0ca8a2c304209cd5ee0d70c95ea79b1c753566"
+        },
+        {
+          "path": "samples/A4vH.flac",
+          "size": 274802,
+          "sha256": "4a7acdcb5e3fb41a165414e86afbceb74d7417b28c566b65fd7f836b2cc4535d"
+        },
+        {
+          "path": "samples/A5vH.flac",
+          "size": 252078,
+          "sha256": "849570ec5bda68318cf1598230d6f3d922cfa8673fa199aa64d41ce2349e9bff"
+        },
+        {
+          "path": "samples/A6vH.flac",
+          "size": 141803,
+          "sha256": "16a8249a8f42efe1102b9f852efc4c0376c9a742f7ba1b7bd63516f79184bc84"
+        },
+        {
+          "path": "samples/A7vH.flac",
+          "size": 102324,
+          "sha256": "b3190d9854c7d052bd26985b1a1190cb52df3927fa588cae8b0ce30e14000081"
+        },
+        {
+          "path": "samples/B0vH.flac",
+          "size": 689242,
+          "sha256": "b665f8274050c7a45dbb82589144c2420da4c7138fe3e68c3c5c87fb94d6c616"
+        },
+        {
+          "path": "samples/B1vH.flac",
+          "size": 836980,
+          "sha256": "eac636ee0e23c53ec17ed206d46364b566aeb62093bd197ea1f0f43f917a9b93"
+        },
+        {
+          "path": "samples/B2vH.flac",
+          "size": 837698,
+          "sha256": "5786f8bb2fe9bae5e3f127b975f2320c5d90e109d5337170b3758a35892f920d"
+        },
+        {
+          "path": "samples/B3vH.flac",
+          "size": 564158,
+          "sha256": "3af7b68b9f680000e375cac482246047ba0a75459e36869ae721525422a54276"
+        },
+        {
+          "path": "samples/B4vH.flac",
+          "size": 322856,
+          "sha256": "1c5f3229666eebb84e0c873b6a52111ffd9411f5455f6f1fb6a5be1ad626a287"
+        },
+        {
+          "path": "samples/B5vH.flac",
+          "size": 259462,
+          "sha256": "2300c08469c598ceb7f4d591d449640d95feedfa647df22e14912657776331dc"
+        },
+        {
+          "path": "samples/B6vH.flac",
+          "size": 115970,
+          "sha256": "01d5a16030a91b500001dcbddd61a30c80696c7f37cf18c83dd114810893eb49"
+        },
+        {
+          "path": "samples/B7vH.flac",
+          "size": 95737,
+          "sha256": "030e4f4b05b7b04ffdda85cec3faf7bf7ff3e6952cd310a2154cd836936edcb3"
+        },
+        {
+          "path": "samples/C1vH.flac",
+          "size": 928522,
+          "sha256": "35de21fbffc810347b2749172dd61c017aa615cdb6d218388aab4f589a6e8a5b"
+        },
+        {
+          "path": "samples/C2vH.flac",
+          "size": 724830,
+          "sha256": "ef8cf8a9015b95a94b6c92a748a74bbe9af56a052bb784c2d77f9cb66e346b33"
+        },
+        {
+          "path": "samples/C3vH.flac",
+          "size": 680844,
+          "sha256": "9cc9ac393a70282d5dedc97dd886794bbc3118a752fdc400da3763027488fcd2"
+        },
+        {
+          "path": "samples/C5vH.flac",
+          "size": 293194,
+          "sha256": "a8098d1a4e14b19becbd224e3978d3232759681a545f237d54269a231e43d88a"
+        },
+        {
+          "path": "samples/C6vH.flac",
+          "size": 221663,
+          "sha256": "1dbdb14f7d81b1b6ad78820ad6bd70b6c20e052ce25a801de3386daf6277e7fb"
+        },
+        {
+          "path": "samples/C7vH.flac",
+          "size": 169596,
+          "sha256": "f8c6a694884d70fed9ba41eeb0095573ac5f4189be30eed803bcc49cd744f251"
+        },
+        {
+          "path": "samples/C8vH.flac",
+          "size": 85467,
+          "sha256": "2ee1d210beb846177ccb27c2e1dd163e275cb09ac2fdc5d861cd3b497dcedbc6"
+        },
+        {
+          "path": "samples/D#1vH.flac",
+          "size": 1054764,
+          "sha256": "66eebb7c9b2b50eff7d5c41f47297fbac8b6d44d43d28ef2f8a539ab20ec7327"
+        },
+        {
+          "path": "samples/D#2vH.flac",
+          "size": 901188,
+          "sha256": "99beb94950194f0cc2352de4eb35e4a27bfcb2f530e9a2732c065bad0fdbf7c6"
+        },
+        {
+          "path": "samples/D#3vH.flac",
+          "size": 561175,
+          "sha256": "e6f54bb7aef81e4e7995d5ff5b7cadd4dc4c3502f6c29fdacc0a6eb56e65f725"
+        },
+        {
+          "path": "samples/D#4vH.flac",
+          "size": 449018,
+          "sha256": "b09be129c8bdc8f3ce076f8fe6d168bf8984c44a8343cf9fc4424f18680b73e4"
+        },
+        {
+          "path": "samples/D#5vH.flac",
+          "size": 319664,
+          "sha256": "6e36f5fa2401c9da199bcacbde98a6860082d983e53649db5cc2013fb3ad2e00"
+        },
+        {
+          "path": "samples/D#6vH.flac",
+          "size": 190257,
+          "sha256": "4df6a469f6faae438004a6b5913463024d532cab809039b72520d3b657d1accb"
+        },
+        {
+          "path": "samples/D#7vH.flac",
+          "size": 87753,
+          "sha256": "51d87c2008326ad5a0936300187bb7b2741c1b600f947e6bd26bf304b2d45c2a"
+        },
+        {
+          "path": "samples/F#1vH.flac",
+          "size": 776066,
+          "sha256": "ef5418e17c62ef1efa10f872798d2cc540abaabe2360620e05dc50cbaaf8b337"
+        },
+        {
+          "path": "samples/F#2vH.flac",
+          "size": 872009,
+          "sha256": "32ebdd497e49cda9383924560e3a7a87d202c6d062981ae270970051d2a7aaf1"
+        },
+        {
+          "path": "samples/F#3vH.flac",
+          "size": 504879,
+          "sha256": "98e2301025525d6db84c6eafe49ffa9b4605222a7af68b156a4b5eef5971ec9c"
+        },
+        {
+          "path": "samples/F#4vH.flac",
+          "size": 464863,
+          "sha256": "c290966dcd889ed05614fbec9505b2f2ad5df8210dd372691026233ae8b7983a"
+        },
+        {
+          "path": "samples/F#5vH.flac",
+          "size": 200906,
+          "sha256": "f78a906e5066694496ce244c2a1c2a6b3c266228fa573e2ce4a07ada2c82b90a"
+        },
+        {
+          "path": "samples/F#6vH.flac",
+          "size": 137953,
+          "sha256": "22aace81e2fa976f42b8fcf1ad1a1e900baca0edf8c99eee2e84fd6d68e785b9"
+        },
+        {
+          "path": "samples/F#7vH.flac",
+          "size": 85050,
+          "sha256": "93be19832569c124e4c74f7bccaefea69e392e6f22799c389c045356f51086aa"
+        }
+      ]
+    }
+  ]
+}

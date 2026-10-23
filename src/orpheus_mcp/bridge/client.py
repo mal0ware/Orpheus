@@ -2,7 +2,7 @@
 
 Protocol (validated by shiehn/total-reaper-mcp and xDarkzx/Reaper-MCP):
 
-    1. Assign a sequential request_id.
+    1. Assign a request_id that is unique across the whole process (see _next_request_id).
     2. Write <bridge_dir>/request_<id>.json   — ATOMICALLY (write .tmp then os.replace),
        so the in-REAPER poller never reads a half-written file. This is THE critical
        correctness rule of the whole bridge.
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,25 @@ HEARTBEAT_MAX_AGE_S = 3.0
 
 # Keep every single call bounded so REAPER's single-threaded audio engine never stalls.
 MAX_NOTES_PER_CALL = 512
+
+_ID_LOCK = threading.Lock()
+_last_request_id = 0
+
+
+def _next_request_id() -> int:
+    """A request id no other caller in this process has used, and in practice no other process.
+
+    Every tool call builds its own BridgeClient and FastMCP runs sync tools on a thread pool, so
+    a per-client counter made parallel calls collide on ``request_1.json``. Ids are therefore
+    process-wide and lock-protected, and they follow the wall clock in microseconds (about
+    1.8e15, well under 2**53, so JSON and Lua read them as exact integers). A process started
+    later starts higher than any id an earlier one has handed out, since the bridge can't take
+    a call per microsecond. Still plain digits: the Lua loop scans ``^request_%d+%.json$``.
+    """
+    global _last_request_id
+    with _ID_LOCK:
+        _last_request_id = max(_last_request_id + 1, time.time_ns() // 1_000)
+        return _last_request_id
 
 
 class BridgeError(RuntimeError):
@@ -62,7 +82,7 @@ class BridgeClient:
     ) -> None:
         self.bridge_dir = Path(bridge_dir) if bridge_dir else DEFAULT_BRIDGE_DIR
         self.timeout_s = timeout_s
-        self._request_id = 0
+        self._request_id = 0  # the last id THIS client used (ids come from _next_request_id)
         self.bridge_dir.mkdir(parents=True, exist_ok=True)
 
     # -- health ----------------------------------------------------------- #
@@ -97,8 +117,8 @@ class BridgeClient:
                 f"REAPER bridge not running — no heartbeat in {self.bridge_dir}. "
                 "Run orpheus_bridge.lua inside REAPER."
             )
-        self._request_id += 1
-        rid = self._request_id
+        rid = _next_request_id()
+        self._request_id = rid
         self._atomic_write(
             self.bridge_dir / f"request_{rid}.json", {"id": rid, "fn": fn, "params": params}
         )

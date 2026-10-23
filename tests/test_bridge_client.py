@@ -106,13 +106,14 @@ def test_no_leftover_request_or_response_files(tmp_path):
         assert leftovers == []
 
 
-def test_request_ids_are_sequential(tmp_path):
+def test_request_ids_strictly_increase(tmp_path):
     with FakeReaperBridge(tmp_path, {"id_probe": lambda p: "ok"}):
         client = BridgeClient(bridge_dir=tmp_path)
         client.call("id_probe")
+        first = client._request_id
         client.call("id_probe")
-    # The client must use strictly increasing ids (we assert via the private counter).
-    assert client._request_id == 2
+    # Ids are process-wide (tests/test_bridge_request_ids.py), not 1, 2, 3 per client.
+    assert client._request_id > first > 0
 
 
 # --------------------------------------------------------------------------- #

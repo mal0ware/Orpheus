@@ -93,6 +93,13 @@ class AnalysisConfig:
     VAD_MIN_WINDOW_S: float = 0.10                  # drop active windows shorter than this
     LYRIC_LINE_GAP_S: float = 1.0                   # §14.1.4 new line when word gap exceeds this
     LYRIC_SENTENCE_PUNCT: str = ".!?"               # §14.1.4 line-ending punctuation
+    # Sung transcripts are sparsely punctuated (2026-07-25: 1 full stop, 26 commas, 3 pauses
+    # over 1 s in 327 words), so lines also break softly at commas and breaths, but never into
+    # lines shorter than LYRIC_LINE_MIN_WORDS, and over-long lines split at their widest pause.
+    LYRIC_SOFT_PUNCT: str = ",;"                    # soft line break after these
+    LYRIC_LINE_BREATH_S: float = 0.5                # soft line break on a pause longer than this
+    LYRIC_LINE_MIN_WORDS: int = 3                   # soft breaks never make shorter lines
+    LYRIC_LINE_MAX_WORDS: int = 12                  # longer lines split at their widest pause
     LYRIC_CHORUS_SIMILARITY: float = 0.80           # §14.1.4 near-identical line match ratio
     LYRIC_SECTION_SNAP_S: float = 1.0               # §14.1.4 _snap_to_recon edge-snap tolerance
     # --- §14.2 locate_lyric resolver (Task 8.2, plan-added) ---

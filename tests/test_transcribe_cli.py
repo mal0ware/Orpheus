@@ -52,24 +52,42 @@ def test_transcribe_invokes_expected_argv_and_parses_csv(tmp_path, monkeypatch):
 
     captured: dict = {}
 
-    def fake_run(argv, check, env):
+    def fake_run(argv, **kwargs):
         captured["argv"] = argv
-        captured["check"] = check
-        captured["env"] = env
+        captured.update(kwargs)
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "mix_basic_pitch.csv").write_text(_FIXTURE_CSV, encoding="utf-8")
+        return transcribe_cli.subprocess.CompletedProcess(argv, 0, stdout="✨ done", stderr="")
 
     monkeypatch.setattr(transcribe_cli.subprocess, "run", fake_run)
 
     events = transcribe(wav, out_dir)
 
     assert captured["argv"] == [str(cli), str(out_dir), str(wav), "--save-note-events"]
-    assert captured["check"] is True
     assert captured["env"]["PYTHONIOENCODING"] == "utf-8"
+    # Inside the MCP server, stdout IS the JSON-RPC channel: the child's banner must be
+    # captured, never inherited, and decoded as UTF-8 rather than the cp1252 locale.
+    assert captured["capture_output"] is True
+    assert captured["encoding"] == "utf-8"
     assert events == [
         NoteEvent(0.023, 0.512, 60, 90, None),
         NoteEvent(0.512, 1.001, 64, 80, [10, 12, 15]),
     ]
+
+
+def test_transcribe_failure_raises_with_the_childs_stderr(tmp_path, monkeypatch):
+    cli = _fake_cli(tmp_path)
+    monkeypatch.setattr(transcribe_cli, "transcribe_env_cli", lambda: cli)
+
+    def fake_run(argv, **kwargs):
+        return transcribe_cli.subprocess.CompletedProcess(
+            argv, 2, stdout="", stderr="Traceback (most recent call last)\nValueError: bad wav"
+        )
+
+    monkeypatch.setattr(transcribe_cli.subprocess, "run", fake_run)
+    with pytest.raises(transcribe_cli.subprocess.CalledProcessError) as info:
+        transcribe(tmp_path / "mix.wav", tmp_path / "out")
+    assert "bad wav" in info.value.stderr
 
 
 # --------------------------------------------------------------------------- CSV parsing

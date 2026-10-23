@@ -177,6 +177,13 @@ reaper = {
     if name == "Pan" then return tr.envelopes.pan end
     return nil
   end,
+  -- (value, minval, maxval) like the real API. VST params are 0..1; JSFX sliders keep
+  -- their own range (tr.fx_ranges["fxNpM"] = {min, max}) — envelopes store THAT range.
+  TrackFX_GetParam = function(tr, fi, pi)
+    local r = (tr.fx_ranges or {})["fx" .. fi .. "p" .. pi]
+    if r then return r[1], r[1], r[2] end
+    return 0.0, 0.0, 1.0
+  end,
   GetFXEnvelope = function(tr, fi, pi, create)
     tr.envelopes = tr.envelopes or {}
     local key = "fx" .. fi .. "p" .. pi
@@ -631,6 +638,28 @@ eq(r12d.result.envelope, "fx 0 param 4", "fx envelope described")
 local g12d = call("get_envelope_points", { track = "vox",
   envelope = { fx_index = 0, param_index = 4 } })
 approx(g12d.result.points[2].value, 1.0, "normalized value clamped to 1", 1e-9)
+
+-- 12d2. FX envelopes live in the parameter's NATIVE range (2026-07-31 live bug: on a JSFX
+-- slider, normalized 1.0 written raw landed as 1/100 of the range). Writes map 0..1 into
+-- [min, max]; reads map back. A plain 0..1 VST param is unchanged (12d above).
+voxe.fx_ranges = { fx0p2 = { 0.0, 100.0 }, fx0p3 = { 20.0, 20000.0 } }
+local r12h = call("set_envelope_points", { track = "vox",
+  envelope = { fx_index = 0, param_index = 2 },
+  points = { { time_s = 0.0, value = 1.0 }, { time_s = 1.0, value = 0.5 } } })
+eq(r12h.ok, true, "jsfx-range envelope write ok")
+approx(voxe.envelopes.fx0p2.points[1].v, 100.0, "1.0 -> top of a 0..100 slider", 1e-9)
+approx(voxe.envelopes.fx0p2.points[2].v, 50.0, "0.5 -> middle of a 0..100 slider", 1e-9)
+local g12h = call("get_envelope_points", { track = "vox",
+  envelope = { fx_index = 0, param_index = 2 } })
+approx(g12h.result.points[1].value, 1.0, "reads back normalized 1.0", 1e-9)
+approx(g12h.result.points[2].value, 0.5, "reads back normalized 0.5", 1e-9)
+call("set_envelope_points", { track = "vox", envelope = { fx_index = 0, param_index = 3 },
+  points = { { time_s = 0.0, value = 0.5 } } })
+approx(voxe.envelopes.fx0p3.points[1].v, 10010.0, "0.5 -> 20..20000 midpoint", 1e-9)
+local g12i = call("get_envelope_points", { track = "vox",
+  envelope = { fx_index = 0, param_index = 3 } })
+approx(g12i.result.points[1].value, 0.5, "offset range reads back normalized", 1e-9)
+approx(voxe.envelopes.fx0p4.points[1].v, 0.25, "0..1 VST param stored unchanged", 1e-9)
 
 -- 12e. guards: missing envelope reads empty; bad spec; empty points; 513-point cap.
 local g12e = call("get_envelope_points", { track = "vox",
