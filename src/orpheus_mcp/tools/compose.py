@@ -139,8 +139,7 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         tracks, lays a genre-appropriate groove, and loads the best available instrument per
         role (preferring the user's own installed plugins). Returns the tempo, tracks, and
         the instrument chosen per role."""
-        from orpheus_mcp.drumkit import load_drumkit
-        from orpheus_mcp.instruments import select_instrument
+        from orpheus_mcp.instruments import choose_instrument, load_instrument
         from orpheus_mcp.theory.genre_profiles import get_profile
         from orpheus_mcp.theory.patterns import bassline_notes, parse_drum_grid
 
@@ -168,26 +167,20 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
             for hit in backbone
         ]
         _write_notes(bridge, "drums", drum_notes)
-        drums_instrument = select_instrument("drums", inventory)
-        if drums_instrument["kind"] == "drumkit":
-            load_drumkit(bridge, "drums")
-        else:
-            bridge.call("add_instrument", track="drums", kind="named",
-                        name=drums_instrument["name"])
+        drums_instrument = choose_instrument("drums", inventory)
+        load_instrument(bridge, "drums", drums_instrument)
 
         # chords: voice-led block chords, one bar per chord.
         voiced = voice_lead(resolve_progression(full_prog, key=tonic, mode=mode, octave=4))
         _write_notes(bridge, "chords", _chord_notes(voiced, beats_per_chord=4.0))
-        chords_instrument = select_instrument("keys", inventory)
-        bridge.call("add_instrument", track="chords", kind="named",
-                    name=chords_instrument["name"])
+        chords_instrument = choose_instrument("keys", inventory)
+        load_instrument(bridge, "chords", chords_instrument)
 
         # bass: root notes following the same progression, one octave register down.
         bass_chords = resolve_progression(full_prog, key=tonic, mode=mode, octave=2)
         _write_notes(bridge, "bass", bassline_notes(bass_chords, style="root"))
-        bass_instrument = select_instrument("bass", inventory)
-        bridge.call("add_instrument", track="bass", kind="named",
-                    name=bass_instrument["name"])
+        bass_instrument = choose_instrument("bass", inventory)
+        load_instrument(bridge, "bass", bass_instrument)
 
         return {
             "genre": genre,

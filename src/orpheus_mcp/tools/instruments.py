@@ -40,25 +40,32 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
 
     @mcp.tool(annotations=_DESTRUCTIVE)
     def install_sound_pack(confirm: bool = False) -> dict:
-        """OPTIONAL, opt-in: download ONE BSD-licensed sfizz .vst3 + a CC0 patch into a
-        user-writable VST folder for a nicer default sound. Requires confirm=True. No admin,
-        no installer, no licensed software. Falls back to stock if declined."""
+        """OPTIONAL, opt-in: download a small default sound pack. Three CC0 (public domain)
+        FreePats instruments: Spanish classical guitar, picked electric bass, and an upright
+        piano (loud layer). About 24.5 MB from FreePats' GitHub at pinned commits, every file
+        sha256-checked, into ~/.orpheus/soundpack. They play through REAPER's own sampler
+        (RS5k): no plugin, no installer, no rescan. Requires confirm=True. After installing,
+        composers use these instead of stock ReaSynth when no better installed instrument
+        exists, and load_sound_pack_instrument puts one on any track."""
+        from orpheus_mcp import soundpack
+
         if not confirm:
+            manifest = soundpack.load_manifest()
+            size = sum(f["size"] for i in manifest["instruments"] for f in i["files"])
+            names = ", ".join(i["name"] for i in manifest["instruments"])
             return {
                 "installed": False,
-                "note": "Set confirm=True to install the open-source sfizz + CC0 pack. "
-                        "Stock instruments are used until then.",
+                "note": f"Set confirm=True to download the CC0 FreePats pack "
+                        f"({size / 1e6:.1f} MB: {names}). Stock instruments are used until then.",
             }
-        import os
-        from pathlib import Path
+        return soundpack.install_sound_pack()
 
-        from orpheus_mcp.soundpack import install_sound_pack as _install
+    @mcp.tool(annotations=_DESTRUCTIVE)
+    def load_sound_pack_instrument(track: str, instrument: str) -> dict:
+        """Put an installed sound-pack instrument ('piano', 'bass', 'guitar') on `track` as
+        REAPER sampler (RS5k) zones, one per recorded note range. Run install_sound_pack first."""
+        from orpheus_mcp.instruments import load_instrument
 
-        vst_dir = Path(os.path.expanduser("~")) / ".orpheus" / "vst"
-        result = _install(vst_dir)
-        # Point REAPER at the folder + rescan (best-effort; stock still works if this fails).
-        try:
-            BridgeClient().call("add_vst_path_and_rescan", path=str(vst_dir))
-        except Exception:  # noqa: BLE001
-            result["rescan"] = "manual — add the folder to REAPER's VST paths + rescan"
-        return result
+        return load_instrument(
+            BridgeClient(), track, {"kind": "pack", "name": instrument, "source": "pack"}
+        )

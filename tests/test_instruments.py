@@ -17,8 +17,13 @@ def test_prefers_installed_allowlisted():
 
 
 def test_pack_when_no_install_match():
-    got = select_instrument("keys", inventory=["ReaSynth"], pack_installed=True)
-    assert got == {"kind": "named", "name": "sfizz", "source": "pack"}
+    got = select_instrument("keys", inventory=["ReaSynth"], pack={"id": "piano", "role": "keys"})
+    assert got == {"kind": "pack", "name": "piano", "source": "pack"}
+
+
+def test_installed_instrument_beats_the_pack():
+    got = select_instrument("keys", inventory=["Surge XT"], pack={"id": "piano", "role": "keys"})
+    assert got["source"] == "installed"
 
 
 def test_stock_pitched_fallback():

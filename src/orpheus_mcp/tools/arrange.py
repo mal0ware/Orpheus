@@ -5,8 +5,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from orpheus_mcp.bridge import BridgeClient
-from orpheus_mcp.drumkit import load_drumkit
-from orpheus_mcp.instruments import select_instrument
+from orpheus_mcp.instruments import choose_instrument, load_instrument
 from orpheus_mcp.theory.chords import resolve_progression, voice_lead
 from orpheus_mcp.theory.melody import parse_melody
 from orpheus_mcp.theory.patterns import DRUM_PATTERNS, bassline_notes, parse_drum_grid
@@ -47,9 +46,7 @@ def _build_section(
     chord_notes = _chord_notes(filled, 4.0)
     _write_notes(bridge, chord_track, chord_notes, at_bar=at_bar)
     if chord_track not in loaded:
-        ci = select_instrument("keys", inv)
-        bridge.call("add_instrument", track=chord_track, kind="named",
-                    name=ci["name"] if ci["kind"] == "named" else "ReaSynth")
+        load_instrument(bridge, chord_track, choose_instrument("keys", inv))
         loaded.add(chord_track)
 
     # bass: roots from a low-octave resolution
@@ -58,9 +55,7 @@ def _build_section(
     _write_notes(bridge, bass_track, bassline_notes(bass_filled, style="root",
                                                     bars_per_chord=1), at_bar=at_bar)
     if bass_track not in loaded:
-        bi = select_instrument("bass", inv)
-        bridge.call("add_instrument", track=bass_track, kind="named",
-                    name=bi["name"] if bi["kind"] == "named" else "ReaSynth")
+        load_instrument(bridge, bass_track, choose_instrument("bass", inv))
         loaded.add(bass_track)
 
     # drums: named pattern (or raw grid), tiled across `bars`
@@ -72,11 +67,7 @@ def _build_section(
     ]
     _write_notes(bridge, drum_track, drum_notes, at_bar=at_bar)
     if drum_track not in loaded:
-        di = select_instrument("drums", inv)
-        if di["kind"] == "drumkit":
-            load_drumkit(bridge, drum_track)
-        else:
-            bridge.call("add_instrument", track=drum_track, kind="named", name=di["name"])
+        load_instrument(bridge, drum_track, choose_instrument("drums", inv))
         loaded.add(drum_track)
 
     # optional melody
@@ -84,9 +75,7 @@ def _build_section(
         mel = parse_melody(melody, key=key, mode=mode)
         _write_notes(bridge, lead_track, mel, at_bar=at_bar)
         if lead_track not in loaded:
-            li = select_instrument("keys", inv)
-            bridge.call("add_instrument", track=lead_track, kind="named",
-                        name=li["name"] if li["kind"] == "named" else "ReaSynth")
+            load_instrument(bridge, lead_track, choose_instrument("keys", inv))
             loaded.add(lead_track)
 
     return {"at_bar": at_bar, "bars": bars, "tracks": needed}

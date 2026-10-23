@@ -70,7 +70,8 @@ reference"). `compare_character` turns the difference between two sounds into co
 - Audio: import your stems as time-locked tracks, render a track region to WAV, and clone a take
   onto new tracks (for doubles).
 - Instruments: Orpheus prefers instruments you have installed, and `suggest_free_vst` recommends
-  free ones.
+  free ones. An optional sound pack (`install_sound_pack`, about 24.5 MB) adds three public-domain
+  FreePats instruments (guitar, bass, upright piano) that play through REAPER's own sampler.
 
 Fifteen more bridge commands were built and used live in July but don't have MCP tools yet:
 renaming, colouring, moving and deleting tracks; regions; automation envelopes; trimming, windowing and
