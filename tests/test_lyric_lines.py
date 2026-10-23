@@ -23,7 +23,8 @@ def _w(word: str, start: float, dur: float = 0.25) -> LyricWord:
 def _phrase(text: str, start: float, *, step: float = 0.3, tail: str = ",") -> list[LyricWord]:
     """Words 0.05 s apart (sung legato), the last one ending in ``tail``."""
     toks = text.split()
-    return [_w(t + (tail if i == len(toks) - 1 else ""), start + i * step) for i, t in enumerate(toks)]
+    last = len(toks) - 1
+    return [_w(t + (tail if i == last else ""), start + i * step) for i, t in enumerate(toks)]
 
 
 def _recon(duration: float) -> Recon:
@@ -48,7 +49,8 @@ def _texts(words: list[LyricWord]) -> list[str]:
 
 
 def test_comma_ends_a_line():
-    words = _phrase("paper lanterns over water", 0.0) + _phrase("candles on the stair", 1.4, tail="")
+    words = _phrase("paper lanterns over water", 0.0)
+    words += _phrase("candles on the stair", 1.4, tail="")
     assert _texts(words) == ["paper lanterns over water,", "candles on the stair"]
 
 
