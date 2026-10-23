@@ -4,6 +4,111 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-10-23 — Definition agreed, docs caught up, environment repaired (branch `feat/reference-analysis`)
+
+**Definition.** Orpheus is now defined as a studio partner: Claude's ears and hands inside
+REAPER. It listens (project + owned audio), explains, and works in the session, asking first and
+keeping every change undoable. It's built for one songwriter-producer whose lyrics live in Google
+Sheets. Every decision is in [`specs/2026-10-23-orpheus-definition-design.md`](specs/2026-10-23-orpheus-definition-design.md):
+Claude reads the sheet through the Drive connector (Orpheus never talks to Google); Orpheus will
+parse the owner's chord-chart and bass-tab notation; lyric-engine folds into Orpheus as a
+beat-map/OTIO export (the repo gets archived later, on a separate OK); non-commercial backends are
+switched on per name with `ORPHEUS_NC_BACKENDS`; the Mac had no unpushed work.
+
+**Done today:**
+- `server.py` loads its MCP instructions from `data/instructions/00_core.md` (rewritten). Before,
+  the hard-coded text pointed Claude at `recommend_changes`/`apply_changes`, stubs outside the
+  default profile, and 00_core.md was loaded by nothing. `tests/test_server_instructions.py` fails
+  if the instructions name a tool the default profile doesn't register.
+- Matchering (GPL-3.0) removed from core dependencies. Nothing imported it. Re-lock dropped
+  matchering, patsy and statsmodels; resampy left the environment with them (nothing uses it).
+- README, architecture and roadmap rewritten to the definition. The README no longer implies the
+  fifteen bridge-only verbs are MCP tools, and no longer says Orpheus "vendors" Matchering.
+
+**Environment drift found and repaired.** The first full run today gave 12 failures and a native
+crash on exit (code 139). The failures were order-dependent: each test passed alone. Cause: on
+2026-07-30 18:38 the venv had been synced with `--extra analysis`, which swapped torch
+2.6.0+cu124 for 2.13.0+cpu (left next to torchaudio 2.6.0+cu124, whose native library then failed
+to load) and set setuptools to 83 (no `pkg_resources`, so faster-whisper failed to import). The
+failing tests all died inside torch's own `__init__` (`partially initialized module 'torch' has
+no attribute 'library'`); most likely an earlier, swallowed failed import of torchaudio left torch
+half-loaded. The exact chain wasn't traced, because the repair made it moot. Fix: `uv sync --locked --extra separation --extra dev`
+swapped three packages back (torch, setuptools, sympy) from uv's cache. Rule for this desktop:
+always that sync; never `--extra analysis`. CONTRIBUTING now says so.
+
+**Numbers (2026-10-23):** 787 tests collected; 768 passed, 2 skipped, 14 deselected (`-m "not
+desktop and not gpu"`); 368 Lua handler checks pass; ruff and mypy clean. 54 tools in the default
+profile (65 in `full`), 37 bridge verbs plus `__batch__`.
+
+**Next** (spec §4): merge into `main` on the owner's OK, then the bug-fix branch (request ids,
+ASR device guard, cp1252 reader, section naming, JSFX envelope scale, `add_vst_path_and_rescan`),
+the YuE2 test on the 3080 alongside it, then the lead-sheet and ABC work.
+
+---
+
+## 2026-07-25 → 08-01 — Live in REAPER 7.78, first real-music run, vocal session, fifteen new verbs
+
+Recorded at the time in [`pins/2026-07-model-pins.md`](pins/2026-07-model-pins.md) and the
+gitignored `.superpowers/sdd/progress-refanalysis.md`; summarised here.
+
+**07-25, live smoke on REAPER 7.78.** All eight FX parameter maps read back from real plugin
+instances: three had wrong indices (ReaEQ, ReaDelay, ReaXcomp) and Saturation's "mix" pointed at
+bypass; all corrected and marked `live_verified` (63d362e). The WAV-32f render blob was wrong
+(rendered 24-bit); the minimal blob renders float (88ad409). `render_track_region` rendered exact
+durations and restored solos every time, and the silence check correctly refused a silent region.
+Still open: no master-track addressing, so the master can't be rendered.
+
+**07-25, first real-music run** on an owned 200 s mp4 (mp4 input added, e2444f7). Decode 0.5 s,
+recon 21 s, PANNs timeline 4 s on GPU, SCNet-XL 4-stem 44 s (real-time factor 0.22), CPU Whisper +
+alignment 170 s for 152 s of vocals; 327 words; `locate_lyric` found all three occurrences of the
+hook at score 1.00. Calibration evidence: PANNs under-fires on a loud master (singing peaked 0.064
+against a 0.30 threshold) and gate 1 read −14.2 dB where it passes at −20. Three new issues,
+carried to 2026-10: production ASR auto-picks CUDA and aborts natively on this PC; a cp1252
+`UnicodeDecodeError` in a subprocess reader thread; section naming merged everything into
+"verse 1". The cuDNN probe added that day (88ee4af, a275f67, c7c9947) protects only pytest.
+
+**07-26/27, stems into the project.** `import_audio_files` (3a8f57e, 67913de), live-verified 4/4
+stems. A later `set_tempo` stretched them to "half speed" because items were on beat timebase;
+fixed by pinning time base and play rate 1.0 on import (f4394e9, live-verified).
+`clone_track_items` and `set_track_params` (27c317d) built a lead plus doubles and a harmony from
+one take. ReaPitch and ReaTune were calibrated by rendering a test tone and measuring it: ReaPitch
+shift is linear over ±18 semitones; ReaTune exposes only bypass/wet/delta, so pitch-correction
+setup is a human step. Traps pinned: ReaEQ's high-pass band is settable but inert by default (use
+the low shelf), and saturation after a high-cut regenerates the cut band, so band-limiting goes
+last. New verbs `nudge_take_offset`, `clone_item_region`, `trim_track_items`, and **hot reload**
+(ae3e694): the bridge re-reads its own file and swaps handlers live.
+
+**07-30, analysis and tidy-up.** Automation-envelope verbs (bb0f6db), section-diff analysis of
+repeated sections (450140c) with an honest "inconclusive" verdict when repetitions don't line up
+(f8c62c0), `refresh_media` after replacing a file on disk (269a331; REAPER otherwise renders
+silence from its header cache), Surge XT calibrated map (28fcffe), `move_track`, `rebuild_peaks`,
+`set_track_color`, `rename_track`, `add_region`, `set/get_fx_preset`, `delete_track`, and UTF-8
+IPC on the client side (bedbbce; an em dash crashed the cp1252 default). Vocal tuning was done
+with a PSOLA pipeline run outside Orpheus (`uv run --with praat-parselmouth`); a natural
+note-centre retune replaced an "autotune" first pass after the owner's feedback.
+
+**07-30/31, rebuilding the band as MIDI.** 3045 transcribed notes (bass by pitch tracking, keys via
+basic-pitch, drums by band-classified onsets) were written with `insert_midi_notes`, then refined:
+bass re-segmented and verified against render metrics; drums re-transcribed in the two filtered
+pre-choruses the first pass missed. `add_sampler_zones` (602a5d9, 528e55e, 786505d) builds
+RS5k instruments from owned one-shots: mode 2 is required for pitch tracking, and an "obey note-off"
+flag stops long samples. A PANNs listening check now judges every render, and it confirmed the
+owner's complaints (one version heard as organ, another as synthesizer). The final guitar and bass
+use FreePats CC0 samples. An envelope on a JSFX parameter landed at the wrong scale (1.0 arrived as
+0.01), flagged VERIFY-LIVE and carried to 2026-10.
+
+**Third-party text fetched.** On 07-30/31, guitar and bass tabs for the reference song were read
+from Ultimate Guitar and UkuTabs to cross-check the transcriptions (98% agreement with the
+measured bass). This was text only; no audio was fetched.
+
+**08-01, stopped.** The owner had been hearing tuned vocals over the rebuilt MIDI band since the
+first MIDI demo, so solo-render checks could never catch the gap with the record; every iteration
+made a better karaoke band. The known-good mix was restored (reference instrumental up, MIDI band
+muted and kept as an editable layer). **Lesson: MIDI rebuilt from a produced master is an editable
+sketch, not a replacement. Say so before the experiment, not after six iterations.**
+
+---
+
 ## 2026-07-24 — Reference Analysis Engine BUILT (Phases 0–12, branch `feat/reference-analysis`)
 
 The whole engine designed in the 2026-07-22 spec is now implemented, on `feat/reference-analysis`,
