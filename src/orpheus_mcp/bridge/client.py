@@ -57,6 +57,28 @@ def _next_request_id() -> int:
         return _last_request_id
 
 
+def read_heartbeat(bridge_dir: Path | None = None) -> dict[str, Any] | None:
+    """The heartbeat file's content. v2 (spec 2026-10-23 REAPER sync §2.4) is a JSON object with
+    ``v``, ``t``, ``reaper_version``, ``project_name``, ``project_path``, ``playing`` and
+    ``state_change_count``; the old bridge wrote a bare timestamp, returned as ``{"v": 1, "t": …}``.
+    None when the file is missing or unreadable. Liveness is NOT decided here: that is the
+    file's modification time (``BridgeClient.is_alive``)."""
+    hb = Path(bridge_dir or DEFAULT_BRIDGE_DIR) / HEARTBEAT_FILE
+    try:
+        text = hb.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    try:
+        return {"v": 1, "t": float(text)}
+    except ValueError:
+        pass
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 class BridgeError(RuntimeError):
     """A command reached REAPER but failed there (returned ok=false)."""
 

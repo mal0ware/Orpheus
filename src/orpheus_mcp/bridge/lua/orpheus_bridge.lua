@@ -216,8 +216,41 @@ local function read_file(p)
   return s
 end
 
+-- Heartbeat v2 (spec 2026-10-23 REAPER sync §2.4). Python reads liveness from the file's
+-- modification time, so it is rewritten every tick; the CONTENT is JSON carrying the open
+-- project's identity, recomputed about once a second (wall clock via time_precise, not
+-- os.clock, which is CPU time on macOS/Linux). Python still accepts the old bare-integer form.
+-- This is loop core: hot reload does not swap it, so changing it needs one manual re-run.
+local HEARTBEAT_REFRESH_S = 1.0
+local heartbeat_content, heartbeat_at = nil, nil
+
+local function wall_clock()
+  return reaper.time_precise and reaper.time_precise() or os.clock()
+end
+
+local function heartbeat_payload()
+  local _, proj_path = reaper.EnumProjects(-1)
+  local state = reaper.GetPlayState and reaper.GetPlayState() or 0
+  return json.encode({
+    v = 2,
+    t = os.time(),
+    reaper_version = reaper.GetAppVersion(),
+    project_name = reaper.GetProjectName and reaper.GetProjectName(0) or "",
+    project_path = proj_path or "",
+    playing = (state & 1) == 1,
+    state_change_count = reaper.GetProjectStateChangeCount and
+      reaper.GetProjectStateChangeCount(0) or nil,
+  })
+end
+
 local function touch_heartbeat()
-  write_atomic(path("heartbeat.lock"), tostring(os.time()))
+  local now = wall_clock()
+  if heartbeat_content == nil or now - heartbeat_at >= HEARTBEAT_REFRESH_S then
+    local ok, payload = pcall(heartbeat_payload)
+    heartbeat_content = ok and payload or tostring(os.time())
+    heartbeat_at = now
+  end
+  write_atomic(path("heartbeat.lock"), heartbeat_content)
 end
 M.touch_heartbeat = touch_heartbeat
 

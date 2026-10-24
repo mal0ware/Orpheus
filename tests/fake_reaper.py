@@ -1229,6 +1229,8 @@ class FakeReaperBridge:
         self._answer = answer
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
+        # None = the old bare timestamp; a string = heartbeat v2 JSON (the Lua loop's content).
+        self.heartbeat_content: str | None = None
 
     def __enter__(self) -> FakeReaperBridge:
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -1244,6 +1246,17 @@ class FakeReaperBridge:
         self._stop.set()
         self._thread.join(timeout=1.0)
 
+    def wait_for_heartbeat_content(self, timeout: float = 1.0) -> None:
+        """Block until the poller has written ``heartbeat_content`` at least once."""
+        deadline = time.monotonic() + timeout
+        hb = self.dir / "heartbeat.lock"
+        while time.monotonic() < deadline:
+            with contextlib.suppress(OSError):
+                if hb.read_text(encoding="utf-8") == self.heartbeat_content:
+                    return
+            time.sleep(0.005)
+        raise TimeoutError("fake bridge never wrote the requested heartbeat content")
+
     def _run(self) -> None:
         while not self._stop.is_set():
             if self._beat:
@@ -1253,7 +1266,9 @@ class FakeReaperBridge:
                 # uncaught exception here kills the poller thread for the rest of the
                 # test (see _atomic_write for why this can happen on Windows).
                 with contextlib.suppress(OSError):
-                    self._atomic_write(self.dir / "heartbeat.lock", str(time.time()))
+                    self._atomic_write(
+                        self.dir / "heartbeat.lock", self.heartbeat_content or str(time.time())
+                    )
             if self._answer:
                 for req_file in sorted(self.dir.glob("request_*.json")):
                     self._handle(req_file)

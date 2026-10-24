@@ -55,8 +55,12 @@ local function bar_start(bar)  -- QN
   return qn
 end
 
+local TMPDIR = (os.getenv("TEMP") or os.getenv("TMPDIR") or "/tmp"):gsub("\\", "/")
+proj.now = 100.0  -- reaper.time_precise(), wall-clock seconds
+
 reaper = {
-  GetExtState = function(_, b) if b == "bridge_dir" then return "/tmp/x" end return "" end,
+  GetExtState = function(_, b) if b == "bridge_dir" then return TMPDIR end return "" end,
+  time_precise = function() return proj.now end,
   GetAppVersion = function() return "7.0/luatest" end,
   RecursiveCreateDirectory = function() end,
   ShowConsoleMsg = function() end,
@@ -199,6 +203,29 @@ eq(#snap.markers, 1, "markers in the snapshot")
 eq(#snap.regions, 1, "regions in the snapshot")
 eq(#snap.tempo_map, 3, "tempo map in the snapshot")
 eq(snap.truncated, false, "snapshot not truncated")
+
+-- 3. Heartbeat v2 (spec §2.4): JSON with project identity, written every tick, refreshed about
+-- once a second; liveness stays the file's modification time.
+local HB = TMPDIR .. "/heartbeat.lock"
+local function read_hb()
+  local f = assert(io.open(HB, "rb")); local t = f:read("*a"); f:close(); return t
+end
+M.touch_heartbeat()
+local hb = read_hb()
+ok(hb:find('"v":2', 1, true), "heartbeat v2 marker: " .. hb)
+ok(hb:find('"project_name":"song.rpp"', 1, true), "project name in heartbeat")
+ok(hb:find('"project_path":"C:/proj/song.rpp"', 1, true), "project path in heartbeat")
+ok(hb:find('"playing":true', 1, true), "playing in heartbeat")
+ok(hb:find('"state_change_count":42', 1, true), "change count in heartbeat")
+ok(hb:find('"reaper_version":"7.0/luatest"', 1, true), "REAPER version in heartbeat")
+proj.name = "other.rpp"
+proj.now = proj.now + 0.3
+M.touch_heartbeat()
+ok(read_hb():find('"project_name":"song.rpp"', 1, true), "within a second: cached content")
+proj.now = proj.now + 1.0
+M.touch_heartbeat()
+ok(read_hb():find('"project_name":"other.rpp"', 1, true), "after a second: refreshed")
+os.remove(HB)
 
 print(string.format("lua sync handlers: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)
