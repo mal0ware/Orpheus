@@ -106,8 +106,12 @@ quality still need a live check by ear. The [dev-log](docs/dev-log.md) has the d
    lyric lines on the markers.
 4. You record. Orpheus analyses the take, and Claude suggests changes. You approve each one.
 
-Reading the chord-chart and riff-tab notation from the sheet directly, a lead-sheet format, and
-sung sketches are being built now (see [the roadmap](docs/roadmap.md)).
+Orpheus reads your sheet's own notation: chord charts (`Am / Fmaj7 | C / E (x4)`, slash
+chords, holds, `(stop)`) and bass tab (`A0 -  E1 -`). A section, given as written plus a melody
+Claude writes with you, becomes a **lead sheet**: `arrange_lead_sheet` lays it into REAPER (markers,
+chords, bass riff, melody, drums, lyric markers), and `export_yue2_score` turns it into a score for
+the optional YuE2 sketch backend. Sung sketches themselves are next on
+[the roadmap](docs/roadmap.md).
 
 ## What it won't do
 
@@ -120,8 +124,9 @@ sung sketches are being built now (see [the roadmap](docs/roadmap.md)).
 
 - Sheet and REAPER in step: sheet sections and chords as markers and regions, and REAPER changes
   written back to the sheet (Claude does the sheet side, with your yes).
-- Lead sheets and notation: reading your chord charts and bass tab, and ABC export/import.
-- Sung sketches through an optional YuE2 backend (below).
+- Sung sketches through an optional YuE2 backend (below). The score export, import and checker
+  are built; rendering and importing the audio onto a track is the next step.
+- "Sing it to me": notating a melody from a scratch vocal take.
 - Beat-map export for cutting music videos in Premiere (OpenTimelineIO).
 - Edit plans applied in one undo step (`apply_changes`) and style-based suggestions
   (`recommend_changes`). Both are stubs, registered only in the `full` profile.

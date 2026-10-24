@@ -38,3 +38,14 @@ def test_rejects_bad_token():
     for bad in ("H4:q", "A4:z", "A4", "A4:"):
         with pytest.raises(ValueError):
             parse_melody(bad)
+
+
+def test_dotted_durations_lengthen_by_half():
+    # spec 2026-10-24 §3: "q." = 1.5 beats, "e." = 0.75, "h." = 3; rests too.
+    notes = parse_melody("A4:q. C5:e E5:h. r:e. G4:s")
+    assert [(n["start_beat"], n["duration_beats"]) for n in notes] == [
+        (0.0, 1.5), (1.5, 0.5), (2.0, 3.0), (5.75, 0.25)]
+
+
+def test_undotted_notation_is_unchanged():
+    assert [n["duration_beats"] for n in parse_melody("A4:q C5:e E5:h")] == [1.0, 0.5, 2.0]

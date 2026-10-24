@@ -539,6 +539,70 @@ class AudioCharacter(BaseModel):
     stereo_width: float | None = None
 
 
+# --------------------------------------------------------------------------- #
+# Lead sheet (spec 2026-10-24): the song as the owner writes it, before it is MIDI or audio.
+# Beats are quarter notes from the section start; bars and beats are 1-based.
+# --------------------------------------------------------------------------- #
+
+SectionLabel = Literal[
+    "intro", "verse", "pre-chorus", "chorus", "post-chorus", "bridge", "interlude", "solo",
+    "instrumental", "outro",
+]
+
+
+class ChordEvent(BaseModel):
+    """A chord on the section's timeline. ``beats`` may run past the bar (a held chord)."""
+
+    symbol: str
+    bar: int = Field(ge=1)
+    beat: float = Field(default=1.0, ge=1.0)
+    beats: float = Field(gt=0)
+
+
+class SheetNote(BaseModel):
+    """A melody or riff note. ``syllable`` is the lyric sung on it; ``"_"`` continues the
+    previous syllable (a melisma); None means no lyric (instrumental)."""
+
+    pitch: Annotated[int, Field(ge=0, le=127)]
+    start_beat: float = Field(ge=0)
+    duration_beats: float = Field(gt=0)
+    syllable: str | None = None
+
+
+class LeadSheetSection(BaseModel):
+    """One section, given as the sheet writes it (``chart``, ``tab``, ``melody`` +
+    ``syllables``) or already expanded (``chords``, ``riff``, ``melody_notes``).
+    ``resolve_lead_sheet`` turns the first into the second."""
+
+    name: str
+    label: SectionLabel | None = None  # YuE2's section label; derived from ``name`` if unset
+    bars: int = Field(ge=1)
+    chart: str | None = None  # "Am / Fmaj7 | C / E (x4)"
+    tab: str | None = None  # "Am | A0 -  A0 -  A0 -  A0 - |"
+    melody: str | None = None  # Orpheus melody notation: "A4:q C5:e. ..."
+    syllables: str | None = None  # "You'd ra-ther talk a-bout it", one per pitched note
+    lyrics: list[str] = Field(default_factory=list)
+    chords: list[ChordEvent] = Field(default_factory=list)
+    riff: list[SheetNote] = Field(default_factory=list)
+    melody_notes: list[SheetNote] = Field(default_factory=list)
+    drums: str | None = None  # pattern name for the REAPER layout, or none
+    riff_to_ins: bool = False  # send this section's riff to YuE2's instrument line
+    notes: list[str] = Field(default_factory=list)  # free text kept from the chart ("stop")
+    rationale: str | None = None
+
+
+class LeadSheet(BaseModel):
+    """A song as a lead sheet: key, meter, tempo, sections. ``style`` is YuE2's style text."""
+
+    title: str | None = None
+    key: str  # tonic, e.g. "A", "F#", "Bb"
+    mode: Literal["major", "minor"] = "major"
+    meter: tuple[int, int] = (4, 4)
+    tempo_bpm: float = Field(gt=0)
+    style: str | None = None
+    sections: list[LeadSheetSection]
+
+
 class CompositionSpec(BaseModel):
     """The universal IR. A snapshot of a project's musical + sonic identity."""
 
@@ -549,6 +613,7 @@ class CompositionSpec(BaseModel):
     audio: AudioCharacter = Field(default_factory=AudioCharacter)
     tracks: list[TrackSpec] = Field(default_factory=list)
     sections: list[Section] = Field(default_factory=list)
+    lead_sheet: LeadSheet | None = None  # the score-first view, when one exists (spec 2026-10-24)
 
 
 class FeatureDelta(BaseModel):

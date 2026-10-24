@@ -72,13 +72,12 @@ Agreed 2026-10-23, in this order:
    - [x] heartbeat v2 with project identity (2026-10-24; needs one manual bridge re-run)
    - [x] notice hand edits: change counter + `project_changes` diff, baseline per project
      (2026-10-24)
-5. **Lead sheet + notation:**
-   - [ ] `LeadSheet` model (key, meter, tempo, sections with timed chords, melody, lyrics,
-     reasons), referenced from `CompositionSpec`
-   - [ ] readers for the owner's chord-chart notation (`Am / Fmaj7 | C / E (x4)`) and bass riff
-     tab (`A0 - E1 -`, eight slots per bar)
-   - [ ] MIT ABC writer for YuE2's dialect, a reader (music21 for notes and chords, a sidecar for
-     lyrics), a dialect checker, round-trip tests
+5. **Lead sheet + notation** (2026-10-24, [spec](specs/2026-10-24-lead-sheet-design.md)):
+   - [x] `LeadSheet` model, referenced from `CompositionSpec`
+   - [x] readers for the owner's chord charts and bass riff tab
+   - [x] YuE2 ABC writer, checker (agrees with the official `abc_tools.py` on 76 scores), reader
+     (YuE2-rules parser; music21 cross-checks our exports), sidecar for syllables
+   - [x] `arrange_lead_sheet` into REAPER (live check owed)
 6. **Sheet ↔ REAPER in step:** sheet sections and chords become markers and regions; the live
    timeline can be written back to the sheet (Claude does the sheet side through the Drive
    connector, with a yes).
@@ -86,6 +85,9 @@ Agreed 2026-10-23, in this order:
    result onto a "SKETCH (YuE2)" track. Gated by `ORPHEUS_NC_BACKENDS=yue2`.
 
 ## Next
+
+- **"Sing it to me":** the owner sings a scratch take and Orpheus notates the melody (pitch
+  tracking, as in the July sessions) into a lead sheet.
 
 - **Beat-map export for music videos.** Built on step 4's timeline read: `export_beat_map` (JSON + CSV of beats, bars, sections, lyric lines); an
   OpenTimelineIO file Premiere opens with section and lyric markers. This replaces the

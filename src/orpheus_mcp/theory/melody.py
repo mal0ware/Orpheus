@@ -7,15 +7,21 @@ from orpheus_mcp.theory.music_theory_data import note_to_pc, snap_to_scale
 
 DURATIONS: dict[str, float] = {"w": 4.0, "h": 2.0, "q": 1.0, "e": 0.5, "s": 0.25}
 
-_TOKEN = re.compile(r"^([A-Ga-g][#b]?)(-?\d+)?:([whqes])$")
-_REST = re.compile(r"^[rR]:([whqes])$")
+_TOKEN = re.compile(r"^([A-Ga-g][#b]?)(-?\d+)?:([whqes]\.?)$")
+_REST = re.compile(r"^[rR]:([whqes]\.?)$")
+
+
+def _beats(dur: str) -> float:
+    """'q' -> 1.0; a trailing dot adds half again ('q.' -> 1.5)."""
+    return DURATIONS[dur[0]] * (1.5 if dur.endswith(".") else 1.0)
 
 
 def parse_melody(
     notation: str, key: str | None = None, mode: str | None = None, velocity: int = 90
 ) -> list[dict]:
     """'A4:q C5:q E5:h' -> sequential note dicts. `r:dur` is a rest. Tokens are
-    whitespace-separated `Name[octave]:dur` (octave defaults to 4). If key+mode given,
+    whitespace-separated `Name[octave]:dur` (octave defaults to 4); a dotted duration ('q.')
+    lasts half again as long. If key+mode given,
     non-rest pitches are snapped into the scale so the line stays in key."""
     notes: list[dict] = []
     beat = 0.0
@@ -25,7 +31,7 @@ def parse_melody(
     for tok in tokens:
         rest = _REST.match(tok)
         if rest:
-            beat += DURATIONS[rest.group(1)]
+            beat += _beats(rest.group(1))
             continue
         m = _TOKEN.match(tok)
         if not m:
@@ -40,6 +46,6 @@ def parse_melody(
         if key is not None and mode is not None:
             pitch = snap_to_scale([pitch], key, mode)[0]
         notes.append({"pitch": pitch, "start_beat": round(beat, 6),
-                      "duration_beats": DURATIONS[dur], "velocity": velocity})
-        beat += DURATIONS[dur]
+                      "duration_beats": _beats(dur), "velocity": velocity})
+        beat += _beats(dur)
     return notes

@@ -4,6 +4,31 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-10-24 (later) — Lead sheets, the owner's notation, YuE2 scores (branch `feat/lead-sheet`)
+
+Spec: [`specs/2026-10-24-lead-sheet-design.md`](specs/2026-10-24-lead-sheet-design.md). Every
+rule of the owner's notation was confirmed with them before code.
+- **Readers** for chord charts (`|`, ` / ` split, `C/E` slash, `(xN)`, `E---` fill, `(stop)` and
+  free text kept as notes) and bass tab (string+fret slots, `-` hold, silent bars).
+- **LeadSheet** model; sections take the sheet as written; `resolve_lead_sheet` expands and warns.
+  Melody notation gained dotted values. "Sing it to me" is on the roadmap.
+- **YuE2 writer** (`export_yue2`), **checker** (`check_yue2_abc`, built test-first by a background
+  agent, reviewed here) and **reader** (`import_yue2`). The writer spells accidentals so YuE2's
+  by-letter rule and standard ABC agree; music21 re-reads our exports note for note. The opt-in
+  cross-check against YuE's official `abc_tools.py` (pinned commit + sha256, never vendored)
+  agrees on 76 scores and found one gap (trailing spaces), now fixed.
+- **Owner decision:** the reader trusts the YuE2-rules parser, not music21, because YuE2's own
+  scores use its accidental rule.
+- **`arrange_lead_sheet`** lays a sheet into REAPER (meter-aware bars, pack-aware instruments,
+  no re-loading on re-runs). Chord voicing goes through music21's chord symbols.
+
+**Numbers:** 1136 passed, 78 skipped (`-m "not desktop and not gpu"`); 6 Lua suites; ruff and
+mypy clean.
+
+**Owed live:** arrange a real sheet section in REAPER and listen.
+
+---
+
 ## 2026-10-24 — REAPER sync built (branch `feat/reaper-sync`)
 
 The PC restarted at 16:56 ET on 10-23 just as this started; nothing was half-written (the
