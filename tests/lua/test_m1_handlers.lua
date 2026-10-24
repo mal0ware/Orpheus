@@ -102,6 +102,21 @@ reaper = {
   -- Time/QN map: linear (constant tempo). 1 QN == 1 second-equivalent here; only the
   -- QN<->PPQ relationship matters for the round-trip, and that is exact.
   TimeMap2_QNToTime = function(_, qn) return qn end,
+  TimeMap2_timeToQN = function(_, t) return t end,
+  -- REAPER's measure map: `measures` whole bars from the start, then tpos QN. Bar lengths follow
+  -- proj.meter_changes = { {bar=, num=, den=}, ... } when set; with none, every bar is
+  -- ts_num/ts_den, the same answer the old single-meter formula gave.
+  TimeMap2_beatsToTime = function(_, tpos, measures)
+    local qn = 0
+    for b = 1, (measures or 0) do
+      local num, den = proj.ts_num, proj.ts_den
+      for _, c in ipairs(proj.meter_changes or {}) do
+        if b >= c.bar then num, den = c.num, c.den end
+      end
+      qn = qn + num * 4 / den
+    end
+    return qn + (tpos or 0)
+  end,
   CreateNewMIDIItemInProj = function(tr, start_t, end_t)
     local take = { notes = {}, item_start_qn = start_t }
     local item = { take = take, index = #tr.items, pos = start_t, len = end_t - start_t }
@@ -156,7 +171,10 @@ reaper = {
   TrackFX_SetParamNormalized = function() return true end,
 
   -- (proj, isrgn, pos, rgnend, name, wantidx, color) -> marker index.
-  AddProjectMarker2 = function(_, _, _, _, _, wantidx) return wantidx == -1 and 1 or wantidx end,
+  AddProjectMarker2 = function(_, _, pos, _, _, wantidx)
+    proj.last_marker_pos = pos
+    return wantidx == -1 and 1 or wantidx
+  end,
 }
 
 -- --------------------------------------------------------------------------- --
@@ -326,6 +344,26 @@ do
   eq(r.result.name, "Verse", "marker name")
   eq(r.result.bar, 3, "marker bar")
 end
+
+-- 13. Bars follow REAPER's meter map (spec 2026-10-23 REAPER sync §2.2): bars 1-4 in 4/4,
+-- bar 5 on in 3/4, so bar 6 starts at QN 4*4 + 3 = 19, not 5*4 = 20.
+proj.meter_changes = { { bar = 5, num = 3, den = 4 } }
+local mt = call("create_track", { name = "meter" }).result.guid
+call("insert_midi_notes", { track = mt, at_bar = 6,
+  notes = { { pitch = 64, start_beat = 0.0, duration_beats = 1.0, velocity = 90 } } })
+local back = call("get_track_midi", { track = mt, at_bar = 1 }).result.notes
+approx(back[1].start_beat, 19.0, "note at bar 6 lands on QN 19 across the 4/4 -> 3/4 change")
+local back6 = call("get_track_midi", { track = mt, at_bar = 6 }).result.notes
+approx(back6[1].start_beat, 0.0, "and reads back as beat 0 of bar 6")
+call("add_marker", { name = "Bridge", bar = 6 })
+approx(proj.last_marker_pos, 19.0, "add_marker at bar 6 uses the meter map too")
+local item = call("create_midi_item", { track = mt, start_bar = 4, length_bars = 2 })
+eq(item.ok, true, "create_midi_item ok across the change")
+local tr_m = proj.tracks[#proj.tracks]
+local it = tr_m.items[#tr_m.items]
+approx(it.pos, 12.0, "item starts at bar 4 (QN 12)")
+approx(it.len, 7.0, "2 bars from bar 4 = one 4/4 bar + one 3/4 bar = 7 QN")
+proj.meter_changes = nil
 
 print(string.format("lua m1 handlers: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

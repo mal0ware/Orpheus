@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from orpheus_mcp.bridge import BridgeClient
-from orpheus_mcp.models import Note, TrackSpec
+from orpheus_mcp.models import Note, ProjectChanges, ProjectTimeline, TrackSpec
 
 _RO = {"readOnlyHint": True}
 
@@ -58,6 +58,39 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
             for n in result.get("notes", [])
         ]
         return {"track": result.get("track"), "notes": notes}
+
+    @mcp.tool(annotations=_RO)
+    def get_project_timeline() -> ProjectTimeline:
+        """Where we are in the live REAPER session: the open project's name and path, every
+        tempo and time-signature change, all markers and regions with bar and beat (as REAPER's
+        ruler shows them), and the transport (playing, cursor, play position).
+
+        Call this before placing anything by bar. ``project.state_change_count`` rises on every
+        edit in REAPER; when it has moved since your last look, call ``project_changes``.
+        """
+        raw = BridgeClient().call("get_project_timeline") or {}
+        return ProjectTimeline.model_validate({
+            "project": raw.get("project") or {},
+            "transport": raw.get("transport") or {},
+            "tempo_map": raw.get("tempo_map") or [],
+            "markers": raw.get("markers") or [],  # an empty Lua table arrives as {}
+            "regions": raw.get("regions") or [],
+            "truncated": bool(raw.get("truncated")),
+        })
+
+    @mcp.tool(annotations=_RO)
+    def project_changes() -> ProjectChanges:
+        """What changed in the open REAPER project since the last check, in plain words: tracks
+        added, removed, renamed, moved, muted, re-levelled; items added, moved, resized, or with
+        edited notes; markers, regions, tempo and meter changes. Positions come in bars.
+
+        The first check of a project records a baseline and reports nothing. Each check then
+        becomes the new baseline (kept on disk per project, so it survives restarts). Edits
+        Orpheus made itself are included. Read-only for the project.
+        """
+        from orpheus_mcp.analysis.projectdiff import check_changes
+
+        return check_changes(BridgeClient().call("get_project_snapshot") or {})
 
     # get_fx_params graduated to a real implementation in orpheus_mcp.tools.mix
     # (Task 11.1, §8 step 3) — no longer stubbed here.

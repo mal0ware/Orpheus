@@ -67,12 +67,11 @@ Agreed 2026-10-23, in this order:
 3. **YuE2 test: GO** (2026-10-23): 60 s in 28.8 s, 7.2 GB peak; see
    [`pins/2026-10-yue2-backend.md`](pins/2026-10-yue2-backend.md).
 4. **REAPER sync:**
-   - [ ] read verb + tool for the live timeline: project name and path, tempo and time-signature
-     markers, markers, regions, play state (fake bridge and Lua suite included)
-   - [ ] bar/beat math that follows REAPER's tempo and meter map (today `bar_start_qn` assumes one
-     meter for the whole song)
-   - [ ] heartbeat v2 with project identity (needs one manual bridge re-run)
-   - [ ] notice hand edits: a cheap project-state fingerprint Claude compares between calls
+   - [x] read verb + tool for the live timeline (2026-10-24; live check owed)
+   - [x] bar/beat math that follows REAPER's tempo and meter map (2026-10-24)
+   - [x] heartbeat v2 with project identity (2026-10-24; needs one manual bridge re-run)
+   - [x] notice hand edits: change counter + `project_changes` diff, baseline per project
+     (2026-10-24)
 5. **Lead sheet + notation:**
    - [ ] `LeadSheet` model (key, meter, tempo, sections with timed chords, melody, lyrics,
      reasons), referenced from `CompositionSpec`

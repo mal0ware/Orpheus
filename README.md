@@ -22,8 +22,9 @@ It's built for one songwriter-producer working in REAPER, with lyrics in Google 
 > **Status (2026-10-23):** early, pre-alpha, not on PyPI yet. It has 54 tools in the default profile,
 > 787 Python tests and 368 Lua checks (ruff and mypy clean). Much of it was used for real in July
 > on REAPER 7.78 with a song the owner owns; the rest is tested against a behavioural fake of
-> REAPER. [What works today](#what-works-today) says which is which. Most of the sync side
-> (timeline reads, tempo-map-aware bars, sheet sync) is the next thing being built.
+> REAPER. [What works today](#what-works-today) says which is which. The REAPER-sync reads
+> (timeline, change reports, meter-aware bars) are built and tested but not yet checked live;
+> sheet sync comes later.
 
 ## What you can ask
 
@@ -51,6 +52,17 @@ All local, on audio you own:
 
 It also reads your own project's MIDI for key, harmony and groove (`build_project_spec`,
 `analyze_harmony`, `analyze_groove`).
+
+### Stay in sync with the session
+
+- `get_project_timeline`: the open project's name, every tempo and time-signature change, all
+  markers and regions with bar and beat as REAPER's ruler shows them, and the transport.
+- `project_changes`: what changed since the last check, in plain words ("Track 'Gtr' renamed
+  to 'Gtr DI'", "New MIDI item on 'Bass' at bar 9"), kept per project across restarts.
+- Anything placed "at bar N" follows REAPER's own tempo and meter map.
+- `get_connection_status` reports which project is open (heartbeat v2).
+
+These are tested against the fake and the Lua suite; the live check in REAPER is still owed.
 
 ### Explain
 
@@ -106,10 +118,6 @@ sung sketches are being built now (see [the roadmap](docs/roadmap.md)).
 
 ## Not built yet
 
-- REAPER sync: reading the live timeline (markers, regions, tempo and meter changes, project
-  name), noticing hand edits, and bars that follow REAPER's tempo and meter map. Today Orpheus
-  reads the tempo, starting meter, length, track count and play state, and places bars assuming
-  one meter for the whole song.
 - Sheet and REAPER in step: sheet sections and chords as markers and regions, and REAPER changes
   written back to the sheet (Claude does the sheet side, with your yes).
 - Lead sheets and notation: reading your chord charts and bass tab, and ABC export/import.

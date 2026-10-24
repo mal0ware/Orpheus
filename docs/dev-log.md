@@ -4,6 +4,36 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-10-24 — REAPER sync built (branch `feat/reaper-sync`)
+
+The PC restarted at 16:56 ET on 10-23 just as this started; nothing was half-written (the
+working tree was clean at the spec commit) and the suite re-ran green afterwards.
+
+Spec: [`specs/2026-10-23-reaper-sync-design.md`](specs/2026-10-23-reaper-sync-design.md).
+- **Meter-aware bars** (596d30c). `bar_start_qn` asks REAPER's map
+  (`TimeMap2_beatsToTime(0, 0, bar - 1)` → `TimeMap2_timeToQN`); after a 4/4 → 3/4 change at
+  bar 5, bar 6 is QN 19, not 20. `create_midi_item` counts each bar in its own meter. New items
+  from `insert_midi_notes` still round their right edge by the first meter (cosmetic).
+- **`get_project_timeline` / `project_changes`** (8047d87). Two read-only bridge verbs and tools.
+  The diff matches tracks and items by GUID (a renamed track is the same track; the test for that
+  caught a real bug in the first draft), reports one move per moved track using the longest
+  common track order, and keeps one baseline snapshot per project on disk. Three deliberate
+  mutations of the diff were each caught by its tests.
+- **Heartbeat v2** (this branch). JSON content with the open project's identity, refreshed about
+  once a second on `time_precise`; `get_connection_status` reports the project.
+
+**Numbers:** 857 passed, 2 skipped; 6 Lua suites (444 checks); ruff and mypy clean.
+
+**Owed live (owner present):** install-bridge plus one bridge re-run (heartbeat v2 is loop core);
+check bars against the ruler around a meter change, marker order, the 0/0 inherited meter, beat
+units on an x/8 meter; `project_changes` after hand edits; plus the JSFX envelope and sound-pack
+checks carried from 10-23.
+
+**Noticed, not fixed:** the hot-reload timer uses `os.clock()`, which is CPU time on macOS and
+Linux (wall time on Windows, so it works here).
+
+---
+
 ## 2026-10-23 (later) — Six bugs fixed, YuE2 is a GO, sound pack rebuilt (branch `fix/2026-10-bugs`)
 
 **Bugs, each with a test that failed first:**

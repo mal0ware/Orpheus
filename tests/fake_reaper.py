@@ -13,6 +13,8 @@ A note written at beat B must read back at beat B (tests/test_midi_roundtrip.py)
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import itertools
 import json
 import math
 import os
@@ -38,6 +40,13 @@ class FakeNote:
     channel: int = 0
 
 
+_ITEM_SEQ = itertools.count(1)
+
+
+def _next_item_guid() -> str:
+    return f"{{ITEM-{next(_ITEM_SEQ):05d}}}"
+
+
 @dataclass
 class FakeTake:
     notes: list[FakeNote] = field(default_factory=list)
@@ -47,6 +56,7 @@ class FakeTake:
     # regression test can assert the item grows to cover notes written by a later call
     # (e.g. arrange_song writing section 2 at a higher at_bar into the same shared track).
     item_end_qn: float = 0.0
+    guid: str = field(default_factory=_next_item_guid)  # the MIDI item's GUID (snapshots)
 
 
 @dataclass
@@ -90,6 +100,7 @@ class FakeMediaItem:
     # clone_track_items can prove it copies the offset and applies item_volume_db.
     start_offs: float = 0.0
     take_volume: float = 1.0
+    guid: str = field(default_factory=_next_item_guid)
 
 
 @dataclass
@@ -136,6 +147,17 @@ class FakeReaperProject:
     play_state: int = 0
     installed_fx: list[str] = field(default_factory=list)
     markers: list[dict] = field(default_factory=list)
+    # Time-signature changes as (bar, num, den), each in force from that bar on; bars before
+    # the first change use ts_num/ts_den. Mirrors REAPER's measure map (the bridge's
+    # bar_start_qn goes through TimeMap2_beatsToTime).
+    meter_changes: list[tuple[int, int, int]] = field(default_factory=list)
+    # REAPER-sync identity + transport (get_project_timeline / get_project_snapshot).
+    # state_change_count mirrors GetProjectStateChangeCount: every non-read handler bumps it.
+    name: str = ""
+    path: str = ""
+    state_change_count: int = 1
+    cursor_s: float = 0.0
+    play_position_s: float = 0.0
     # Undo blocks, as RECORDED EVENTS: ("begin", desc) / ("end", desc) appended in order.
     # A real Undo_BeginBlock/EndBlock pair has no observable project state, so the only way
     # to assert the "one Ctrl+Z undoes the whole import" promise from a test is to prove
@@ -183,9 +205,43 @@ class FakeReaperProject:
     def qn_per_bar(self) -> float:
         return self.ts_num * (4.0 / self.ts_den)
 
+    def meter_at_bar(self, bar: int) -> tuple[int, int]:
+        num, den = self.ts_num, self.ts_den
+        for start, n, d in sorted(self.meter_changes):
+            if bar >= start:
+                num, den = n, d
+        return num, den
+
     def bar_start_qn(self, bar: int) -> float:
-        bar = bar if bar and bar >= 1 else 1
-        return (bar - 1) * self.qn_per_bar()
+        """Sum of every earlier bar's length in its own meter (the bridge's meter-map rule)."""
+        bar = int(bar) if bar and bar >= 1 else 1
+        qn = 0.0
+        for b in range(1, bar):
+            num, den = self.meter_at_bar(b)
+            qn += num * 4.0 / den
+        return qn
+
+    def qn_to_time(self, qn: float) -> float:
+        return qn * 60.0 / self.tempo
+
+    def bar_beat_at(self, t: float) -> tuple[int, float]:
+        """TimeMap2_timeToBeats, 1-based: the bar containing ``t`` and the beat within it
+        (in the meter's beat unit)."""
+        qn = t * self.tempo / 60.0
+        bar = 1
+        while self.bar_start_qn(bar + 1) <= qn + 1e-9:
+            bar += 1
+        _num, den = self.meter_at_bar(bar)
+        return bar, (qn - self.bar_start_qn(bar)) * den / 4.0 + 1.0
+
+    def tempo_map(self) -> list[dict]:
+        points = [{"time_s": 0.0, "bar": 1, "beat": 1.0, "qn": 0.0, "bpm": self.tempo,
+                   "meter": [self.ts_num, self.ts_den], "linear": False}]
+        for bar, num, den in sorted(self.meter_changes):
+            qn = self.bar_start_qn(bar)
+            points.append({"time_s": self.qn_to_time(qn), "bar": bar, "beat": 1.0, "qn": qn,
+                           "bpm": self.tempo, "meter": [num, den], "linear": False})
+        return points
 
     @staticmethod
     def qn_to_ppq(qn: float) -> int:
@@ -370,8 +426,10 @@ def make_handlers(project: FakeReaperProject) -> dict:
 
     def create_midi_item(p):
         tr = project.resolve_track(p["track"])
-        start_qn = project.bar_start_qn(p.get("start_bar", 1))
-        take = FakeTake(item_start_qn=start_qn)
+        start_bar = p.get("start_bar", 1)
+        start_qn = project.bar_start_qn(start_bar)
+        end_qn = project.bar_start_qn(start_bar + p.get("length_bars", 1))
+        take = FakeTake(item_start_qn=start_qn, item_end_qn=end_qn)
         tr.takes.append(take)
         return {
             "track": tr.guid,
@@ -1027,7 +1085,77 @@ def make_handlers(project: FakeReaperProject) -> dict:
         finally:
             project.render_mutex_held = False  # cleared in EVERY path
 
-    return {
+    # -- REAPER sync reads: get_project_timeline / get_project_snapshot (spec 2026-10-23) -- #
+
+    def _identity():
+        length = 0.0
+        for tr in project.tracks:
+            for tk in tr.takes:
+                length = max(length, project.qn_to_time(tk.item_end_qn))
+            for it in tr.items:
+                length = max(length, it.position + it.length)
+        return {"name": project.name, "path": project.path, "length_s": length,
+                "state_change_count": project.state_change_count}
+
+    def _marks():
+        markers, regions = [], []
+        for m in project.markers:
+            if "start_s" in m:  # add_region
+                sb, sbeat = project.bar_beat_at(m["start_s"])
+                eb, ebeat = project.bar_beat_at(m["end_s"])
+                regions.append({"index": len(regions) + 1, "name": m["name"],
+                                "start_s": m["start_s"], "end_s": m["end_s"],
+                                "start_bar": sb, "start_beat": sbeat, "end_bar": eb,
+                                "end_beat": ebeat, "color": m.get("color")})
+            else:  # add_marker (by bar)
+                t = project.qn_to_time(project.bar_start_qn(m["bar"]))
+                bar, beat = project.bar_beat_at(t)
+                markers.append({"index": len(markers) + 1, "name": m["name"], "time_s": t,
+                                "bar": bar, "beat": beat})
+        return markers, regions
+
+    def get_project_timeline(_p):
+        markers, regions = _marks()
+        return {
+            "project": _identity(),
+            "transport": {"playing": project.play_state & 1 == 1,
+                          "paused": project.play_state & 2 == 2,
+                          "recording": project.play_state & 4 == 4,
+                          "cursor_s": project.cursor_s,
+                          "play_position_s": project.play_position_s},
+            "tempo_map": project.tempo_map(),
+            "markers": markers,
+            "regions": regions,
+            "truncated": False,
+        }
+
+    def get_project_snapshot(_p):
+        tracks = []
+        for i, tr in enumerate(project.tracks, start=1):
+            items = []
+            for tk in tr.takes:
+                pos = project.qn_to_time(tk.item_start_qn)
+                bar, beat = project.bar_beat_at(pos)
+                notes = tuple((n.pitch, n.start_ppq, n.end_ppq, n.velocity, n.channel)
+                              for n in tk.notes)
+                items.append({"guid": tk.guid, "position_s": pos,
+                              "length_s": project.qn_to_time(tk.item_end_qn) - pos,
+                              "bar": bar, "beat": beat, "kind": "midi",
+                              "midi_hash": hashlib.sha1(repr(notes).encode()).hexdigest()})
+            for it in tr.items:
+                bar, beat = project.bar_beat_at(it.position)
+                items.append({"guid": it.guid, "position_s": it.position,
+                              "length_s": it.length, "bar": bar, "beat": beat,
+                              "kind": "audio", "source": it.source_file})
+            tracks.append({"guid": tr.guid, "index": i, "name": tr.name, "mute": tr.mute,
+                           "solo": bool(tr.solo or tr.i_solo), "volume_db": tr.volume_db,
+                           "pan": tr.pan, "fx_count": len(tr.fx) + len(tr.fx_chain),
+                           "items": items})
+        markers, regions = _marks()
+        return {"project": _identity(), "tempo_map": project.tempo_map(), "markers": markers,
+                "regions": regions, "tracks": tracks, "truncated": False}
+
+    handlers = {
         "get_connection_status": get_connection_status,
         "get_project_info": get_project_info,
         "list_tracks": list_tracks,
@@ -1065,6 +1193,22 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "set_fx_param": set_fx_param,
         "get_fx_params": get_fx_params,
         "render_track_region": render_track_region,
+        "get_project_timeline": get_project_timeline,
+        "get_project_snapshot": get_project_snapshot,
+    }
+
+    # Every handler that can change the project bumps the change counter, like REAPER's
+    # GetProjectStateChangeCount (reads and the connection probe don't).
+    def _counted(fn):
+        def wrapper(p):
+            result = fn(p)
+            project.state_change_count += 1
+            return result
+        return wrapper
+
+    return {
+        name: fn if name.startswith(("get_", "list_")) else _counted(fn)
+        for name, fn in handlers.items()
     }
 
 
@@ -1085,6 +1229,8 @@ class FakeReaperBridge:
         self._answer = answer
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
+        # None = the old bare timestamp; a string = heartbeat v2 JSON (the Lua loop's content).
+        self.heartbeat_content: str | None = None
 
     def __enter__(self) -> FakeReaperBridge:
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -1100,6 +1246,17 @@ class FakeReaperBridge:
         self._stop.set()
         self._thread.join(timeout=1.0)
 
+    def wait_for_heartbeat_content(self, timeout: float = 1.0) -> None:
+        """Block until the poller has written ``heartbeat_content`` at least once."""
+        deadline = time.monotonic() + timeout
+        hb = self.dir / "heartbeat.lock"
+        while time.monotonic() < deadline:
+            with contextlib.suppress(OSError):
+                if hb.read_text(encoding="utf-8") == self.heartbeat_content:
+                    return
+            time.sleep(0.005)
+        raise TimeoutError("fake bridge never wrote the requested heartbeat content")
+
     def _run(self) -> None:
         while not self._stop.is_set():
             if self._beat:
@@ -1109,7 +1266,9 @@ class FakeReaperBridge:
                 # uncaught exception here kills the poller thread for the rest of the
                 # test (see _atomic_write for why this can happen on Windows).
                 with contextlib.suppress(OSError):
-                    self._atomic_write(self.dir / "heartbeat.lock", str(time.time()))
+                    self._atomic_write(
+                        self.dir / "heartbeat.lock", self.heartbeat_content or str(time.time())
+                    )
             if self._answer:
                 for req_file in sorted(self.dir.glob("request_*.json")):
                     self._handle(req_file)
