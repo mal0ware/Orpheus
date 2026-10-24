@@ -707,3 +707,95 @@ class CacheClearResult(BaseModel):
 
     bytes_freed: int
     entries_cleared: int
+
+
+# --------------------------------------------------------------------------- #
+# REAPER sync (spec 2026-10-23 REAPER sync): the live timeline and change reports.
+# Bars and beats are 1-based, read from REAPER's own time map (they match the ruler).
+# --------------------------------------------------------------------------- #
+
+
+class ProjectIdentity(BaseModel):
+    """Which project is open. ``path`` is empty for an unsaved project.
+    ``state_change_count`` is REAPER's project-change counter: it rises on every edit."""
+
+    name: str = ""
+    path: str = ""
+    length_s: float = 0.0
+    state_change_count: int | None = None
+
+
+class TransportState(BaseModel):
+    playing: bool = False
+    paused: bool = False
+    recording: bool = False
+    cursor_s: float = 0.0
+    play_position_s: float = 0.0
+
+
+class TempoPoint(BaseModel):
+    """One tempo/time-signature marker (or the project's own tempo and meter at time 0)."""
+
+    time_s: float
+    bar: int | None = None
+    beat: float | None = None
+    qn: float | None = None
+    bpm: float
+    meter: tuple[int, int]
+    linear: bool = False
+
+
+class TimelineMarker(BaseModel):
+    index: int
+    name: str = ""
+    time_s: float
+    bar: int | None = None
+    beat: float | None = None
+    color: str | None = None
+
+
+class TimelineRegion(BaseModel):
+    index: int
+    name: str = ""
+    start_s: float
+    end_s: float
+    start_bar: int | None = None
+    start_beat: float | None = None
+    end_bar: int | None = None
+    end_beat: float | None = None
+    color: str | None = None
+
+
+class ProjectTimeline(BaseModel):
+    """``get_project_timeline``: where we are in the live REAPER session."""
+
+    project: ProjectIdentity
+    transport: TransportState
+    tempo_map: list[TempoPoint]
+    markers: list[TimelineMarker] = Field(default_factory=list)
+    regions: list[TimelineRegion] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class ProjectChange(BaseModel):
+    """One difference between two snapshots, in plain words plus structured fields."""
+
+    kind: str
+    summary: str
+    track: str | None = None
+    bar: int | None = None
+    beat: float | None = None
+    before: Any = None
+    after: Any = None
+
+
+class ProjectChanges(BaseModel):
+    """``project_changes``: edits since the last check of this project. The first check of a
+    project records a baseline (``baseline_recorded``) and reports nothing."""
+
+    project: ProjectIdentity
+    baseline_recorded: bool = False
+    previous_state_change_count: int | None = None
+    changes: list[ProjectChange] = Field(default_factory=list)
+    truncated: bool = False
+    note: str | None = None

@@ -21,6 +21,8 @@ IMPLEMENTED = {
     # bridge / project / transport / tracks / midi (M1)
     "get_connection_status",
     "get_project_info",
+    "get_project_timeline",
+    "project_changes",
     "list_tracks",
     "get_track_midi",
     "set_tempo",

@@ -1513,6 +1513,171 @@ HANDLERS.add_sampler_zones = function(p)
   return { track_guid = reaper.GetTrackGUID(tr), zones_added = added, failed = failed }
 end
 
+-- REAPER sync reads (spec 2026-10-23 REAPER sync §2.1/§2.3): get_project_timeline (where
+-- are we: identity, transport, tempo/meter map, markers, regions) and get_project_snapshot
+-- (everything project_changes diffs). Read-only. Bars and beats are 1-based and come from
+-- REAPER's own TimeMap2_timeToBeats, so they match the ruler; beats are in the meter's beat
+-- unit, as the ruler shows them.
+-- verify live: EnumProjectMarkers3 order, GetTempoTimeSigMarker's 0/0 "inherit" meter, and
+-- TimeMap2_timeToBeats beat units on an x/8 meter.
+-- --------------------------------------------------------------------------- --
+
+local MAX_SYNC_MARKERS = 1024
+local MAX_SNAPSHOT_ITEMS_PER_TRACK = 512
+local MAX_SNAPSHOT_ITEMS = 4096
+
+local function bar_beat_at(t)
+  if reaper.TimeMap2_timeToBeats then
+    local beats, measures = reaper.TimeMap2_timeToBeats(0, t)
+    return math.floor(tonumber(measures) or 0) + 1, (tonumber(beats) or 0) + 1
+  end
+  return nil, nil
+end
+
+local function native_color_hex(c)
+  c = math.floor(tonumber(c) or 0)
+  if c & 0x1000000 == 0 or not reaper.ColorFromNative then return nil end   -- theme default
+  local r, g, b = reaper.ColorFromNative(c & 0xFFFFFF)
+  return string.format("#%02X%02X%02X", r, g, b)
+end
+
+local function project_identity()
+  local _, path = reaper.EnumProjects(-1)
+  return {
+    name = reaper.GetProjectName and reaper.GetProjectName(0) or "",
+    path = path or "",
+    length_s = reaper.GetProjectLength(0),
+    state_change_count = reaper.GetProjectStateChangeCount and
+      reaper.GetProjectStateChangeCount(0) or nil,
+  }
+end
+
+local function read_tempo_map()
+  local out = {}
+  local num, den = project_time_sig()
+  local n = reaper.CountTempoTimeSigMarkers and reaper.CountTempoTimeSigMarkers(0) or 0
+  for i = 0, n - 1 do
+    local ok, t, _, _, bpm, tn, td, linear = reaper.GetTempoTimeSigMarker(0, i)
+    if ok then
+      if tn and tn > 0 and td and td > 0 then num, den = tn, td end   -- 0/0 inherits
+      local bar, beat = bar_beat_at(t)
+      out[#out + 1] = {
+        time_s = t, bar = bar, beat = beat,
+        qn = reaper.TimeMap2_timeToQN and reaper.TimeMap2_timeToQN(0, t) or nil,
+        bpm = bpm, meter = { num, den }, linear = linear and true or false,
+      }
+    end
+  end
+  if #out == 0 or out[1].time_s > 1e-9 then
+    -- the project's own tempo and meter at time 0, so the map is never empty
+    local tn0, td0, bpm0 = reaper.TimeMap_GetTimeSigAtTime(0, 0.0)
+    table.insert(out, 1, {
+      time_s = 0.0, bar = 1, beat = 1.0, qn = 0.0, bpm = bpm0 or reaper.Master_GetTempo(),
+      meter = { (tn0 and tn0 > 0) and tn0 or 4, (td0 and td0 > 0) and td0 or 4 },
+      linear = false,
+    })
+  end
+  return out
+end
+
+local function read_markers_regions()
+  local markers, regions, truncated, i = {}, {}, false, 0
+  while true do
+    local idx, isrgn, pos, rgnend, name, num, color = reaper.EnumProjectMarkers3(0, i)
+    if not idx or idx == 0 then break end
+    if #markers + #regions >= MAX_SYNC_MARKERS then truncated = true; break end
+    if isrgn then
+      local sb, sbeat = bar_beat_at(pos)
+      local eb, ebeat = bar_beat_at(rgnend)
+      regions[#regions + 1] = {
+        index = num, name = name or "", start_s = pos, end_s = rgnend,
+        start_bar = sb, start_beat = sbeat, end_bar = eb, end_beat = ebeat,
+        color = native_color_hex(color),
+      }
+    else
+      local bar, beat = bar_beat_at(pos)
+      markers[#markers + 1] = {
+        index = num, name = name or "", time_s = pos, bar = bar, beat = beat,
+        color = native_color_hex(color),
+      }
+    end
+    i = i + 1
+  end
+  return markers, regions, truncated
+end
+
+HANDLERS.get_project_timeline = function(_)
+  local state = reaper.GetPlayState()
+  local markers, regions, truncated = read_markers_regions()
+  return {
+    project = project_identity(),
+    transport = {
+      playing = (state & 1) == 1, paused = (state & 2) == 2, recording = (state & 4) == 4,
+      cursor_s = reaper.GetCursorPosition(), play_position_s = reaper.GetPlayPosition(),
+    },
+    tempo_map = read_tempo_map(),
+    markers = markers,
+    regions = regions,
+    truncated = truncated,
+  }
+end
+
+HANDLERS.get_project_snapshot = function(_)
+  local tracks, total, truncated = {}, 0, false
+  for i = 0, reaper.CountTracks(0) - 1 do
+    local tr = reaper.GetTrack(0, i)
+    local _, name = reaper.GetTrackName(tr, "")
+    local vol = reaper.GetMediaTrackInfo_Value(tr, "D_VOL")
+    local items = {}
+    for j = 0, reaper.CountTrackMediaItems(tr) - 1 do
+      if #items >= MAX_SNAPSHOT_ITEMS_PER_TRACK or total >= MAX_SNAPSHOT_ITEMS then
+        truncated = true
+        break
+      end
+      local item = reaper.GetTrackMediaItem(tr, j)
+      local _, iguid = reaper.GetSetMediaItemInfo_String(item, "GUID", "", false)
+      local pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+      local bar, beat = bar_beat_at(pos)
+      local entry = {
+        guid = iguid, position_s = pos, length_s = reaper.GetMediaItemInfo_Value(item, "D_LENGTH"),
+        bar = bar, beat = beat, kind = "empty",
+      }
+      local take = reaper.GetActiveTake(item)
+      if take then
+        if reaper.TakeIsMIDI(take) then
+          entry.kind = "midi"
+          local hok, h = reaper.MIDI_GetHash(take, false, "")
+          if hok then entry.midi_hash = h end
+        else
+          entry.kind = "audio"
+          local src = reaper.GetMediaItemTake_Source(take)
+          if src then entry.source = reaper.GetMediaSourceFileName(src, "") end
+        end
+      end
+      items[#items + 1] = entry
+      total = total + 1
+    end
+    tracks[#tracks + 1] = {
+      guid = reaper.GetTrackGUID(tr), index = i + 1, name = name or "",
+      mute = reaper.GetMediaTrackInfo_Value(tr, "B_MUTE") == 1,
+      solo = reaper.GetMediaTrackInfo_Value(tr, "I_SOLO") ~= 0,
+      volume_db = (vol and vol > 0) and (20.0 * math.log(vol, 10)) or -150.0,
+      pan = reaper.GetMediaTrackInfo_Value(tr, "D_PAN"),
+      fx_count = reaper.TrackFX_GetCount(tr),
+      items = items,
+    }
+  end
+  local markers, regions, mtrunc = read_markers_regions()
+  return {
+    project = project_identity(),
+    tempo_map = read_tempo_map(),
+    markers = markers,
+    regions = regions,
+    tracks = tracks,
+    truncated = truncated or mtrunc,
+  }
+end
+
 -- delete_track — remove a track from the project (user-mandated 2026-07-30; the
 -- original no-delete design stance was overridden by explicit request). Resolves by
 -- name/GUID/index like every verb; the result echoes what was deleted so the caller
