@@ -160,3 +160,31 @@ def test_off_grid_notes_are_snapped_and_warned():
     out = export_yue2(sheet)
     assert any("grid" in w for w in out.warnings)
     assert '"C"C4z12|' in out.abc
+
+
+ROUND_TRIP = [
+    ({"name": "Verse", "bars": 2, "chart": "C | G", "melody": "C4:h. E4:e. G4:q."}, "C", "major",
+     (4, 4)),
+    ({"name": "Verse", "bars": 1, "chart": "C", "melody": "F#4:q F#5:q F4:q C4:q"}, "C", "major",
+     (4, 4)),
+    ({"name": "Verse", "bars": 2, "chart": "Am / Fmaj9 | E7#9 / E---",
+      "melody": "A4:q G#4:e. A4:s B4:h C5:q. B4:e A4:h"}, "A", "minor", (4, 4)),
+    ({"name": "Verse", "bars": 2, "chart": "D | A/C#", "melody": "F#4:q. F4:q. C#5:q. D5:q."},
+     "D", "major", (6, 8)),
+    ({"name": "Bridge", "bars": 2, "chart": "Bbm | Gb", "melody": "Db5:q C5:q Bb4:q A4:q Gb4:w"},
+     "Bb", "minor", (4, 4)),
+]
+
+
+@pytest.mark.parametrize(("section", "key", "mode", "meter"), ROUND_TRIP)
+def test_every_export_passes_the_checker_and_reads_back_the_same_notes(section, key, mode, meter):
+    from orpheus_mcp.notation.yue2_check import check_yue2_abc, parse_yue2_abc
+
+    out = _export(section, key=key, mode=mode, meter=meter)
+    assert check_yue2_abc(out.abc) == []
+    sheet = LeadSheet(key=key, mode=mode, meter=meter, tempo_bpm=88,
+                      sections=[LeadSheetSection(**section)])
+    melody = resolve_lead_sheet(sheet)[0].sections[0].melody_notes
+    score = parse_yue2_abc(out.abc)
+    assert [(n.pitch, float(n.onset_q), float(n.duration_q)) for n in score.vocal] == [
+        (n.pitch, n.start_beat, n.duration_beats) for n in melody]
