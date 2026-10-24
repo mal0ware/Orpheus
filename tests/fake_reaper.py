@@ -136,6 +136,10 @@ class FakeReaperProject:
     play_state: int = 0
     installed_fx: list[str] = field(default_factory=list)
     markers: list[dict] = field(default_factory=list)
+    # Time-signature changes as (bar, num, den), each in force from that bar on; bars before
+    # the first change use ts_num/ts_den. Mirrors REAPER's measure map (the bridge's
+    # bar_start_qn goes through TimeMap2_beatsToTime).
+    meter_changes: list[tuple[int, int, int]] = field(default_factory=list)
     # Undo blocks, as RECORDED EVENTS: ("begin", desc) / ("end", desc) appended in order.
     # A real Undo_BeginBlock/EndBlock pair has no observable project state, so the only way
     # to assert the "one Ctrl+Z undoes the whole import" promise from a test is to prove
@@ -183,9 +187,21 @@ class FakeReaperProject:
     def qn_per_bar(self) -> float:
         return self.ts_num * (4.0 / self.ts_den)
 
+    def meter_at_bar(self, bar: int) -> tuple[int, int]:
+        num, den = self.ts_num, self.ts_den
+        for start, n, d in sorted(self.meter_changes):
+            if bar >= start:
+                num, den = n, d
+        return num, den
+
     def bar_start_qn(self, bar: int) -> float:
-        bar = bar if bar and bar >= 1 else 1
-        return (bar - 1) * self.qn_per_bar()
+        """Sum of every earlier bar's length in its own meter (the bridge's meter-map rule)."""
+        bar = int(bar) if bar and bar >= 1 else 1
+        qn = 0.0
+        for b in range(1, bar):
+            num, den = self.meter_at_bar(b)
+            qn += num * 4.0 / den
+        return qn
 
     @staticmethod
     def qn_to_ppq(qn: float) -> int:
@@ -370,8 +386,10 @@ def make_handlers(project: FakeReaperProject) -> dict:
 
     def create_midi_item(p):
         tr = project.resolve_track(p["track"])
-        start_qn = project.bar_start_qn(p.get("start_bar", 1))
-        take = FakeTake(item_start_qn=start_qn)
+        start_bar = p.get("start_bar", 1)
+        start_qn = project.bar_start_qn(start_bar)
+        end_qn = project.bar_start_qn(start_bar + p.get("length_bars", 1))
+        take = FakeTake(item_start_qn=start_qn, item_end_qn=end_qn)
         tr.takes.append(take)
         return {
             "track": tr.guid,

@@ -296,9 +296,15 @@ local function qn_per_bar()
   return num * (4.0 / den)
 end
 
--- The project quarter-note position where bar `bar` (1-based) begins.
+-- The project quarter-note position where bar `bar` (1-based) begins, on REAPER's own
+-- tempo/meter map: TimeMap2_beatsToTime with `measures` = bar - 1 (0-based) lands on the bar
+-- line even after time-signature changes (spec 2026-10-23 REAPER sync §2.2). The old
+-- single-meter formula is the fallback where the map API is missing.
 local function bar_start_qn(bar)
-  bar = (bar and bar >= 1) and bar or 1
+  bar = (bar and bar >= 1) and math.floor(bar) or 1
+  if reaper.TimeMap2_beatsToTime and reaper.TimeMap2_timeToQN then
+    return reaper.TimeMap2_timeToQN(0, reaper.TimeMap2_beatsToTime(0, 0, bar - 1))
+  end
   return (bar - 1) * qn_per_bar()
 end
 
@@ -391,9 +397,9 @@ end
 HANDLERS.create_midi_item = function(p)
   local tr, err = resolve_track(p.track)
   if not tr then error(err) end
-  local qnpb = qn_per_bar()
-  local start_qn = bar_start_qn(p.start_bar or 1)
-  local end_qn = start_qn + (p.length_bars or 1) * qnpb
+  local start_bar = p.start_bar or 1
+  local start_qn = bar_start_qn(start_bar)
+  local end_qn = bar_start_qn(start_bar + (p.length_bars or 1))   -- meter-map aware
   local start_t = reaper.TimeMap2_QNToTime(0, start_qn)
   local end_t = reaper.TimeMap2_QNToTime(0, end_qn)
   local item = reaper.CreateNewMIDIItemInProj(tr, start_t, end_t, false)
