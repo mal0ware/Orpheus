@@ -118,6 +118,19 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
                 "sidecar": out.sidecar, "reductions": out.reductions,
                 "warnings": warnings + out.warnings, "valid": not errors, "errors": errors}
 
+    @mcp.tool(annotations=_RO)
+    def import_yue2_score(
+        abc: str, sidecar: list[dict] | None = None, lyrics: str | None = None
+    ) -> dict:
+        """Read a YuE2 score (ABC in YuE2's dialect, e.g. one Orpheus exported or YuE2 planned)
+        back into a LeadSheet. Accidentals follow YuE2's rule; syllables come from the export's
+        ``sidecar`` and lyric lines from its ``lyrics`` text when given. Read-only: pass the
+        result to arrange_lead_sheet to put it in REAPER."""
+        from orpheus_mcp.notation.yue2_read import import_yue2
+
+        sheet, warnings = import_yue2(abc, sidecar, lyrics=lyrics)
+        return {"lead_sheet": sheet.model_dump(), "warnings": warnings}
+
     @mcp.tool(annotations=_DESTRUCTIVE)
     def arrange_lead_sheet(lead_sheet: LeadSheet) -> dict:
         """Lay a LeadSheet into REAPER: tempo and meter, a marker per section plus its first

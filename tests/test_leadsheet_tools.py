@@ -117,3 +117,16 @@ def test_rearranging_does_not_reload_instruments(project, tmp_path):
         again = arrange_lead_sheet_impl(bridge, sheet)
     assert again["instruments"] == {}
     assert project.resolve_track("Drums").fx == drums_fx
+
+
+async def test_import_tool_round_trips_an_export(mcp_client):
+    async with mcp_client as c:
+        out = (await c.call_tool("export_yue2_score", {"lead_sheet": SHEET})).structured_content
+        back = (await c.call_tool("import_yue2_score", {
+            "abc": out["abc"], "sidecar": out["sidecar"], "lyrics": out["lyrics"]})).data
+    sections = back["lead_sheet"]["sections"]
+    assert [(s["label"], s["bars"]) for s in sections] == [("intro", 2), ("verse", 4),
+                                                           ("chorus", 2)]
+    assert sections[1]["lyrics"] == ["Something in the way"]
+    assert sections[1]["melody_notes"][0]["syllable"] == "Some-"
+    assert back["warnings"] == []

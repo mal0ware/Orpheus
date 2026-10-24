@@ -509,3 +509,11 @@ def test_onsets_accumulate_across_groups_and_meter_changes() -> None:
     assert score.meter == (4, 4)
     assert notes(score.vocal) == [(0, 60, 4), (4, 62, 4), (8, 64, 3), (11, 65, 4)]
     assert notes(score.ins) == [(11, 72, 4)]
+
+
+def test_trailing_whitespace_after_the_last_barline_is_rejected():
+    # Matches the official abc_tools.py (pinned cross-check, 2026-10-24): a music line must END
+    # with a plain barline; yue2.cpp would hand the trailing spaces to the model.
+    text = SCORE_ABC.replace("C4|\nV: Ins", "C4|  \nV: Ins", 1)
+    assert text != SCORE_ABC
+    assert any("must end with" in e for e in check_yue2_abc(text))

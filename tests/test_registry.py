@@ -26,6 +26,7 @@ IMPLEMENTED = {
     "parse_riff_tab",
     "preview_lead_sheet",
     "export_yue2_score",
+    "import_yue2_score",
     "arrange_lead_sheet",
     "project_changes",
     "list_tracks",

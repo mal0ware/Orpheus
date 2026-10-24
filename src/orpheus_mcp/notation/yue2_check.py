@@ -502,8 +502,8 @@ class _Scan:
                 f"unsupported barline {bad.group()!r}: only plain '|' is allowed (no repeats, "
                 "alternate endings or double bars)",
             )
-        stripped = line.rstrip()
-        if not stripped.endswith("|"):
+        stripped = line
+        if not stripped.endswith("|"):  # exactly: trailing spaces fail, as in abc_tools.py
             self._fail(block.lineno, "a music line must end with '|'")
         measure_q = Fraction(4 * meter[0], meter[1])
         signature = _key_signature(key)
