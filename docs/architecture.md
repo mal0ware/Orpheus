@@ -109,8 +109,10 @@ export for YuE2), and `apply_changes` running a whole Claude-written `EditPlan` 
 - **Isolated environments, called as subprocesses:** audio-separator (its dependencies cap
   `fastmcp`) and basic-pitch (needs Python 3.11 or older). Set up by `scripts/setup_*_env.py`.
 - **Non-commercial backends:** off unless named in `ORPHEUS_NC_BACKENDS` (for example `yue2`).
-  `model_registry.resolve(allow_nc=...)` filters registry entries; YuE2 will run as a separate
-  program (yue2.cpp) reached over HTTP or its CLI, with weights the user downloads.
+  `model_registry.resolve(allow_nc=...)` filters registry entries. YuE2 runs as a separate
+  program: `backends/yue2.py` starts yue2.cpp's `yue-synth` CLI once per sketch, with weights the
+  user downloads, and holds the GPU semaphore while it runs. `tools/sketch.py` registers
+  `render_sketch` only when `ORPHEUS_NC_BACKENDS` names `yue2`.
 - **GPU:** one semaphore serializes Orpheus's own GPU stages on the 10 GB card.
 
 ## How the modules fit
@@ -123,6 +125,9 @@ export for YuE2), and `apply_changes` running a whole Claude-written `EditPlan` 
   verification gates, descriptors, lyrics, intents, section-diff, cache, model registry).
   Unit-testable with no REAPER.
 - `theory/`: scales, chords, cadences, melody notation, drum patterns. A read-only knowledge layer.
+- `notation/`: the owner's chord charts and riff tab, lead sheets, and YuE2's ABC dialect (writer,
+  checker, reader).
+- `backends/`: optional external generators (YuE2 through yue2.cpp), each behind its own opt-in.
 - `models.py`: the Pydantic contracts (`Recon`, `ChordsLane`, `LyricsResult`, `SoundCharacter`,
   `CompositionSpec`, `EditPlan`, …) that become structured content.
 - `data/`: calibrated FX parameter maps, the model registry, intent rules, the free-VST catalog,

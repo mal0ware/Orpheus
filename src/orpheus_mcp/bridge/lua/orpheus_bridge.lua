@@ -882,7 +882,9 @@ end
 -- laying Orpheus-separated stems onto tracks for A/B).
 --
 -- Boundary (§1 "owned audio only" / §14.3): this handler inserts exactly the paths the
--- Python tool was given — it never discovers, fetches, or embeds anything on its own.
+-- Python tool was given — it never discovers, fetches, or embeds anything on its own. Its
+-- callers: the import_audio_files tool (files the user names) and render_sketch (the YuE2
+-- sketch Orpheus just rendered from the owner's own lead sheet).
 --
 -- The WHOLE import is ONE undo block: one Ctrl+Z removes every track/item it created
 -- (the README's product promise). A per-file failure is RECORDED, never silent: the
@@ -900,7 +902,7 @@ end
 -- Import ONE file as a new appended track carrying one media item at at_s. Raises (via
 -- err) on ANY failure so the caller records it under `failed` and continues with the
 -- remaining files — a nil/zero-length source is a reported error, never a silent skip.
-local function import_one_audio_file(file, at_s, prefix)
+local function import_one_audio_file(file, at_s, prefix, fade_out_s)
   -- Create + validate the source BEFORE touching the project, so an unreadable path
   -- leaves NO stray empty track behind (same "fail before any state mutation" rule
   -- render_track_region follows). Note this reorders the create-track/create-source
@@ -950,6 +952,11 @@ local function import_one_audio_file(file, at_s, prefix)
   reaper.SetMediaItemTake_Source(take, src)
   reaper.SetMediaItemInfo_Value(item, "D_POSITION", at_s)
   reaper.SetMediaItemInfo_Value(item, "D_LENGTH", len)
+  -- Optional fade-out (render_sketch: YuE2 keeps playing past the score, so the sketch's cut
+  -- end is faded; owner decision 2026-10-25). Never longer than the item; none unless asked.
+  if fade_out_s and fade_out_s > 0 then
+    reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", math.min(fade_out_s, len))
+  end
   -- Pin the item to TIME base (0 = time; -1 would be project default — that was the bug:
   -- a beats-timebase item warps under a later set_tempo). Imported reference audio must
   -- never tempo-warp; a later set_tempo stretched real stems at half speed (live incident
@@ -972,6 +979,7 @@ HANDLERS.import_audio_files = function(p)
   if #files == 0 then err("import_audio_files: no files given") end
   local at_s = tonumber(p.at_s) or 0.0
   local prefix = p.name_prefix or ""
+  local fade_out_s = tonumber(p.fade_out_s)
   local desc = string.format("Orpheus: import %d audio files", #files)
 
   -- verify live: Undo_BeginBlock/Undo_EndBlock(desc, -1) nesting. The bridge dispatches
@@ -984,7 +992,7 @@ HANDLERS.import_audio_files = function(p)
   -- undo block still open. Per-file failures are caught one level in and recorded.
   local ok_all, loop_err = pcall(function()
     for _, file in ipairs(files) do
-      local one_ok, one = pcall(import_one_audio_file, file, at_s, prefix)
+      local one_ok, one = pcall(import_one_audio_file, file, at_s, prefix, fade_out_s)
       if one_ok then
         imported[#imported + 1] = one
       else
@@ -1652,6 +1660,22 @@ HANDLERS.get_project_timeline = function(_)
     markers = markers,
     regions = regions,
     truncated = truncated,
+  }
+end
+
+-- get_bar_time (spec 2026-10-24 sketch §3.5): where a bar starts on REAPER's own tempo/meter
+-- map, with the tempo and meter in force there, so a rendered sketch lands on the section's bar
+-- and Python can warn when the project's tempo differs from the sheet's. Read-only.
+HANDLERS.get_bar_time = function(p)
+  local bar = tonumber(p.bar)
+  if not bar or bar < 1 then err("get_bar_time: bar must be 1 or more") end
+  bar = math.floor(bar)
+  local qn = bar_start_qn(bar)
+  local t = reaper.TimeMap2_QNToTime(0, qn)
+  local num, den, bpm = reaper.TimeMap_GetTimeSigAtTime(0, t)
+  return {
+    bar = bar, time_s = t, qn = qn, bpm = bpm,
+    meter = { (num and num > 0) and num or 4, (den and den > 0) and den or 4 },
   }
 end
 

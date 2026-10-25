@@ -49,8 +49,9 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:
         local files the USER names — their own audio, e.g. Orpheus-separated stems of
         music they own, sitting in a folder for A/B against their mix. Orpheus never
         fetches, scrapes, discovers, or auto-embeds reference audio into a project; it
-        only ever places paths the user explicitly handed it. This tool is opt-in by
-        construction — nothing else in Orpheus calls it.
+        only ever places paths the user explicitly handed it. The one other caller is
+        ``render_sketch`` (opt-in, ``ORPHEUS_NC_BACKENDS=yue2``), which places the sketch
+        Orpheus just rendered from the owner's own lead sheet, never outside audio.
 
         ``files`` must be non-empty and every path ABSOLUTE (REAPER resolves relative
         paths against its own working directory, not the caller's). A file that cannot be

@@ -81,8 +81,11 @@ Agreed 2026-10-23, in this order:
 6. **Sheet ↔ REAPER in step:** sheet sections and chords become markers and regions; the live
    timeline can be written back to the sheet (Claude does the sheet side through the Drive
    connector, with a yes).
-7. **Sung sketches** (if step 3 says go): send an Orpheus-written score to yue2.cpp, import the
-   result onto a "SKETCH (YuE2)" track. Gated by `ORPHEUS_NC_BACKENDS=yue2`.
+7. **Sung sketches** (2026-10-25, [spec](specs/2026-10-24-yue2-sketch-design.md)):
+   - [x] `render_sketch`: chosen sections of a lead sheet through yue2.cpp's CLI, one process per
+     sketch under the GPU semaphore, onto a new `SKETCH (YuE2) <section> #<seed>` track at the
+     section's bar. Gated by `ORPHEUS_NC_BACKENDS=yue2`.
+   - [ ] live check with the owner: the import lands on the bar in REAPER and lines up by ear
 
 ## Next
 

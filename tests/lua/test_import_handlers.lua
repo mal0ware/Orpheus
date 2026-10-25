@@ -133,7 +133,8 @@ reaper = {
     record("SetMediaItemInfo_Value:" .. key)
     if key == "D_POSITION" then item.pos = val
     elseif key == "D_LENGTH" then item.len = val
-    elseif key == "C_BEATATTACHMODE" then item.beat_attach_mode = val end
+    elseif key == "C_BEATATTACHMODE" then item.beat_attach_mode = val
+    elseif key == "D_FADEOUTLEN" then item.fade_out = val end
     return true
   end,
   GetMediaItemInfo_Value = function(item, key)
@@ -373,6 +374,21 @@ eq(#proj.tracks, 0, "the stranded track was cleaned up — none remains")
 eq(proj.deleted_tracks, 1, "DeleteTrack was called exactly once")
 eq(proj.destroyed_sources, 1, "the source handle was destroyed, not leaked")
 proj.fail_add_take_for = nil
+
+-- --------------------------------------------------------------------------- --
+-- 10. fade_out_s (spec 2026-10-24 sketch, owner decision 2026-10-25): an optional fade-out
+--     on each imported item, never longer than the item; no fade unless asked.
+-- --------------------------------------------------------------------------- --
+reset()
+eq(call("import_audio_files", { files = { "C:/stems/vocals.wav" }, fade_out_s = 2.0 }).ok, true,
+  "import with a fade ok")
+approx(proj.tracks[1].items[1].fade_out, 2.0, "D_FADEOUTLEN == fade_out_s")
+reset()
+call("import_audio_files", { files = { "/stems/bass.flac" }, fade_out_s = 10.0 })
+approx(proj.tracks[1].items[1].fade_out, 7.0, "a fade longer than the item is clamped to it")
+reset()
+call("import_audio_files", { files = { "C:/stems/vocals.wav" } })
+ok(not called("SetMediaItemInfo_Value:D_FADEOUTLEN"), "no fade is set unless asked")
 
 print(string.format("lua import handlers: %d passed, %d failed", passed, failed_count))
 os.exit(failed_count == 0 and 0 or 1)
