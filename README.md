@@ -110,8 +110,9 @@ Orpheus reads your sheet's own notation: chord charts (`Am / Fmaj7 | C / E (x4)`
 chords, holds, `(stop)`) and bass tab (`A0 -  E1 -`). A section, given as written plus a melody
 Claude writes with you, becomes a **lead sheet**: `arrange_lead_sheet` lays it into REAPER (markers,
 chords, bass riff, melody, drums, lyric markers), and `export_yue2_score` turns it into a score for
-the optional YuE2 sketch backend. Sung sketches themselves are next on
-[the roadmap](docs/roadmap.md).
+YuE2. With the optional YuE2 backend switched on (below), `render_sketch` sings chosen sections
+and puts the take on a new `SKETCH (YuE2)` track at the section's bar, so you can hear the idea
+over the arrangement before you record it.
 
 ## What it won't do
 
@@ -124,8 +125,6 @@ the optional YuE2 sketch backend. Sung sketches themselves are next on
 
 - Sheet and REAPER in step: sheet sections and chords as markers and regions, and REAPER changes
   written back to the sheet (Claude does the sheet side, with your yes).
-- Sung sketches through an optional YuE2 backend (below). The score export, import and checker
-  are built; rendering and importing the audio onto a track is the next step.
 - "Sing it to me": notating a melody from a scratch vocal take.
 - Beat-map export for cutting music videos in Premiere (OpenTimelineIO).
 - Edit plans applied in one undo step (`apply_changes`) and style-based suggestions
@@ -135,8 +134,7 @@ the optional YuE2 sketch backend. Sung sketches themselves are next on
 ## Optional: non-commercial backends
 
 Some useful models allow only non-commercial use: YuE2 (sung song sketches), LarsNet (drum
-splitting). Orpheus is MIT, so these are off by default. Once the YuE2 backend lands, you'll
-switch each one on by name:
+splitting). Orpheus is MIT, so these are off by default. Switch each one on by name:
 
 ```json
 "env": { "ORPHEUS_NC_BACKENDS": "yue2" }
@@ -144,6 +142,16 @@ switch each one on by name:
 
 Their weights are never bundled. You download them yourself, under their own licence (CC BY-NC
 4.0 for YuE2), and Orpheus talks to them as a separate program.
+
+**YuE2 setup.** Build [yue2.cpp](https://github.com/ServeurpersoCom/yue2.cpp) (MIT) with CUDA and
+put the backbone (`YuE2-3B-Q8_0.gguf`, 3.8 GB) and the VAE (`YuE2-Vae-F32.gguf`, 0.5 GB) in its
+`models` folder, laid out as `~/.orpheus/yue2/yue2.cpp/build/Release/yue-synth.exe` and
+`~/.orpheus/yue2/models/`. [`docs/pins/2026-10-yue2-backend.md`](docs/pins/2026-10-yue2-backend.md)
+has the build commands and file hashes. On an RTX 3080 a sketch takes about half its length to
+render and peaks near 6–7 GB of VRAM; Orpheus's own GPU work waits while it runs. YuE2 often
+keeps playing past your last bar, so a sketch stops 4 s after it with a 2 s fade you can drag. Sketches are
+saved under `~/.orpheus/sketches/`, one folder per render with the request, the WAV, YuE2's
+replay file and its log.
 
 ## Settings
 
@@ -154,7 +162,9 @@ Set these in the `env` block of your MCP client config.
 | `ORPHEUS_TOOLSET` | `default`, `explain`, `full` | Which tools Claude sees. `full` adds the not-built stubs. |
 | `ORPHEUS_ASR_DEVICE` | `auto` (default), `cpu`, `cuda` | Where lyric transcription runs. `auto` uses CUDA only after a test run in a separate process succeeds, so a broken cuDNN setup falls back to CPU instead of crashing the server. |
 | `REAPER_MCP_BRIDGE_DIR` | a folder | Where the bridge's request and response files live (default `~/.orpheus_bridge`). |
-| `ORPHEUS_NC_BACKENDS` | e.g. `yue2` | Planned: switches on named non-commercial backends. |
+| `ORPHEUS_NC_BACKENDS` | e.g. `yue2` | Switches on named non-commercial backends; `yue2` adds `render_sketch`. |
+| `ORPHEUS_YUE2_DIR` | a folder | Where yue2.cpp and the YuE2 weights live (default `~/.orpheus/yue2`). |
+| `ORPHEUS_SKETCH_DIR` | a folder | Where rendered sketches are saved (default `~/.orpheus/sketches`). |
 
 ## Install
 

@@ -100,6 +100,7 @@ class FakeMediaItem:
     # clone_track_items can prove it copies the offset and applies item_volume_db.
     start_offs: float = 0.0
     take_volume: float = 1.0
+    fade_out: float = 0.0  # D_FADEOUTLEN, seconds (render_sketch fades a cut-off sketch)
     guid: str = field(default_factory=_next_item_guid)
 
 
@@ -559,6 +560,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
             raise ValueError("import_audio_files: no files given")
         at_s = float(p.get("at_s") or 0.0)
         prefix = p.get("name_prefix") or ""
+        fade_out_s = float(p.get("fade_out_s") or 0.0)
         desc = f"Orpheus: import {len(files)} audio files"
         # ONE undo block around the WHOLE import — opened after the empty-list guard
         # (which errors before any project mutation), closed in every path below.
@@ -581,6 +583,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
                             # import_one_audio_file (the 2026-07-25 tempo-stretch fix).
                             beat_attach_mode=0,
                             playrate=1.0,
+                            fade_out=min(fade_out_s, length_s) if fade_out_s > 0 else 0.0,
                         )
                     )
                     project.tracks.append(tr)  # append at the end
@@ -1155,6 +1158,16 @@ def make_handlers(project: FakeReaperProject) -> dict:
         return {"project": _identity(), "tempo_map": project.tempo_map(), "markers": markers,
                 "regions": regions, "tracks": tracks, "truncated": False}
 
+    def get_bar_time(p):
+        bar = p.get("bar")
+        if bar is None or float(bar) < 1:
+            raise ValueError("get_bar_time: bar must be 1 or more")
+        bar = int(bar)
+        qn = project.bar_start_qn(bar)
+        num, den = project.meter_at_bar(bar)
+        return {"bar": bar, "time_s": project.qn_to_time(qn), "qn": qn, "bpm": project.tempo,
+                "meter": [num, den]}
+
     handlers = {
         "get_connection_status": get_connection_status,
         "get_project_info": get_project_info,
@@ -1195,6 +1208,7 @@ def make_handlers(project: FakeReaperProject) -> dict:
         "render_track_region": render_track_region,
         "get_project_timeline": get_project_timeline,
         "get_project_snapshot": get_project_snapshot,
+        "get_bar_time": get_bar_time,
     }
 
     # Every handler that can change the project bumps the change counter, like REAPER's

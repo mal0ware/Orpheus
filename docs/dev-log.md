@@ -4,6 +4,36 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-10-25 — Sung sketches through YuE2 (branch `feat/yue2-sketch`)
+
+Spec: [`specs/2026-10-24-yue2-sketch-design.md`](specs/2026-10-24-yue2-sketch-design.md) (§5 has
+what changed while building). Owner said "Build it" to the spec as written.
+- **`backends/yue2.py`:** finds yue2.cpp and the two GGUF files under `ORPHEUS_YUE2_DIR`, builds the
+  request (always the owner's score, explicit seeds, `wav24`), runs `yue-synth` once per sketch
+  under the GPU semaphore, writes `request.json` apart from the output's stem (the replay-JSON
+  trap), keeps the CLI log, and reads truncation, seeds and length from it. Tested against a fake
+  CLI that prints the real binary's log lines; five deliberate mutations were each caught.
+- **`get_bar_time`** bridge verb (handler, hot-reloads): a bar's time on REAPER's map plus the tempo
+  and meter there. Asked before rendering, so a closed REAPER fails before the GPU runs.
+- **`render_sketch`** (registered only with `ORPHEUS_NC_BACKENDS=yue2`): chosen sections (a
+  contiguous run by name) → score check → render → a new time-locked `SKETCH (YuE2) <section>
+  #<seed>` track at the section's bar. Warns when REAPER's tempo or meter differs from the sheet's.
+- **First real renders on the 3080:** 24.8 s of audio in 8.7–11.9 s, 5.7–5.9 GB peak. YuE2 kept
+  writing past the score (it ended on the dominant), so every render hit the length cap. **Owner
+  decision:** a cut sketch gets a 2 s fade-out on the REAPER item (`import_audio_files` gained
+  `fade_out_s`), reported as normal.
+- **Bug found by the suite, fixed** (a146a61): heartbeat reads and stats on Windows could land
+  mid-swap and fail (about 1 read in 100 against the fake), dropping the project block or calling
+  REAPER "not running". Both retry briefly now.
+
+**Numbers:** 1207 passed, 79 skipped (whole suite on the desktop); 6 Lua suites (458 checks); ruff
+and mypy clean.
+
+**Owed live (owner present):** one `render_sketch` into REAPER: the track lands on the section's
+bar, the fade is there, and the take lines up by ear.
+
+---
+
 ## 2026-10-24 (later) — Lead sheets, the owner's notation, YuE2 scores (branch `feat/lead-sheet`)
 
 Spec: [`specs/2026-10-24-lead-sheet-design.md`](specs/2026-10-24-lead-sheet-design.md). Every

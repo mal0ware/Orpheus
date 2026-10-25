@@ -78,3 +78,19 @@ Notes from the logs:
   file's own rate.
 
 Not measured yet: a full-length (3–4 min) song, `--max-seq 8192`, the server, and SheetSage2.
+
+## First renders through `render_sketch` (2026-10-25)
+
+An 8-bar test sheet written for the purpose (A minor, 92 BPM, verse + chorus, placeholder lyrics,
+chorus ending on E), seed 831001, `cot: "full"`, duration 24.9 s (score 20.9 s + 4 s tail),
+REAPER stood in by a stub. Desktop idle 600–740 MiB.
+
+| Run | Wall time | Audio | Peak VRAM (total) | Log |
+|---|---|---|---|---|
+| first | 11.9 s | 24.8 s | 5736 MiB | `Semantic song 0: 621 tokens (truncated)` |
+| same seed, 12 s tail | 12.0 s | 32.8 s | — | still truncated at 821 tokens |
+| final code | 8.7 s | 24.8 s | 5874 MiB | truncated; import asked for a 2 s fade |
+
+YuE2 kept writing past the score: the level drops after the last bar, then a louder new part
+starts about 8 s later. YuE's own example (above, run 2) ends on the tonic and stopped by itself.
+The owner chose a 2 s fade-out on the REAPER item for these cut endings.

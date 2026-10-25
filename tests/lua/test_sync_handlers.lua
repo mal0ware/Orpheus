@@ -68,7 +68,15 @@ reaper = {
   EnumerateFiles = function() return nil end,
 
   Master_GetTempo = function() return proj.tempo end,
-  TimeMap_GetTimeSigAtTime = function() return 4, 4, proj.tempo end,
+  -- the meter of the bar holding t, and the tempo of the last tempo marker at or before t
+  TimeMap_GetTimeSigAtTime = function(_, t)
+    local qn, bar = (t or 0) * BPS, 1
+    while bar_start(bar + 1) <= qn + 1e-9 do bar = bar + 1 end
+    local _, num, den = bar_len(bar)
+    local bpm = proj.tempo
+    for _, m in ipairs(proj.tempo_markers) do if m.t <= (t or 0) + 1e-9 then bpm = m.bpm end end
+    return num, den, bpm
+  end,
   TimeMap2_QNToTime = function(_, qn) return qn / BPS end,
   TimeMap2_timeToQN = function(_, t) return t * BPS end,
   TimeMap2_beatsToTime = function(_, tpos, measures)
@@ -203,6 +211,20 @@ eq(#snap.markers, 1, "markers in the snapshot")
 eq(#snap.regions, 1, "regions in the snapshot")
 eq(#snap.tempo_map, 3, "tempo map in the snapshot")
 eq(snap.truncated, false, "snapshot not truncated")
+
+-- 2b. get_bar_time (spec 2026-10-24 sketch §3.5): where a bar starts on REAPER's map, with the
+-- tempo and meter there. Bar 9 is after the 3/4 change (QN 28, 14.0 s) and the 90 BPM marker.
+local bt = call("get_bar_time", { bar = 9 })
+eq(bt.ok, true, "get_bar_time ok")
+eq(bt.result.bar, 9, "bar echoed")
+approx(bt.result.time_s, 14.0, "bar 9 starts at 14.0 s")
+approx(bt.result.qn, 28.0, "bar 9 starts at QN 28")
+approx(bt.result.bpm, 90.0, "tempo at bar 9")
+eq(bt.result.meter[1], 3, "meter numerator at bar 9")
+eq(bt.result.meter[2], 4, "meter denominator at bar 9")
+approx(call("get_bar_time", { bar = 1 }).result.time_s, 0.0, "bar 1 starts at 0")
+eq(call("get_bar_time", { bar = 0 }).ok, false, "bar 0 is refused")
+eq(call("get_bar_time", {}).ok, false, "a missing bar is refused")
 
 -- 3. Heartbeat v2 (spec §2.4): JSON with project identity, written every tick, refreshed about
 -- once a second; liveness stays the file's modification time.
