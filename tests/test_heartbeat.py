@@ -60,3 +60,42 @@ async def test_connection_status_without_v2_has_no_project(tmp_path, monkeypatch
         async with Client(mcp) as c:
             res = (await c.call_tool("get_connection_status", {})).structured_content
     assert res["connected"] is True and "project" not in res
+
+
+def _flaky(monkeypatch, method: str, exc: type[OSError], times: int):
+    """Make Path.<method> on heartbeat.lock fail ``times`` times, as it does on Windows while
+    the bridge swaps the file (PermissionError mid-replace; FileNotFoundError between the Lua
+    writer's remove and rename)."""
+    from pathlib import Path
+
+    real, left = getattr(Path, method), [times]
+
+    def patched(self, *a, **kw):
+        if self.name == "heartbeat.lock" and left[0] > 0:
+            left[0] -= 1
+            raise exc("heartbeat.lock is being replaced")
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(Path, method, patched)
+
+
+@pytest.mark.parametrize("exc", [PermissionError, FileNotFoundError])
+def test_reading_retries_while_the_bridge_swaps_the_file(tmp_path, monkeypatch, exc):
+    (tmp_path / "heartbeat.lock").write_text(json.dumps(V2), encoding="utf-8")
+    _flaky(monkeypatch, "read_text", exc, times=2)
+    assert read_heartbeat(tmp_path) == V2
+
+
+@pytest.mark.parametrize("exc", [PermissionError, FileNotFoundError])
+def test_liveness_retries_while_the_bridge_swaps_the_file(tmp_path, monkeypatch, exc):
+    from orpheus_mcp.bridge.client import BridgeClient
+
+    (tmp_path / "heartbeat.lock").write_text("1", encoding="utf-8")
+    _flaky(monkeypatch, "stat", exc, times=2)
+    assert BridgeClient(bridge_dir=tmp_path).is_alive() is True
+
+
+def test_a_heartbeat_that_stays_missing_is_not_alive(tmp_path):
+    from orpheus_mcp.bridge.client import BridgeClient
+
+    assert BridgeClient(bridge_dir=tmp_path).is_alive() is False

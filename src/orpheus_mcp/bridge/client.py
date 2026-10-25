@@ -21,8 +21,9 @@ import json
 import os
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 # Default lives under $HOME (stable across the two processes) rather than $TMPDIR, which
 # can differ between the Python server and REAPER and silently break the rendezvous.
@@ -57,6 +58,23 @@ def _next_request_id() -> int:
         return _last_request_id
 
 
+# The bridge rewrites heartbeat.lock every tick by swapping in a new file. On Windows a read or
+# stat that lands mid-swap fails for a moment: PermissionError while the replace runs, and
+# FileNotFoundError between the Lua writer's remove and rename. Retry briefly before believing it.
+_SWAP_ATTEMPTS = 5
+_SWAP_PAUSE_S = 0.002
+T = TypeVar("T")
+
+
+def _through_swap(op: Callable[[], T]) -> T:
+    for _ in range(_SWAP_ATTEMPTS - 1):
+        try:
+            return op()
+        except (PermissionError, FileNotFoundError):
+            time.sleep(_SWAP_PAUSE_S)
+    return op()
+
+
 def read_heartbeat(bridge_dir: Path | None = None) -> dict[str, Any] | None:
     """The heartbeat file's content. v2 (spec 2026-10-23 REAPER sync §2.4) is a JSON object with
     ``v``, ``t``, ``reaper_version``, ``project_name``, ``project_path``, ``playing`` and
@@ -65,7 +83,7 @@ def read_heartbeat(bridge_dir: Path | None = None) -> dict[str, Any] | None:
     file's modification time (``BridgeClient.is_alive``)."""
     hb = Path(bridge_dir or DEFAULT_BRIDGE_DIR) / HEARTBEAT_FILE
     try:
-        text = hb.read_text(encoding="utf-8").strip()
+        text = _through_swap(lambda: hb.read_text(encoding="utf-8")).strip()
     except OSError:
         return None
     try:
@@ -112,8 +130,9 @@ class BridgeClient:
     def is_alive(self, max_age_s: float = HEARTBEAT_MAX_AGE_S) -> bool:
         """True if the in-REAPER loop has touched the heartbeat file recently."""
         try:
-            age = time.time() - (self.bridge_dir / HEARTBEAT_FILE).stat().st_mtime
-        except FileNotFoundError:
+            hb = self.bridge_dir / HEARTBEAT_FILE
+            age = time.time() - _through_swap(hb.stat).st_mtime
+        except (FileNotFoundError, PermissionError):
             return False
         return age <= max_age_s
 
