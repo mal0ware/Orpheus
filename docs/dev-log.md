@@ -4,6 +4,47 @@ A running record of what's built, what's verified, and where to pick up next. Ne
 
 ---
 
+## 2026-10-25 (later) — Live checks in REAPER 7.83, and the bridge starts by itself (branch `feat/bridge-autostart`)
+
+**Live checks, owner at REAPER 7.83** (every one passed):
+- **Bridge + heartbeat v2:** installed copy was from 07-31 and not running; after `install-bridge`
+  the bridge came up, heartbeat v2 carries the project, 15–31 ms round trip.
+- **Hand edits:** `project_changes` reported the owner's new track "Hand" and a meter change.
+  (REAPER's ruler menu in an empty project changed the project's own meter, not bar 5; a one-off
+  script set 4/4 + 3/4 from bar 5 instead.)
+- **Meter-aware bars:** `get_bar_time` gave bar 5 at 8.0 s, bar 6 at 9.5 s, bar 7 at 11.0 s at 120
+  BPM; a marker at bar 6 and a two-bar MIDI item from bar 5 sat exactly on REAPER's bar lines.
+- **JSFX envelope range:** points at normalized 0 / 0.5 / 1 spanned the whole lane of
+  `JS: Volume Adjustment`'s "Adjustment (dB)" (bottom, middle, top); read back the same.
+- **Sound pack:** downloaded with the owner's yes (106 files, 24.5 MB, hashes checked). Piano 36
+  zones, bass 13, guitar 48; every test note played and sounded right.
+- **`arrange_lead_sheet`:** 8 bars at 92 BPM with chords, bass riff, melody and drums, section and
+  lyric markers at bars 1 and 5; instruments were the owner's installed Vital and MT-PowerDrumKit.
+- **`render_sketch` into REAPER:** the Chorus alone rendered in 7.1 s and landed at bar 5, beat 1
+  (10.435 s), lined up by ear, with the 2 s fade at its end. This closes the round's done
+  criterion: a sketch from an Orpheus-written score on a REAPER track.
+
+**Owner request: start the bridge automatically.** They didn't remember how to start it.
+`REAPER.exe -nonewinst <script>` was tried first and starts a script inside the open REAPER.
+Owner chose the fullest option:
+- `install-bridge` adds a marked block to REAPER's `Scripts/__startup.lua` (none existed here);
+  `--no-autostart` and `remove-autostart` exist. The owner's own lines would be kept byte for byte.
+- `orpheus-mcp start-bridge`, and the first bridge call or `get_connection_status` when REAPER is
+  open but the bridge is off (30 s back-off; `ORPHEUS_AUTOSTART_BRIDGE=0` turns it off). Orpheus
+  never opens REAPER.
+- Bridge core: finds its own file from the chunk (under `__startup.lua` the action context names
+  the startup script), and the newest copy wins through a session-only ExtState token.
+- **Live:** after a REAPER restart the bridge was up with no clicks; `start-bridge` then said
+  "already running"; a forced second copy took over and the first printed that it stopped.
+
+**Numbers:** 1245 passed, 79 skipped; 7 Lua suites (470 checks); ruff and mypy clean.
+
+**Noticed, not fixed:** marker and timeline beats carry float noise (`1.00000000001`); round them
+in the bridge. `set_time_signature` always inserts a tempo marker at time 0, so repeated calls may
+stack markers there (unverified).
+
+---
+
 ## 2026-10-25 — Sung sketches through YuE2 (branch `feat/yue2-sketch`)
 
 Spec: [`specs/2026-10-24-yue2-sketch-design.md`](specs/2026-10-24-yue2-sketch-design.md) (§5 has

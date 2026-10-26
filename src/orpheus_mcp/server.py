@@ -43,24 +43,52 @@ def main() -> None:
     """Console-script entrypoint.
 
     ``orpheus-mcp``                    → run the MCP server (stdio transport)
-    ``orpheus-mcp install-bridge``     → copy the Lua bridge into REAPER's Scripts folder
+    ``orpheus-mcp install-bridge``     → copy the Lua bridge into REAPER's Scripts folder and
+                                         make it start with REAPER (``--no-autostart`` skips)
+    ``orpheus-mcp start-bridge``       → start the bridge in a REAPER that's already open
+    ``orpheus-mcp remove-autostart``   → take the bridge out of REAPER's __startup.lua
     ``orpheus-mcp fetch-models``       → download + hash-verify every model registry checkpoint
     ``orpheus-mcp fetch-models --pin`` → download + RECORD hashes (Task 0.3 pin workflow only)
     """
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "install-bridge":
-        from orpheus_mcp.install import install_bridge
+    # Windows consoles often use a legacy codepage (cp1252) that can't encode "✓"/"→" —
+    # degrade to replacement chars rather than crash after a successful command.
+    if len(sys.argv) > 1 and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
 
-        dest = install_bridge()
-        # Windows consoles often use a legacy codepage (cp1252) that can't encode
-        # "✓"/"→" — degrade to replacement chars rather than crash after a
-        # successful install.
-        if hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(errors="replace")
+    if len(sys.argv) > 1 and sys.argv[1] == "install-bridge":
+        from orpheus_mcp.install import install_bridge, startup_script
+
+        autostart = "--no-autostart" not in sys.argv[2:]
+        dest = install_bridge(autostart=autostart)
         print(f"✓ Installed Orpheus bridge → {dest}")
-        print("Next, in REAPER: Actions → Show action list → Run ReaScript → select "
-              "orpheus_bridge.lua (or assign it a toolbar button).")
+        if autostart:
+            print(f"✓ The bridge now starts with REAPER (block added to "
+                  f"{startup_script(dest.parents[2])}).")
+            print("REAPER already open? Run `orpheus-mcp start-bridge`, or restart REAPER.")
+        else:
+            print("Start it in REAPER: Actions → Show action list → search 'orpheus_bridge', "
+                  "or run `orpheus-mcp start-bridge`.")
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "remove-autostart":
+        from orpheus_mcp.install import remove_autostart
+
+        if remove_autostart():
+            print("✓ Removed the Orpheus block from REAPER's __startup.lua.")
+        else:
+            print("No Orpheus block in REAPER's __startup.lua: nothing to remove.")
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "start-bridge":
+        from orpheus_mcp.bridge import launch
+
+        result = launch.start_bridge()
+        ok = result["status"] in ("started", "already_running")
+        print(("✓ " if ok else "✗ ") + result["message"])
+        if not ok:
+            sys.exit(1)
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "fetch-models":

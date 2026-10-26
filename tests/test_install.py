@@ -59,3 +59,106 @@ def test_install_raises_without_reaper(monkeypatch):
     monkeypatch.setattr("orpheus_mcp.install.find_reaper_resource_dir", lambda: None)
     with pytest.raises(FileNotFoundError, match="REAPER"):
         install_bridge()
+
+
+# -- auto-start through REAPER's Scripts/__startup.lua (2026-10-25) --------------------- #
+
+from orpheus_mcp.install import (  # noqa: E402
+    STARTUP_BEGIN,
+    STARTUP_END,
+    remove_autostart,
+    startup_script,
+)
+
+
+def _resource(tmp_path):
+    resource = tmp_path / "REAPER"
+    resource.mkdir()
+    return resource
+
+
+def test_install_adds_the_autostart_block(tmp_path):
+    resource = _resource(tmp_path)
+    install_bridge(resource_dir=resource)
+    text = startup_script(resource).read_text(encoding="utf-8")
+    assert startup_script(resource) == resource / "Scripts" / "__startup.lua"
+    assert text.startswith(STARTUP_BEGIN) and text.rstrip().endswith(STARTUP_END)
+    assert "/Scripts/orpheus/orpheus_bridge.lua" in text and "dofile" in text
+
+
+def test_install_keeps_the_owners_startup_lines(tmp_path):
+    resource = _resource(tmp_path)
+    (resource / "Scripts").mkdir()
+    mine = 'reaper.ShowConsoleMsg("my startup")\r\n-- keep me\r\n'
+    startup_script(resource).write_bytes(mine.encode("utf-8"))
+    install_bridge(resource_dir=resource)
+    raw = startup_script(resource).read_bytes().decode("utf-8")
+    assert raw.startswith(mine + "\r\n" + STARTUP_BEGIN)  # theirs byte for byte, a blank line
+    assert raw.count(STARTUP_BEGIN) == 1
+    assert raw.count("\n") == raw.count("\r\n")  # the block follows the file's CRLF endings
+
+
+def test_reinstall_keeps_one_block_and_refreshes_it(tmp_path):
+    resource = _resource(tmp_path)
+    (resource / "Scripts").mkdir()
+    stale = f"print('mine')\n\n{STARTUP_BEGIN}\nold body\n{STARTUP_END}\nprint('after')\n"
+    startup_script(resource).write_text(stale, encoding="utf-8")
+    install_bridge(resource_dir=resource)
+    install_bridge(resource_dir=resource)
+    text = startup_script(resource).read_text(encoding="utf-8")
+    assert text.count(STARTUP_BEGIN) == 1 and "old body" not in text
+    assert text.startswith("print('mine')\n") and "print('after')" in text
+
+
+def test_install_without_autostart_leaves_startup_alone(tmp_path):
+    resource = _resource(tmp_path)
+    install_bridge(resource_dir=resource, autostart=False)
+    assert not startup_script(resource).exists()
+
+
+def test_remove_autostart_takes_out_only_the_block(tmp_path):
+    resource = _resource(tmp_path)
+    (resource / "Scripts").mkdir()
+    mine = "print('mine')\n"
+    startup_script(resource).write_text(mine, encoding="utf-8")
+    install_bridge(resource_dir=resource)
+    assert remove_autostart(resource) is True
+    assert startup_script(resource).read_text(encoding="utf-8") == mine
+    assert remove_autostart(resource) is False
+
+
+def test_remove_autostart_deletes_a_startup_file_that_was_only_ours(tmp_path):
+    resource = _resource(tmp_path)
+    install_bridge(resource_dir=resource)
+    assert remove_autostart(resource) is True
+    assert not startup_script(resource).exists()
+
+
+def _run_block(tmp_path, bridge_source: str):
+    """Run the installed __startup.lua under Lua with a stub `reaper`, as REAPER would."""
+    from lupa import LuaRuntime
+
+    resource = _resource(tmp_path)
+    install_bridge(resource_dir=resource)
+    (resource / "Scripts" / "orpheus" / "orpheus_bridge.lua").write_text(
+        bridge_source, encoding="utf-8")
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(
+        "console = {}\n"
+        "reaper = { GetResourcePath = function() return RESOURCE end,\n"
+        "  file_exists = function(p) local f = io.open(p, 'r'); if f then f:close() end\n"
+        "    return f ~= nil end,\n"
+        "  ShowConsoleMsg = function(s) console[#console + 1] = s end }\n")
+    lua.globals().RESOURCE = str(resource).replace("\\", "/")
+    lua.execute(startup_script(resource).read_text(encoding="utf-8"))
+    return lua.globals()
+
+
+def test_the_startup_block_runs_the_installed_bridge(tmp_path):
+    g = _run_block(tmp_path, "STARTED = true")
+    assert g.STARTED is True
+
+
+def test_a_bridge_that_fails_to_load_is_reported_not_fatal(tmp_path):
+    g = _run_block(tmp_path, "error('boom')")
+    assert "did not start" in g.console[1] and "boom" in g.console[1]
