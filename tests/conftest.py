@@ -19,3 +19,13 @@ def _isolated_nc_backends(tmp_path_factory, monkeypatch):
     monkeypatch.delenv("ORPHEUS_NC_BACKENDS", raising=False)
     monkeypatch.setenv("ORPHEUS_YUE2_DIR", str(tmp_path_factory.mktemp("yue2")))
     monkeypatch.setenv("ORPHEUS_SKETCH_DIR", str(tmp_path_factory.mktemp("sketches")))
+
+
+@pytest.fixture(autouse=True)
+def _no_bridge_autostart(monkeypatch):
+    """Tests never ask the real REAPER on this machine to start a bridge: automatic starts are
+    off unless a test switches them on with its own stand-ins."""
+    monkeypatch.setenv("ORPHEUS_AUTOSTART_BRIDGE", "0")
+    from orpheus_mcp.bridge import launch
+
+    launch.reset_backoff()

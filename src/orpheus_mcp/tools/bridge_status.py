@@ -16,17 +16,22 @@ def register(mcp: FastMCP, *, include_stubs: bool = False) -> None:  # noqa: ARG
         """Check whether REAPER is running and the Orpheus bridge loop is alive.
 
         Call this first. Round-trips a real ping through the bridge and returns REAPER's
-        version + latency (and, with heartbeat v2, which project is open), or a clear "not
-        listening" message (rather than a mystery hang) if the in-REAPER script isn't running.
+        version + latency (and, with heartbeat v2, which project is open). If REAPER is open
+        but the bridge isn't, it starts the bridge first; otherwise it says why it couldn't
+        (``autostart``) rather than hanging.
         """
         bridge = BridgeClient()
-        if not bridge.is_alive():
-            return {
+        if not bridge.ensure_alive():  # tries starting the bridge once if REAPER is open
+            status_off: dict = {
                 "connected": False,
-                "hint": "Run orpheus_bridge.lua inside REAPER (Actions → Run ReaScript). "
-                        "If you haven't installed it yet: `orpheus-mcp install-bridge`.",
+                "hint": "Open REAPER: the bridge starts with it after `orpheus-mcp "
+                        "install-bridge`. In a REAPER that's already open, `orpheus-mcp "
+                        "start-bridge` starts it.",
                 "bridge_dir": str(bridge.bridge_dir),
             }
+            if bridge.last_autostart:
+                status_off["autostart"] = bridge.last_autostart
+            return status_off
         try:
             t0 = time.monotonic()
             info = bridge.call("get_connection_status")

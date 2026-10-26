@@ -123,6 +123,7 @@ class BridgeClient:
         self.bridge_dir = Path(bridge_dir) if bridge_dir else DEFAULT_BRIDGE_DIR
         self.timeout_s = timeout_s
         self._request_id = 0  # the last id THIS client used (ids come from _next_request_id)
+        self.last_autostart: dict[str, Any] | None = None  # the last automatic start attempt
         self.bridge_dir.mkdir(parents=True, exist_ok=True)
 
     # -- health ----------------------------------------------------------- #
@@ -152,11 +153,23 @@ class BridgeClient:
 
     # -- internals -------------------------------------------------------- #
 
+    def ensure_alive(self) -> bool:
+        """``is_alive``, or one automatic start (``bridge.launch``) when REAPER is open but the
+        bridge is off. The attempt's ``{status, message}`` is kept in ``last_autostart``."""
+        if self.is_alive():
+            return True
+        from orpheus_mcp.bridge import launch
+
+        self.last_autostart = launch.try_autostart(self.bridge_dir)
+        return self.is_alive()
+
     def _dispatch(self, fn: str, params: dict[str, Any]) -> Any:
-        if not self.is_alive():
+        if not self.ensure_alive():
+            why = (self.last_autostart or {}).get("message") or (
+                "Open REAPER (the bridge starts with it after `orpheus-mcp install-bridge`), "
+                "or run `orpheus-mcp start-bridge`.")
             raise BridgeTimeout(
-                f"REAPER bridge not running — no heartbeat in {self.bridge_dir}. "
-                "Run orpheus_bridge.lua inside REAPER."
+                f"REAPER bridge not running — no heartbeat in {self.bridge_dir}. {why}"
             )
         rid = _next_request_id()
         self._request_id = rid

@@ -62,9 +62,10 @@ reapy over a socket; Orpheus diverges on purpose.
 | **Stable identity** (GUIDs/indices, never live pointers) | A `MediaTrack*` pointer can't be serialized across calls and goes stale. Tracks are addressed by GUID, index or name. |
 | **Batch ops** | One MCP call is one musical intent. "Create a track and write 64 notes" is a single bridge call; the file channel tops out around 10 ops a second. |
 | **Undo blocks** | Verbs added since 2026-07-26 wrap their edits in `Undo_BeginBlock`/`Undo_EndBlock`, so one Ctrl+Z reverts one tool call. Older verbs (`set_tempo`, `insert_midi_notes`, `transpose_notes`, `add_fx_by_name`, `set_fx_param`) don't yet. |
-| **Hot reload** | The loop re-reads its own installed script every 2 s and swaps the `HANDLERS` table in place, so `orpheus-mcp install-bridge` delivers new verbs without re-running the action. It loads only that file. The loop, tick and heartbeat core are not swapped; changing those needs one manual re-run. |
+| **Hot reload** | The loop re-reads its own installed script every 2 s and swaps the `HANDLERS` table in place, so `orpheus-mcp install-bridge` delivers new verbs without re-running the action. It loads only that file (found from the script's own chunk, so it works however the bridge was started). The loop, tick and heartbeat core are not swapped; changing those needs a restart of the bridge: `orpheus-mcp start-bridge` or restarting REAPER. |
+| **Start-up** (2026-10-25) | `install-bridge` adds a marked block to REAPER's `Scripts/__startup.lua`, so the bridge starts with REAPER. In an open REAPER, `orpheus-mcp start-bridge` (and the first bridge call, unless `ORPHEUS_AUTOSTART_BRIDGE=0`) runs `REAPER.exe -nonewinst <script>`, which hands the script to the running REAPER. Orpheus never opens REAPER itself. Each started copy writes a session-only ExtState token and a copy whose token was replaced stops at its next tick, so the newest copy wins and no request is handled twice. |
 
-The bridge has 37 verbs as of 2026-10-23, plus `__batch__`.
+The bridge has 40 verbs as of 2026-10-25, plus `__batch__`.
 
 ## How a request flows: listen, explain, work
 

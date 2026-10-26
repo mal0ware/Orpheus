@@ -1945,7 +1945,7 @@ local function swap_handlers(new_handlers)
 end
 M.swap_handlers = swap_handlers
 
-local SELF_PATH = nil          -- resolved at autostart via get_action_context
+local SELF_PATH = nil          -- resolved at autostart (resolve_self_path)
 local SELF_CONTENT = nil       -- last-loaded file content (change detector)
 local RELOAD_CHECK_EVERY_S = 2.0
 local last_reload_check = 0.0
@@ -1998,7 +1998,50 @@ local function tick()
 end
 M.tick = tick
 
+-- This file's own path, for the hot-reload watcher. The chunk's source names it whether REAPER
+-- ran the bridge as an action, from the command line, or from __startup.lua via dofile; the
+-- action context is only a fallback, because under __startup.lua it names the startup script.
+local function resolve_self_path()
+  local info = debug and debug.getinfo and debug.getinfo(1, "S")
+  local src = info and info.source
+  if type(src) == "string" and src:sub(1, 1) == "@" and #src > 1 then return src:sub(2) end
+  if reaper.get_action_context then
+    local ok, _, script_path = pcall(reaper.get_action_context)
+    if ok and type(script_path) == "string" and script_path ~= ""
+        and not script_path:find("__startup", 1, true) then
+      return script_path
+    end
+  end
+  return nil
+end
+M.resolve_self_path = resolve_self_path
+
+-- One running copy at a time (auto-start, 2026-10-25). Each started copy writes a fresh token
+-- to a session-only ExtState; a copy whose token has been replaced stops at its next tick. So
+-- __startup.lua, `orpheus-mcp start-bridge` and a manual run can never handle a request twice:
+-- the newest copy wins.
+local INSTANCE_KEY = "bridge_instance"
+local my_instance = nil
+
+local function claim_instance()
+  local t = reaper.time_precise and reaper.time_precise() or os.time()
+  my_instance = string.format("%.6f-%d", t, math.random(1, 1000000000))
+  reaper.SetExtState("orpheus", INSTANCE_KEY, my_instance, false)
+  return my_instance
+end
+M.claim_instance = claim_instance
+
+local function owns_instance()
+  return my_instance == nil or reaper.GetExtState("orpheus", INSTANCE_KEY) == my_instance
+end
+
 local function loop()
+  if not owns_instance() then
+    if reaper.ShowConsoleMsg then
+      reaper.ShowConsoleMsg("Orpheus bridge: a newer copy started, so this one stopped.\n")
+    end
+    return
+  end
   tick()
   reaper.defer(loop)
 end
@@ -2010,16 +2053,10 @@ M.loop = loop
 
 if not _G.ORPHEUS_NO_AUTORUN then
   ensure_dir()
-  -- Resolve our own installed path for the hot-reload watcher. get_action_context is
-  -- only meaningful when actually run as a REAPER action; absent (or failing), the
-  -- watcher stays disarmed and the bridge behaves exactly as before.
-  if reaper.get_action_context then
-    local ok, _, script_path = pcall(reaper.get_action_context)
-    if ok and script_path and script_path ~= "" then
-      SELF_PATH = script_path
-      SELF_CONTENT = read_self()
-    end
-  end
+  claim_instance()
+  -- Our own installed path for the hot-reload watcher; unresolved, the watcher stays disarmed.
+  SELF_PATH = resolve_self_path()
+  if SELF_PATH then SELF_CONTENT = read_self() end
   if reaper and reaper.ShowConsoleMsg then
     reaper.ShowConsoleMsg("Orpheus bridge listening in: " .. BRIDGE_DIR ..
       (SELF_PATH and " (hot-reload armed)" or "") .. "\n")

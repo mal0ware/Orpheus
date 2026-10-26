@@ -97,3 +97,56 @@ def test_fetch_models_cli_reports_ffmpeg_missing_and_exits(monkeypatch):
     with pytest.raises(SystemExit) as exc_info:
         server.main()
     assert exc_info.value.code == 1
+
+
+# -- auto-start commands (2026-10-25) --------------------------------------------------- #
+
+def _cli(monkeypatch, *argv):
+    from orpheus_mcp import server
+
+    monkeypatch.setattr(sys, "argv", ["orpheus-mcp", *argv])
+    buf = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buf)
+    code = 0
+    try:
+        server.main()
+    except SystemExit as exc:
+        code = int(exc.code or 0)
+    return code, buf.getvalue()
+
+
+@pytest.fixture
+def resource(tmp_path, monkeypatch):
+    res = tmp_path / "REAPER"
+    res.mkdir()
+    monkeypatch.setattr("orpheus_mcp.install.find_reaper_resource_dir", lambda: res)
+    return res
+
+
+def test_install_bridge_sets_up_autostart(monkeypatch, resource):
+    code, out = _cli(monkeypatch, "install-bridge")
+    assert code == 0 and "__startup.lua" in out and "starts with REAPER" in out
+    assert (resource / "Scripts" / "__startup.lua").is_file()
+
+
+def test_install_bridge_no_autostart(monkeypatch, resource):
+    code, out = _cli(monkeypatch, "install-bridge", "--no-autostart")
+    assert code == 0 and not (resource / "Scripts" / "__startup.lua").exists()
+
+
+def test_remove_autostart_command(monkeypatch, resource):
+    _cli(monkeypatch, "install-bridge")
+    code, out = _cli(monkeypatch, "remove-autostart")
+    assert code == 0 and "Removed" in out
+    assert not (resource / "Scripts" / "__startup.lua").exists()
+    code, out = _cli(monkeypatch, "remove-autostart")
+    assert code == 0 and "nothing to remove" in out
+
+
+@pytest.mark.parametrize(("status", "code"), [("started", 0), ("already_running", 0),
+                                              ("reaper_not_open", 1), ("no_heartbeat", 1)])
+def test_start_bridge_command_reports_and_exits(monkeypatch, status, code):
+    monkeypatch.setattr("orpheus_mcp.bridge.launch.start_bridge",
+                        lambda *a, **k: {"status": status, "message": f"msg {status}"})
+    got, out = _cli(monkeypatch, "start-bridge")
+    assert got == code and f"msg {status}" in out

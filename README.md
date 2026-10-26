@@ -162,6 +162,8 @@ Set these in the `env` block of your MCP client config.
 | `ORPHEUS_TOOLSET` | `default`, `explain`, `full` | Which tools Claude sees. `full` adds the not-built stubs. |
 | `ORPHEUS_ASR_DEVICE` | `auto` (default), `cpu`, `cuda` | Where lyric transcription runs. `auto` uses CUDA only after a test run in a separate process succeeds, so a broken cuDNN setup falls back to CPU instead of crashing the server. |
 | `REAPER_MCP_BRIDGE_DIR` | a folder | Where the bridge's request and response files live (default `~/.orpheus_bridge`). |
+| `ORPHEUS_AUTOSTART_BRIDGE` | `1` (default), `0` | Whether a call starts the bridge in an open REAPER by itself. |
+| `ORPHEUS_REAPER_EXE` | a path | The REAPER program, if it isn't in the usual install folder. |
 | `ORPHEUS_NC_BACKENDS` | e.g. `yue2` | Switches on named non-commercial backends; `yue2` adds `render_sketch`. |
 | `ORPHEUS_YUE2_DIR` | a folder | Where yue2.cpp and the YuE2 weights live (default `~/.orpheus/yue2`). |
 | `ORPHEUS_SKETCH_DIR` | a folder | Where rendered sketches are saved (default `~/.orpheus/sketches`). |
@@ -174,7 +176,7 @@ Set these in the `env` block of your MCP client config.
 # 1. Run the server
 uvx orpheus-mcp
 
-# 2. Copy the bridge script into REAPER's Scripts folder (one-time)
+# 2. Install the bridge into REAPER (one-time); from then on it starts with REAPER
 orpheus-mcp install-bridge
 ```
 
@@ -188,8 +190,9 @@ Then add it to your MCP client, for example Claude Desktop's `claude_desktop_con
 }
 ```
 
-Open a project in REAPER, run the Orpheus bridge action, and ask Claude to *"check the Orpheus
-connection."* Per-OS steps: [`docs/installation.md`](docs/installation.md). Working from source:
+Open REAPER and ask Claude to *"check the Orpheus connection."* If REAPER was already open,
+Orpheus starts the bridge in it the first time Claude needs it (or run `orpheus-mcp
+start-bridge`). Per-OS steps: [`docs/installation.md`](docs/installation.md). Working from source:
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## How it works
