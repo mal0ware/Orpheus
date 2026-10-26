@@ -39,9 +39,13 @@ Owner chose the fullest option:
 
 **Numbers:** 1245 passed, 79 skipped; 7 Lua suites (470 checks); ruff and mypy clean.
 
-**Noticed, not fixed:** marker and timeline beats carry float noise (`1.00000000001`); round them
-in the bridge. `set_time_signature` always inserts a tempo marker at time 0, so repeated calls may
-stack markers there (unverified).
+**Follow-ups, done the same day (branch `fix/bridge-tempo-markers`):**
+- Beats are rounded to a millionth in the bridge (and the fake, whose own float math gave
+  `0.9999999999999964`), and a time REAPER reports as the very end of a bar becomes beat 1 of the
+  next bar. Live: markers at bars 2, 6 and 9 read exactly beat 1.
+- `set_time_signature` does **not** stack markers: checked live in an empty tab, seven calls in a
+  row left exactly one tempo/time-signature marker at time 0 (REAPER replaces a marker at the same
+  position). Nothing to fix; the code comment now says so.
 
 ---
 

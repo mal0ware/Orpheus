@@ -84,6 +84,7 @@ reaper = {
   end,
   -- (beats in measure, measures (0-based), beats per measure, full beats, denominator)
   TimeMap2_timeToBeats = function(_, t)
+    if proj.time_to_beats then return proj.time_to_beats(t) end   -- live-noise cases
     local qn, bar = t * BPS, 1
     while bar_start(bar + 1) <= qn + 1e-9 do bar = bar + 1 end
     local _, num, den = bar_len(bar)
@@ -211,6 +212,21 @@ eq(#snap.markers, 1, "markers in the snapshot")
 eq(#snap.regions, 1, "regions in the snapshot")
 eq(#snap.tempo_map, 3, "tempo map in the snapshot")
 eq(snap.truncated, false, "snapshot not truncated")
+
+-- 2a. Beats are rounded (live REAPER 7.83 reported a marker on bar 6 as beat 1.00000000001),
+-- and a time REAPER reports as the very end of the previous bar is beat 1 of the next.
+-- Returns as REAPER does: beats in measure, measures (0-based), beats per measure.
+proj.time_to_beats = function() return 1e-11, 5, 3 end
+local noisy = call("get_project_timeline").result.markers[1]
+eq(noisy.bar, 6, "noisy marker bar")
+eq(noisy.beat, 1.0, "float noise above the beat is rounded away")
+proj.time_to_beats = function() return 2.9999999999, 4, 3 end
+local edge = call("get_project_timeline").result.markers[1]
+eq(edge.bar, 6, "the end of bar 5 is the start of bar 6")
+eq(edge.beat, 1.0, "...at beat 1, never beat 4 of a 3-beat bar")
+proj.time_to_beats = function() return 1.5000000001, 5, 3 end
+eq(call("get_project_timeline").result.markers[1].beat, 2.5, "a real off-beat survives rounding")
+proj.time_to_beats = nil
 
 -- 2b. get_bar_time (spec 2026-10-24 sketch §3.5): where a bar starts on REAPER's map, with the
 -- tempo and meter there. Bar 9 is after the 3/4 change (QN 28, 14.0 s) and the 90 BPM marker.

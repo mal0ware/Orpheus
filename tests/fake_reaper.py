@@ -232,8 +232,12 @@ class FakeReaperProject:
         bar = 1
         while self.bar_start_qn(bar + 1) <= qn + 1e-9:
             bar += 1
-        _num, den = self.meter_at_bar(bar)
-        return bar, (qn - self.bar_start_qn(bar)) * den / 4.0 + 1.0
+        num, den = self.meter_at_bar(bar)
+        # Rounded to a millionth, as the bridge does; never past the bar's last beat.
+        beat = round((qn - self.bar_start_qn(bar)) * den / 4.0, 6)
+        if beat >= num:
+            bar, beat = bar + 1, 0.0
+        return bar, max(beat, 0.0) + 1.0
 
     def tempo_map(self) -> list[dict]:
         points = [{"time_s": 0.0, "bar": 1, "beat": 1.0, "qn": 0.0, "bpm": self.tempo,
