@@ -62,14 +62,16 @@ Agreed 2026-10-23, in this order:
    - [x] lyric ASR: child-process CUDA probe + `ORPHEUS_ASR_DEVICE` (2026-10-23)
    - [x] cp1252 `UnicodeDecodeError` in subprocess readers, plus basic-pitch's stdout leak (2026-10-23)
    - [x] section naming on sparsely punctuated sung lyrics (2026-10-23)
-   - [x] FX envelopes in the parameter's native range (2026-10-23; live check owed)
+   - [x] FX envelopes in the parameter's native range (2026-10-23; checked live 2026-10-25)
    - [x] dead `add_vst_path_and_rescan` call removed; sound pack rebuilt on CC0 FreePats + RS5k (2026-10-23)
 3. **YuE2 test: GO** (2026-10-23): 60 s in 28.8 s, 7.2 GB peak; see
    [`pins/2026-10-yue2-backend.md`](pins/2026-10-yue2-backend.md).
 4. **REAPER sync:**
-   - [x] read verb + tool for the live timeline (2026-10-24; live check owed)
+   - [x] read verb + tool for the live timeline (2026-10-24; checked live 2026-10-25)
    - [x] bar/beat math that follows REAPER's tempo and meter map (2026-10-24)
-   - [x] heartbeat v2 with project identity (2026-10-24; needs one manual bridge re-run)
+   - [x] heartbeat v2 with project identity (2026-10-24; live 2026-10-25)
+   - [x] the bridge starts by itself: with REAPER (`__startup.lua`), `orpheus-mcp start-bridge`,
+     and on the first call when REAPER is open; the newest copy wins (2026-10-25, live)
    - [x] notice hand edits: change counter + `project_changes` diff, baseline per project
      (2026-10-24)
 5. **Lead sheet + notation** (2026-10-24, [spec](specs/2026-10-24-lead-sheet-design.md)):
@@ -77,7 +79,7 @@ Agreed 2026-10-23, in this order:
    - [x] readers for the owner's chord charts and bass riff tab
    - [x] YuE2 ABC writer, checker (agrees with the official `abc_tools.py` on 76 scores), reader
      (YuE2-rules parser; music21 cross-checks our exports), sidecar for syllables
-   - [x] `arrange_lead_sheet` into REAPER (live check owed)
+   - [x] `arrange_lead_sheet` into REAPER (checked live 2026-10-25)
 6. **Sheet ↔ REAPER in step:** sheet sections and chords become markers and regions; the live
    timeline can be written back to the sheet (Claude does the sheet side through the Drive
    connector, with a yes).
@@ -85,7 +87,8 @@ Agreed 2026-10-23, in this order:
    - [x] `render_sketch`: chosen sections of a lead sheet through yue2.cpp's CLI, one process per
      sketch under the GPU semaphore, onto a new `SKETCH (YuE2) <section> #<seed>` track at the
      section's bar. Gated by `ORPHEUS_NC_BACKENDS=yue2`.
-   - [ ] live check with the owner: the import lands on the bar in REAPER and lines up by ear
+   - [x] live check with the owner (2026-10-25): a Chorus sketch landed on bar 5, lined up by
+     ear, and faded out
 
 ## Next
 
