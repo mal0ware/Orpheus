@@ -42,3 +42,14 @@ def test_midi_item_length_counts_each_bar_in_its_own_meter(client, project):
     item = client.call("create_midi_item", track=guid, start_bar=4, length_bars=2)
     take = project.resolve_track(guid).takes[item["item_index"]]
     assert (take.item_start_qn, take.item_end_qn) == (12.0, 19.0)
+
+
+@pytest.mark.parametrize("tempo", [92.0, 97.3, 120.0, 133.7])
+def test_bar_and_beat_come_back_clean_at_any_tempo(tempo):
+    # Live REAPER reported beat 1.00000000001; the fake's own float math gave 0.9999999999999964.
+    p = FakeReaperProject(tempo=tempo)
+    p.meter_changes = [(5, 3, 4)]
+    for bar in range(1, 12):
+        for offset_qn in (0.0, 0.5, 1.25):
+            t = p.qn_to_time(p.bar_start_qn(bar) + offset_qn)
+            assert p.bar_beat_at(t) == (bar, 1.0 + offset_qn)  # 4/4 and 3/4: beat unit = QN

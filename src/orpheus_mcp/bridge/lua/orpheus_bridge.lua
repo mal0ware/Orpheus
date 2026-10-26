@@ -394,6 +394,8 @@ end
 HANDLERS.set_time_signature = function(p)
   -- Set the time signature at the project start via a tempo/timesig marker.
   -- SetTempoTimeSigMarker(proj, ptidx, timepos, measurepos, beatpos, bpm, num, den, linear)
+  -- ptidx -1 asks for a new marker, but REAPER replaces one already at time 0: checked live on
+  -- REAPER 7.83 (2026-10-25), seven calls in a row left exactly one marker.
   reaper.SetTempoTimeSigMarker(0, -1, 0.0, -1, -1, reaper.Master_GetTempo(),
     p.numerator, p.denominator, false)
   local num, den = project_time_sig()
@@ -1567,10 +1569,17 @@ local MAX_SYNC_MARKERS = 1024
 local MAX_SNAPSHOT_ITEMS_PER_TRACK = 512
 local MAX_SNAPSHOT_ITEMS = 4096
 
+-- Beats are rounded to a millionth: live REAPER 7.83 reported a marker on a bar line as beat
+-- 1.00000000001. A time REAPER reports as the very end of the previous bar (beats rounding up
+-- to the bar's beat count) is beat 1 of the next bar, never a beat the bar doesn't have.
 local function bar_beat_at(t)
   if reaper.TimeMap2_timeToBeats then
-    local beats, measures = reaper.TimeMap2_timeToBeats(0, t)
-    return math.floor(tonumber(measures) or 0) + 1, (tonumber(beats) or 0) + 1
+    local beats, measures, per_bar = reaper.TimeMap2_timeToBeats(0, t)
+    local bar = math.floor(tonumber(measures) or 0) + 1
+    local beat = math.floor((tonumber(beats) or 0) * 1e6 + 0.5) / 1e6
+    per_bar = tonumber(per_bar)
+    if per_bar and per_bar > 0 and beat >= per_bar then bar, beat = bar + 1, 0.0 end
+    return bar, beat + 1
   end
   return nil, nil
 end
