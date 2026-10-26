@@ -19,12 +19,13 @@ changes anything, and every change can be undone.
 
 It's built for one songwriter-producer working in REAPER, with lyrics in Google Sheets.
 
-> **Status (2026-10-23):** early, pre-alpha, not on PyPI yet. It has 54 tools in the default profile,
-> 787 Python tests and 368 Lua checks (ruff and mypy clean). Much of it was used for real in July
-> on REAPER 7.78 with a song the owner owns; the rest is tested against a behavioural fake of
-> REAPER. [What works today](#what-works-today) says which is which. The REAPER-sync reads
-> (timeline, change reports, meter-aware bars) are built and tested but not yet checked live;
-> sheet sync comes later.
+> **Status (2026-10-25):** early, pre-alpha, not on PyPI yet. It has 63 tools in the default profile
+> (50 on a base install without the `[analysis]` extra), 1245 passing Python tests and 470 Lua
+> checks in 7 suites (ruff and mypy clean). Much of it was used for real in July on REAPER 7.78
+> with a song the owner owns; the rest is tested against a behavioural fake of REAPER.
+> [What works today](#what-works-today) says which is which. Change reports, meter-aware bars and
+> the bridge's automatic start were checked live on REAPER 7.83 on 10-25; the timeline read is
+> built and tested but not yet checked live; sheet sync comes later.
 
 ## What you can ask
 

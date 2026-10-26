@@ -566,8 +566,10 @@ def build_fixture(
         truth["lyrics"] = {"lines": list(LYRIC_LINES), "placements": placements}
 
     _write_flac(fixture_dir / "mix.flac", _mix_stems(stems))
+    # newline="\n": text mode would write CRLF on Windows, and the manifest pins exact bytes,
+    # so the hashes would only match on the OS that generated them.
     (fixture_dir / "truth.json").write_text(
-        json.dumps(truth, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(truth, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n"
     )
     return fixture_dir
 
@@ -595,7 +597,7 @@ def build_manifest(fixture_dirs: list[Path], root: Path) -> dict:
 def write_manifest(fixture_dirs: list[Path], root: Path) -> Path:
     manifest = build_manifest(fixture_dirs, root)
     path = root / "manifest.json"
-    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     return path
 
 

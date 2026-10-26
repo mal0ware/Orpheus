@@ -114,6 +114,7 @@ def _patch_recon(monkeypatch, recon: Recon) -> None:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_recon_envelope_has_no_timeline_key_and_populated_summary(tmp_path, fs):
     env = analyze_reference(_wav(tmp_path), question_focus=None, cache=fs)
     assert env.question_class == "recon"
@@ -125,6 +126,7 @@ def test_recon_envelope_has_no_timeline_key_and_populated_summary(tmp_path, fs):
     assert env.artifacts == {}
 
 
+@pytest.mark.analysis
 def test_timeline_envelope_has_only_timeline_group(tmp_path, fs):
     env = analyze_reference(
         _wav(tmp_path), question_focus="timeline", cache=fs, tagger=StubTagger()
@@ -136,6 +138,7 @@ def test_timeline_envelope_has_only_timeline_group(tmp_path, fs):
     assert "stems" not in env.artifacts
 
 
+@pytest.mark.analysis
 def test_chords_envelope_has_only_chords_group(tmp_path, fs):
     env = analyze_reference(_wav(tmp_path), question_focus="chords", cache=fs)
     assert env.question_class == "chords"
@@ -149,6 +152,7 @@ def test_unknown_question_focus_raises(tmp_path, fs):
         analyze_reference(_wav(tmp_path), question_focus="bogus", cache=fs)
 
 
+@pytest.mark.analysis
 def test_cache_hits_ride_the_envelope(tmp_path, fs):
     path = _wav(tmp_path)
     analyze_reference(path, question_focus="chords", cache=fs)  # populate
@@ -184,6 +188,7 @@ def test_sound_at_envelope_has_stems_gates_descriptors(tmp_path, fs, monkeypatch
     assert "timeline" not in env.artifacts
 
 
+@pytest.mark.analysis
 def test_sound_at_requires_target(tmp_path, fs):
     with pytest.raises(ValueError, match="requires a `target`"):
         analyze_reference(_wav(tmp_path), question_focus="sound_at", cache=fs)

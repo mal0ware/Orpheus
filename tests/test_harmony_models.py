@@ -267,6 +267,7 @@ def test_cpu_only_registry_resolve_excludes_btc_keeps_baseline():
     assert "chord/internal-baseline" in resolved
 
 
+@pytest.mark.analysis
 def test_cpu_only_get_chords_stays_baseline(tmp_path, monkeypatch):
     """End-to-end: with ``free_vram_gb()`` reporting no CUDA, ``get_chords`` resolves no model and
     every segment is ``produced_by="baseline"`` — the model lane never phantoms in."""
@@ -329,6 +330,7 @@ def test_find_cached_bass_stem_none_when_absent(tmp_path):
     assert _find_cached_bass_stem(fs, "nostems") is None
 
 
+@pytest.mark.analysis
 def test_bass_stem_preferred_over_low_passed_mix(tmp_path):
     """Both lanes available → the bass STEM wins (§13.2). The mix carries a low C drone (its
     low-passed pYIN reads C); a cached bass stem carries an E drone (reads E). ``_bass_pc_lane_for``
@@ -406,6 +408,7 @@ def test_btc_chord_model_init_holds_gpu_semaphore_during_checkpoint_load(monkeyp
     assert model._vocab == ["N"]
 
 
+@pytest.mark.analysis
 def test_btc_chord_model_predict_holds_gpu_semaphore_during_forward_pass(monkeypatch):
     """``BtcChordModel.predict`` must hold ``GPU_SEMAPHORE`` across ``predict_frames`` (the
     forward pass) — a second serialize point distinct from the load in ``__init__``."""

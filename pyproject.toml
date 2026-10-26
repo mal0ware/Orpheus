@@ -134,6 +134,7 @@ asyncio_mode = "auto"
 markers = [
     "desktop: needs pinned checkpoints / the desktop box (deselect in CI)",
     "gpu: needs CUDA",
+    "analysis: needs the [analysis] extra (librosa); skipped automatically when it is not installed",
 ]
 
 [tool.mypy]

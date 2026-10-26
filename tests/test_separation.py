@@ -192,6 +192,7 @@ def test_gpu_semaphore_serializes_engine_calls():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_native_sr_resamples_engine_input_and_restores_output_rate():
     entry = _entry("4stem-b/scnet-xl")
     assert entry.native_sr == 44100  # verified from the vendored SCNet config (§ this test)

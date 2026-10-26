@@ -228,6 +228,7 @@ def test_gate_silence_honesty_empty_target_idx_is_na():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_gate_agreement_identical_stems_pass_r_near_one():
     stem = _sine(8000, 220.0, sr=8000)
 
@@ -238,6 +239,7 @@ def test_gate_agreement_identical_stems_pass_r_near_one():
     assert result.verdict == "pass"
 
 
+@pytest.mark.analysis
 def test_gate_agreement_true_stereo_input_downmixes_and_passes():
     """(n, 2) stereo input exercises the mean-axis downmix path directly: a stereo stem
     compared against its own mono downmix must correlate ~1.0 (same signal content)."""
@@ -251,6 +253,7 @@ def test_gate_agreement_true_stereo_input_downmixes_and_passes():
     assert result.verdict == "pass"
 
 
+@pytest.mark.analysis
 def test_gate_agreement_noise_vs_sine_fails():
     rng = np.random.default_rng(0)
     noise = rng.standard_normal((8000, 1))
@@ -263,6 +266,7 @@ def test_gate_agreement_noise_vs_sine_fails():
     assert result.verdict == "fail"
 
 
+@pytest.mark.analysis
 def test_gate_agreement_one_silent_one_active_fails_zero_not_nan():
     # Pearson r is undefined (0/0) when one side has zero variance -- must read as an
     # explicit "fail" at value 0.0, never NaN and never a crash.
@@ -287,6 +291,7 @@ def test_gate_agreement_both_silent_is_na():
     assert result.value is None
 
 
+@pytest.mark.analysis
 def test_gate_agreement_length_mismatch_aligns_to_shorter_before_scoring():
     stem_a = _sine(8000, 220.0, sr=8000)
     # stem_b repeats stem_a's content then appends unrelated noise past stem_a's length --
@@ -401,6 +406,7 @@ def test_run_gates_composes_gateset_with_agreement_stubbed_na():
     assert gates.overall in {"pass", "fail", "unverifiable"}
 
 
+@pytest.mark.analysis
 def test_run_gates_computes_agreement_when_other_stem_provided():
     # Task 5.1: passing an ``other_stem`` (a second engine's take on the same target)
     # switches gate 4 from the Phase-5 na stub to a real computed verdict, while every

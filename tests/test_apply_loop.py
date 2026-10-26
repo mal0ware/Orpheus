@@ -106,6 +106,7 @@ async def _band_delta_and_rule1(client, ref_path, render_path):
     return float(entry["delta"]), rule1
 
 
+@pytest.mark.analysis
 async def test_closed_fx_loop_converges_against_the_fake_bridge(mcp_client, reference_wav):
     async with mcp_client as c:
         render = await c.call_tool(

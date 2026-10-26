@@ -30,7 +30,7 @@ jobs:
         run: uv run mypy
 
       - name: Test
-        run: uv run pytest -q
+        run: uv run pytest -q -m "not desktop and not gpu"
 
       # The Lua half of the bridge contract, in-process via lupa (no lua interpreter
       # on the runner) — same mechanism the dev-log verified it with.

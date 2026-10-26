@@ -304,6 +304,7 @@ def mcp_client(tmp_path, monkeypatch):
     return Client(mcp)
 
 
+@pytest.mark.analysis
 async def test_suggest_free_vst_tool_registered_read_only(mcp_client):
     async with mcp_client as c:
         tools = {t.name: t for t in await c.list_tools()}
@@ -311,6 +312,7 @@ async def test_suggest_free_vst_tool_registered_read_only(mcp_client):
     assert tools["suggest_free_vst"].annotations.readOnlyHint is True
 
 
+@pytest.mark.analysis
 async def test_clear_analysis_cache_tool_registered_destructive(mcp_client):
     async with mcp_client as c:
         tools = {t.name: t for t in await c.list_tools()}
@@ -318,6 +320,7 @@ async def test_clear_analysis_cache_tool_registered_destructive(mcp_client):
     assert tools["clear_analysis_cache"].annotations.destructiveHint is True
 
 
+@pytest.mark.analysis
 async def test_suggest_free_vst_tool_via_client(mcp_client):
     async with mcp_client as c:
         result = await c.call_tool("suggest_free_vst", {"need": "cavern reverb"})
@@ -325,6 +328,7 @@ async def test_suggest_free_vst_tool_via_client(mcp_client):
     assert "Valhalla Supermassive" in names
 
 
+@pytest.mark.analysis
 async def test_clear_analysis_cache_tool_via_client(mcp_client, tmp_path):
     async with mcp_client as c:
         # Populate the cache this client's server points at, then clear through the tool.

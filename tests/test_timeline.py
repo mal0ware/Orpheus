@@ -243,6 +243,7 @@ def test_instrument_timeline_uses_provided_cache(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 async def test_instrument_timeline_tool_registered_read_only():
     from fastmcp import Client, FastMCP
 
@@ -256,6 +257,7 @@ async def test_instrument_timeline_tool_registered_read_only():
     assert tools["instrument_timeline"].annotations.readOnlyHint is True
 
 
+@pytest.mark.analysis
 async def test_instrument_timeline_not_registered_without_panns_or_torch(monkeypatch):
     import importlib.util as ilu
 
@@ -300,6 +302,7 @@ def _assert_semaphore_held() -> None:
     assert not acquired, "GPU_SEMAPHORE (§15.5) was not held while this ran"
 
 
+@pytest.mark.analysis
 def test_panns_tagger_activations_holds_gpu_semaphore_during_inference(tmp_path):
     from orpheus_mcp.analysis.timeline import PannsTagger
 

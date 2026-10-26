@@ -1,0 +1,4 @@
+# tests/fixtures/audio/manifest.json pins the exact sha256 of every committed fixture file.
+# Never rewrite their line endings on checkout (core.autocrlf on Windows turned truth.json
+# into CRLF locally, so the manifest matched on Windows and drifted on the Linux runners).
+tests/fixtures/audio/** -text

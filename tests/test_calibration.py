@@ -356,6 +356,7 @@ def _plenty_of_vram(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(model_registry, "free_vram_gb", lambda: 24.0)
 
 
+@pytest.mark.analysis
 def test_ci_smoke_runs_full_pipeline(
     capsys: pytest.CaptureFixture[str], _plenty_of_vram: None
 ) -> None:
@@ -367,6 +368,7 @@ def test_ci_smoke_runs_full_pipeline(
     assert "4 separations" in out  # both stub engines ran on both fixtures
 
 
+@pytest.mark.analysis
 def test_ci_smoke_collects_samples_and_emits_constants(_plenty_of_vram: None) -> None:
     ci_root = Path(__file__).resolve().parent / "fixtures" / "audio"
     manifest = cg.verify_manifest_integrity(ci_root)
@@ -387,6 +389,7 @@ def test_ci_smoke_collects_samples_and_emits_constants(_plenty_of_vram: None) ->
     assert "EXPOSURE_THRESHOLD" in payload["constants"]
 
 
+@pytest.mark.analysis
 def test_ci_smoke_standalone_subprocess_matches_ci_argv() -> None:
     """Pins the standalone import path (not just the pytest-side-effect one): invokes the script
     exactly as CI does (`.github/workflows/ci.yml`'s "Gate-calibration smoke" step runs

@@ -182,6 +182,7 @@ def test_vocabulary_is_109_binary_l2_normalized_templates():
     [["G", "C", "D", "Em", "G", "C", "D", "Em"], ["C", "Am", "F", "G", "C", "Am", "F", "G"]],
     ids=["G-C-D-Em(ci_sparse)", "C-Am-F-G"],
 )
+@pytest.mark.analysis
 def test_synthesized_progression_majmin_at_least_90pct(tmp_path, symbols):
     path = _make_progression(tmp_path / "prog.wav", symbols)
     pcm = decode(str(path))
@@ -192,6 +193,7 @@ def test_synthesized_progression_majmin_at_least_90pct(tmp_path, symbols):
     assert accuracy >= 0.90, f"majmin accuracy {accuracy:.3f} below the 0.90 bar"
 
 
+@pytest.mark.analysis
 def test_ci_sparse_render_produces_a_sane_lane():
     """The committed render is intentionally messy-voiced (its C/E span reads as D even
     with whole-span aggregation — oracle top-5 chord recall ~0.70), so it is a non-crash
@@ -207,6 +209,7 @@ def test_ci_sparse_render_produces_a_sane_lane():
     assert all(s.produced_by == "baseline" for s in lane.segments)
 
 
+@pytest.mark.analysis
 def test_ci_sparse_chords_stem_beat_level_majmin_at_least_90pct():
     """The honest fixture form of the §13/§12 slice-3 bar: the rendered ci_sparse FULL MIX
     is dense-render chroma-smeared (the baseline scores ~0.20 there; oracle template ceiling
@@ -350,6 +353,7 @@ def test_stable_non_chord_tone_bass_is_annotated_pedal():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_low_grid_confidence_switches_lane_to_fixed_one_second_windows(tmp_path):
     path = _make_progression(tmp_path / "prog.wav", ["C", "F", "G", "C"])
     pcm = decode(str(path))
@@ -420,6 +424,7 @@ def test_roman_f_in_c_major_is_IV():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_bass_pc_lane_tracks_a_low_note(tmp_path):
     """A steady low C (65.4 Hz, C2) under a beat grid reads back as pitch class 0."""
     sr = 22050

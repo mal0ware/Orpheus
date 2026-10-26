@@ -142,6 +142,7 @@ _C_MAJOR_PROGRESSION = [
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_click_track_tempo_and_grid_confidence(tmp_path):
     path = make_click_track(tmp_path / "click.wav", bpm=120.0)
     pcm = decode(str(path))
@@ -151,6 +152,7 @@ def test_click_track_tempo_and_grid_confidence(tmp_path):
     assert recon.grid.confidence > 0.8
 
 
+@pytest.mark.analysis
 def test_accented_click_track_meter_confidence_high(tmp_path):
     """D10: an unambiguous 4/4 accent pattern (every 4th beat louder) must produce a high
     margin ratio between the winning group-{3,4} correlation and the runner-up."""
@@ -162,6 +164,7 @@ def test_accented_click_track_meter_confidence_high(tmp_path):
     assert recon.grid.meter_confidence > 0.3
 
 
+@pytest.mark.analysis
 def test_uniform_click_meter_confidence_low_while_grid_confidence_stays_high(tmp_path):
     """D10: an unaccented, perfectly uniform click train has a near-tied 3-vs-4 grouping
     (every beat equal strength) — ``meter_confidence`` must read low even though the grid
@@ -174,6 +177,7 @@ def test_uniform_click_meter_confidence_low_while_grid_confidence_stays_high(tmp
     assert recon.grid.confidence > 0.8
 
 
+@pytest.mark.analysis
 def test_ci_sparse_key_matches_truth():
     truth = json.loads((FIXTURES / "ci_sparse" / "truth.json").read_text("utf-8"))
     pcm = decode(str(FIXTURES / "ci_sparse" / "mix.flac"))
@@ -183,6 +187,7 @@ def test_ci_sparse_key_matches_truth():
     assert recon.key.mode == truth["key"]["mode"]
 
 
+@pytest.mark.analysis
 def test_detuned_progression_tuning_offset_and_key(tmp_path):
     path = make_chord_progression(
         tmp_path / "detuned.wav", _C_MAJOR_PROGRESSION, detune_cents=40.0
@@ -195,6 +200,7 @@ def test_detuned_progression_tuning_offset_and_key(tmp_path):
     assert recon.key.mode == "major"
 
 
+@pytest.mark.analysis
 def test_noise_burst_under_30s_is_single_section(tmp_path):
     path = make_noise_burst(tmp_path / "noise.wav", seconds=10.0)
     pcm = decode(str(path))
@@ -205,6 +211,7 @@ def test_noise_burst_under_30s_is_single_section(tmp_path):
     assert recon.sections[0].end_s == pytest.approx(recon.duration_s)
 
 
+@pytest.mark.analysis
 def test_recon_reference_second_call_served_from_cache(tmp_path, monkeypatch):
     monkeypatch.setenv(CFG.CACHE_DIR_ENV, str(tmp_path / "cache"))
     audio_path = make_click_track(tmp_path / "src" / "click.wav", seconds=4.0)
@@ -228,6 +235,7 @@ def test_recon_reference_second_call_served_from_cache(tmp_path, monkeypatch):
     assert first == second
 
 
+@pytest.mark.analysis
 def test_reference_category_in_default_and_full_not_explain():
     from fastmcp import FastMCP
 
@@ -278,6 +286,7 @@ def test_desktop_fixture_recon_has_every_field(fixture):
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_band_energy_sketch_names_are_locked():
     """Weak-lock fix (review finding): pin the EXACT full 8-key set, not just one member —
     these are ``geomspace(60, 16000, 9)`` edges, `f"{int(lo)}-{int(hi)}"` per adjacent pair."""
@@ -297,6 +306,7 @@ def test_band_energy_sketch_names_are_locked():
     assert all(isinstance(v, float) for v in recon.band_energy_db.values())
 
 
+@pytest.mark.analysis
 def test_all_chroma_downstream_is_tuning_corrected(tmp_path, monkeypatch):
     """The §T1 lock: every chroma call downstream of tuning estimation must pass the
     measured ``tuning=`` value. Patches ``librosa.feature.chroma_cqt`` and asserts every
@@ -320,6 +330,7 @@ def test_all_chroma_downstream_is_tuning_corrected(tmp_path, monkeypatch):
     assert all(t is not None for t in seen_tunings)
 
 
+@pytest.mark.analysis
 async def test_recon_reference_tool_registered_read_only():
     from fastmcp import Client, FastMCP
 
@@ -342,6 +353,7 @@ def test_pcm_hash_stability_same_audio_round_trips(tmp_path):
     assert pcm_a.pcm_hash == pcm_b.pcm_hash
 
 
+@pytest.mark.analysis
 def test_recon_reference_uses_provided_cache(tmp_path):
     fs = CacheFS(tmp_path / "explicit_cache")
     path = make_click_track(tmp_path / "click.wav", seconds=4.0)

@@ -83,6 +83,7 @@ def fs(tmp_path) -> CacheFS:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_full_lane_fetch_computes_once_then_cache_hits(audio_path, fs, monkeypatch):
     from orpheus_mcp.analysis import harmony
 
@@ -105,6 +106,7 @@ def test_full_lane_fetch_computes_once_then_cache_hits(audio_path, fs, monkeypat
     assert second == first
 
 
+@pytest.mark.analysis
 def test_cache_hit_never_decodes(audio_path, fs, monkeypatch):
     get_chords(str(audio_path), cache=fs)  # populate the cache
 
@@ -126,6 +128,7 @@ def test_cache_hit_never_decodes(audio_path, fs, monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_region_filter_returns_only_overlapping_whole_segments(audio_path, fs):
     full = get_chords(str(audio_path), cache=fs)
     assert len(full.segments) >= 1
@@ -144,6 +147,7 @@ def test_region_filter_returns_only_overlapping_whole_segments(audio_path, fs):
         assert seg in full.segments
 
 
+@pytest.mark.analysis
 def test_region_end_10x_duration_clamps_and_keeps_full_tail(audio_path, fs):
     full = get_chords(str(audio_path), cache=fs)
     recon = run_recon(decode(str(audio_path)))
@@ -157,6 +161,7 @@ def test_region_end_10x_duration_clamps_and_keeps_full_tail(audio_path, fs):
     assert filtered.segments[-1].end_s == pytest.approx(full.segments[-1].end_s)
 
 
+@pytest.mark.analysis
 def test_region_fully_outside_duration_returns_empty_segments_grid_preserved(audio_path, fs):
     full = get_chords(str(audio_path), cache=fs)
     recon = run_recon(decode(str(audio_path)))
@@ -174,6 +179,7 @@ def test_region_fully_outside_duration_returns_empty_segments_grid_preserved(aud
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_get_chords_reuses_recon_already_cached_by_recon_reference(audio_path, fs, monkeypatch):
     calls = {"n": 0}
     import orpheus_mcp.analysis.recon as recon_mod
@@ -194,6 +200,7 @@ def test_get_chords_reuses_recon_already_cached_by_recon_reference(audio_path, f
     assert lane.segments
 
 
+@pytest.mark.analysis
 def test_chords_meta_sidecar_records_produced_by_baseline(audio_path, fs, monkeypatch):
     # Force the CPU-only path (no chord model resolves) so the baseline lane is deterministic
     # regardless of the box: on a CUDA box with the BTC checkpoint fetched, get_chords would
@@ -227,6 +234,7 @@ def mcp_client(tmp_path, monkeypatch):
     return Client(mcp)
 
 
+@pytest.mark.analysis
 async def test_get_chords_tool_registered_read_only(mcp_client):
     async with mcp_client as c:
         tools = {t.name: t for t in await c.list_tools()}
@@ -234,6 +242,7 @@ async def test_get_chords_tool_registered_read_only(mcp_client):
     assert tools["get_chords"].annotations.readOnlyHint is True
 
 
+@pytest.mark.analysis
 async def test_get_chords_tool_full_lane_via_client(audio_path, mcp_client):
     async with mcp_client as c:
         result = await c.call_tool("get_chords", {"file": str(audio_path)})
@@ -242,6 +251,7 @@ async def test_get_chords_tool_full_lane_via_client(audio_path, mcp_client):
     assert lane.grid in {"beat", "fixed"}
 
 
+@pytest.mark.analysis
 async def test_get_chords_tool_region_via_client(audio_path, mcp_client):
     async with mcp_client as c:
         full = (await c.call_tool("get_chords", {"file": str(audio_path)})).data
@@ -379,6 +389,7 @@ def test_separate_region_explicit_model_id_bypasses_ranking(tmp_path, _plenty_of
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 async def test_separate_region_tool_registered_read_only():
     mcp = FastMCP(name="t")
     register_tools(mcp, profile="default")
@@ -388,6 +399,7 @@ async def test_separate_region_tool_registered_read_only():
     assert tools["separate_region"].annotations.readOnlyHint is True
 
 
+@pytest.mark.analysis
 async def test_separate_region_not_registered_without_panns_or_torch(monkeypatch):
     import importlib.util as ilu
 
@@ -527,6 +539,7 @@ def test_verify_stem_energy_in_silent_window_fails(tmp_path):
     assert gates.overall == "fail"
 
 
+@pytest.mark.analysis
 async def test_verify_stem_tool_registered_read_only():
     mcp = FastMCP(name="t")
     register_tools(mcp, profile="default")
@@ -582,6 +595,7 @@ def _lw(text: str, start: float, end: float) -> LyricWord:
 _SCRIPTED_WORDS = [_lw("hold", 0.5, 0.8), _lw("the", 0.9, 1.0), _lw("line.", 1.1, 1.4)]
 
 
+@pytest.mark.analysis
 def test_transcribe_lyrics_confirmed_absent_skips_separation_and_asr(tmp_path, _plenty_of_vram):
     audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
     fs = CacheFS(tmp_path / "cache")
@@ -598,6 +612,7 @@ def test_transcribe_lyrics_confirmed_absent_skips_separation_and_asr(tmp_path, _
     assert len(engine.calls) == 0  # -> and no separation ever ran either
 
 
+@pytest.mark.analysis
 def test_transcribe_lyrics_runs_asr_on_ladder_stem_then_cache_hits(tmp_path, _plenty_of_vram):
     audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
     fs = CacheFS(tmp_path / "cache")
@@ -623,6 +638,7 @@ def test_transcribe_lyrics_runs_asr_on_ladder_stem_then_cache_hits(tmp_path, _pl
     assert len(engine.calls) == 1  # -- and separation never re-ran either
 
 
+@pytest.mark.analysis
 def test_transcribe_lyrics_caches_under_lyrics_lines_sections_kinds(tmp_path, _plenty_of_vram):
     audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
     fs = CacheFS(tmp_path / "cache")
@@ -638,6 +654,7 @@ def test_transcribe_lyrics_caches_under_lyrics_lines_sections_kinds(tmp_path, _p
     assert (art_dir / "sections.json").is_file()
 
 
+@pytest.mark.analysis
 def test_transcribe_lyrics_cache_busts_on_asr_model_id_change(
     tmp_path, _plenty_of_vram, monkeypatch
 ):
@@ -666,6 +683,7 @@ def test_transcribe_lyrics_cache_busts_on_asr_model_id_change(
     assert second.status == "ok"  # same scripted ASR output, but a fresh compute, not a HIT
 
 
+@pytest.mark.analysis
 def test_transcribe_lyrics_propagates_separation_error(tmp_path, _plenty_of_vram):
     audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
     fs = CacheFS(tmp_path / "cache")
@@ -708,6 +726,7 @@ def test_transcribe_lyrics_raises_reference_env_missing_without_analysis_extra(
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 def test_locate_lyric_tool_finds_scripted_quote_and_reuses_the_cache(tmp_path, _plenty_of_vram):
     audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
     fs = CacheFS(tmp_path / "cache")
@@ -731,6 +750,7 @@ def test_locate_lyric_tool_finds_scripted_quote_and_reuses_the_cache(tmp_path, _
     assert asr.calls == 1
 
 
+@pytest.mark.analysis
 def test_locate_lyric_tool_on_no_vocals_file_returns_defined_result(tmp_path, _plenty_of_vram):
     audio = _write_lyrics_test_wav(tmp_path / "mix.wav")
     fs = CacheFS(tmp_path / "cache")
@@ -755,6 +775,7 @@ def test_locate_lyric_tool_on_no_vocals_file_returns_defined_result(tmp_path, _p
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.analysis
 async def test_locate_lyric_tool_registered_read_only():
     mcp = FastMCP(name="t")
     register_tools(mcp, profile="default")
@@ -764,6 +785,7 @@ async def test_locate_lyric_tool_registered_read_only():
     assert tools["locate_lyric"].annotations.readOnlyHint is True
 
 
+@pytest.mark.analysis
 async def test_locate_lyric_registered_even_without_panns_or_torch(monkeypatch):
     import importlib.util as ilu
 
@@ -786,7 +808,13 @@ async def test_locate_lyric_registered_even_without_panns_or_torch(monkeypatch):
     assert "transcribe_lyrics" not in tools
 
 
+@pytest.mark.analysis
 async def test_transcribe_lyrics_tool_registered_when_faster_whisper_available():
+    # transcribe_lyrics registers only when all of these are importable (reference.py's
+    # registration probes); faster-whisper lives in the [separation] extra, not [analysis].
+    pytest.importorskip("faster_whisper")
+    pytest.importorskip("panns_inference")
+    pytest.importorskip("torch")
     mcp = FastMCP(name="t")
     register_tools(mcp, profile="default")
     async with Client(mcp) as client:
@@ -835,6 +863,7 @@ async def test_transcribe_lyrics_tool_surfaces_lyrics_asr_env_missing_as_typed_e
             await client.call_tool("transcribe_lyrics", {"file": str(audio)})
 
 
+@pytest.mark.analysis
 async def test_transcribe_lyrics_not_registered_without_faster_whisper(monkeypatch):
     import importlib.util as ilu
 

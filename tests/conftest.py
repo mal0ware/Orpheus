@@ -2,7 +2,22 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
+
+_HAS_LIBROSA = importlib.util.find_spec("librosa") is not None
+
+
+def pytest_collection_modifyitems(config, items):
+    """Tests marked ``analysis`` need librosa. On a base install (CI's dev-extra-only job,
+    which proves the server degrades cleanly) they skip instead of failing."""
+    if _HAS_LIBROSA:
+        return
+    skip = pytest.mark.skip(reason="needs the [analysis] extra (librosa)")
+    for item in items:
+        if item.get_closest_marker("analysis") is not None:
+            item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)

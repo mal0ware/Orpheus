@@ -166,6 +166,7 @@ def test_crest_and_lufs_on_reference_tone():
     assert ch.dynamics["crest_db"] == pytest.approx(3.01, abs=0.3)
 
 
+@pytest.mark.analysis
 def test_even_vs_odd_flavor():
     warm = compute_character(mono_source(_two_tone(200.0, 400.0)))
     gritty = compute_character(mono_source(_two_tone(200.0, 600.0)))

@@ -135,6 +135,7 @@ async def test_full_profile_still_superset_of_default():
     assert default <= full
 
 
+@pytest.mark.analysis
 def test_register_tools_reports_plain_categories():
     mcp = FastMCP(name="RegistryReturnTest")
     registered = register_tools(mcp, profile="default")
@@ -183,6 +184,7 @@ def test_arrange_in_full_profile():
     assert "arrange" in register_tools(mcp, profile="full")
 
 
+@pytest.mark.analysis
 def test_reference_in_default_and_full_not_explain():
     from fastmcp import FastMCP
 
